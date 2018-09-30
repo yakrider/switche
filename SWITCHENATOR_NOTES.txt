@@ -1,0 +1,71 @@
+
+RUNNING NOTES DUMP ON POSSIBLE WORK ON THE SWITCHENATOR PROJECT :
+
+
+
+09/29 .. operational minimal shell .. reference notes
+   -- so, leveraging the setups for nuncer/airenator and the eary shell for airenator nunce sjse app, this was thrown together quickly
+   - note that this skeleton was mostly made by copying/deleting/modifying from those mentioned projects, might be some leftovers to clear out still
+   - basically consists of a backend (switchback) and electron geared frontend (switchface)
+   - for now, keeping them mostly separate, could consider doing some shared business later
+   - nevertheless, modeled the structure after nuncer which has a similar single sbt built server/client/shared design, so can add shared stuff later
+   - switchback runs on basic straigtforward scalatra, currently just a shell, not planning on pushing any UI stuff unlike for nuncer, just strict API stuff
+   - switchface client, looks like a regular scala-js frontend, but with minor tweaks to target for electron running
+   - in particular, in main build.sbt, a 'elPack' task takes sjs outputs and massages/copies them to a electron target location
+   - a simple npm/electron package.json looks at the location and runs the app (when calling npm start), with hot reload when things there change!
+   - and with separate live targets in build.sbt for both server and client code, can have changed to server code auto picked up and deployed to server, client code auto picked and compiled to sjs and moved to electron folder, then npm/electron auto reload the client frontend.. its nice!
+
+   
+09/29 .. SO IT BEGINS !!
+
+   -- so, the motivation and bkg for this came together quickly, and might be ephemeral, but quick progress has been made, and giving it independent life here
+   - anyway, so some more on details and bkg are copied over from elsewhere below, but mostly for historical reasons   
+   
+   -- PRIOR THOUGHTS HISTORY :
+   
+      - so instead of doing bunch of pointless recap on more background, copying here some of the relevant notes from elsewhere (running notes dump etc) on what/how and how it progressed to this initial proj as of 09/29
+      - basically, was getting annoyed at not being able to sort through task-items in vistaswitcher, and switcheroo though it has search, being worse in most all other areas, so thought was hell, maybe should just try and throw together something quick, esp given the last exploration w java JNA that seemed to work easy and mostly ok, though w questionable stability on long runs
+      - initial thoughts were on scalafx etc, but recently had also become aware of electron based 'native' 'webapp' like apps, and though a poor fit here, esp considering the round about manner and pointless memory waste for such a simple and close to native app, was a good excuse to learn it / try it out, and seemed to be easy enough to hack together, so decided to get it going
+      - (for context, was also around the same time, had some ui building for 'airenator' in back plate, so kinda of picked it up for both, as although the airenator frontend wouldnt need electron or need to be native, figured might not be much more effort to write the FE in electron rather than just as a webapp anyway, so why not!)
+
+      09/12 .. switcheroo gripes list
+         - uhh, really wanted something thatd let me see task list entries sorted by app/type etc, and decided to give a good shot back to switcheroo
+         - on plus side, it could be made decent, and might even be something I can update/customize in code if I want, its up in github
+         -- on the gripes.. man its nowhere near as ready/usable   
+         - freaking scroll scrolls the window instead of scrolling through entries there
+         - the hotkey on repressing escapes out of the window instead of doing next like alt-tab's tab, or vistaswitcher's key would 
+            - although that seems to work in alt-tab mode, so prob could open a ticket and might be fixable quick
+         - and that prob also is why it doesnt actually activate any of the items on single-click, have to double click, how dumb is that, esp since there's nothing there to do on 'select' anyway as there isnt even any right click on the items.. uhh just dumb
+         - why is so dog freaking slow!, even the dumb list filtering.. doesnt have to be that slow
+         - and ofc, the option to sort by type, or really the option for anything(!) doesnt exist yet   
+            - although what would be nice woudl be to add keys like alt-s or alt-g etc to enable that
+         - and the devs dont seem particularly updating it either, so its upto me to do it if I want it, though could see if by putting up issue anyone else might be interested to try out or help
+         
+         - so, could a thought be to instead of trying to hack into that etc, just pull up something like scala-fx and try to build a simple quick thing in it itself? i mean, w jna etc, actual dealing w windows etc seems straightforward
+            - though might need to dig just a bit more at getting icons etc
+               - def do more search, but options are def available.. e.g: https://stackoverflow.com/questions/19279134/java-windows-taskbar-using-jna-how-do-i-convert-window-icons-hicon-to-java
+            - also only tangential, but there's an interesting https://github.com/dorkbox/SystemTray if that feels worthwhile later
+         
+      09/12 .. hmm following on from the task-list ui, maybe consider for others too
+         - might be interesting if doing some/any java-fx work on that app-switcher thought, to maybe just try a hand at scala-fx or whatever the picked soln is for some other quick and dirty stuff too
+         - for instance, making one for airenator might not be a bad idea.. 
+            - now ofc, really would prob be best suited for a regular web client work, but eh, if want practice, sure maybe
+         - although tbh, any 'practice' should really just be done on the switcher app itself, thats perfectly fine for it and actually has immdt use, as well as not being doable even remotely passably in webapp format, so makes it worthwhile.. everything else is perfectly fine as a web app
+
+      09/26 Wed .. heading deep into electron quick apps .. (got through weekend, w gb working, should be plenty of time to get these cranked out!)
+         - prob can stall work for a bit w/o imp stuff, maybe create some ticks and put up ws test code, talk about TPS/AP/travel etc through weekend
+         - on scalaJs-electron work, maybe crank out airenator first, or realistically could do both simultaneously, should be similar
+         d- first get the quickstart samples from git working
+         - then build a similar proj structure somewhere, might be easiest on airenator repo
+            - update it to have it minimally bringing up a window, sending some quick cmds from btns that can be seen to work in airenator console
+            - update airenator core code/api to return full state in json, basically for each call.. might be the easiest to quickly patch up
+            - hook up the sjs-e app to consume the airenator json output and have a ui that shows cur state and minimal input to send back in.. thats it!
+         - then can move on w hashing out switchenator(?) quickly
+            - use similar quickstart skeleton, incl both the backend/frontend parts
+            - hack up a quick backend that gives full json output on query, thats all should be needed, dont worry about speedups/optimizing etc for now
+            - on client, set up simple listing first of processes, later can add icon disp w icon caching, 
+            - then add up kbd hooks for scroll, click, Alt/Enter press etc, impl grouping, impl searching.. thats pretty much it!
+   
+   
+
+

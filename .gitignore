@@ -1,0 +1,40 @@
+*.class
+*.log
+
+# sbt specific
+.cache/
+.history/
+.history
+.lib/
+dist/*
+target/
+lib_managed/
+src_managed/
+project/boot/
+project/plugins/project/
+
+# Eclipse/Scala-IDE specific
+.scala_dependencies
+.worksheet
+.cache*
+#.settings
+#.project
+.classpath
+*/bin
+*.prefs
+
+# IntelliJ IDEA
+.idea
+*.iml
+out
+*.sc
+
+# Package Files #
+*.jar
+*.war
+*.ear
+*.cache-main
+
+# GitBook
+doc/_book
+/_book

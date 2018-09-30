@@ -1,0 +1,15 @@
+{
+  "name": "switchface",
+  "version": "0.0.1",
+  "description": "Basic Switchenator FrontEnd App with ScalaJS and Electron",
+  "scripts": {
+    "start": "electron switchface/target/electronPackage/switchface-electron-launcher.js",
+    "debug": "electron switchface/target/electronPackage/switchface-electron-launcher.js",
+    "test": "sbt test"
+  },
+  "devDependencies": {
+    "electron-prebuilt": "^1.1.1",
+    "source-map-support": "^0.4.0",
+    "electron-reload": "^1.2.5"
+  }
+}

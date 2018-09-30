@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html>
+
+  <head>
+  
+    <meta charset="UTF-8">    
+    <title>SwitchFace</title>    
+    <link rel="stylesheet" type="text/css" href="SwitchFaceStyle.css"/>   
+    
+    <script>
+    (function() {
+      window.onload = function() {
+        var appName = process.env['npm_package_name'];
+        require('./' + appName + '-deps');
+        require('./' + appName);
+        SwitchFace.SwitchFaceWindow();
+      }
+    })();
+    </script>
+    
+  </head>
+  
+  <body>
+    <div id="scala-js-root-div"/></div>
+  </body>
+  
+</html>
