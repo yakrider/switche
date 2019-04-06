@@ -3,6 +3,145 @@ RUNNING NOTES DUMP ON POSSIBLE WORK ON THE SWITCHENATOR PROJECT :
 
 
 
+04/05 .. another dive-in
+
+   - aight, so the last one sputtered out, w the sjs setup just not working to get ext js modules working at all, let alone getting to try out ffi
+      - but saw that maybe there were improvements in latest sjs versions to make that a bit easier, though all the material etc we've based shit on is from older versions and just trying to ram it through just wasnt working
+   - so now, gonna try and restart the process from a bit more grounds up fashion..
+      - first take the more recent sjs tutorial etc to build up a clean skeleton project in sjs/node .. no electron, no ffi, no x-proj deps etc
+      - try and get basic js import/require working there, and if so, can see where to go from there
+      - (and on plus side, might get us much better situated to be able to deal w electron, ffi etc incorporation going forward too, having understood better from the grounds up how the integration etc ends up happening
+      
+   - more concrete, start w basic tutorial, try out import, if really get stuck, can ask guys in gitter for samples/pointer/link to get that working
+   
+   - ok, so for more concrete stuff on what exactly the sjs 1.0.x.Mx milestone versions vs 0.6.* versions, here's the starting point
+      - https://www.scala-js.org/news/2017/07/03/announcing-scalajs-1.0.0-M1/
+      - think biggest stuff was about moving core dependencies out etc, so prob wont be too bad other than code reorg and so on
+      - and uh, best of all, the 1.0.x.Mx path explicitly is setup to deal with js globals such that the nodejs 'require' works nicely.. uhh awesome!!
+      
+   - finer grained log/notes
+      - lots of shit w things that break from default tutorial at https://www.scala-js.org/doc/tutorial/basic/
+      - so instead refer to https://github.com/scala-js/scalajs-tutorial which seems to be more recently maintained
+         --> but make sure to be on the 1.x branch of it!!
+      - 
+
+
+03/25/2019 .. micro task notes, as looking at ffi setups etc 
+
+   d- first off, want to find some basic example, get that running again.. the basics w npm etc, getting ui to appear, doesnt need scala/sbt
+   d- do a similar, but including win32 api this time.. think there might even be a sample around already.. still just js, write code in js too as need be
+      i- setup ffi, some good resources available, 
+         - win32 api setup: https://stackoverflow.com/questions/37396157/hiding-other-windows-programs-from-electron-app
+         - will need to have node-gyp setup: https://github.com/nodejs/node-gyp#installation
+      - try and get the window list to work and printable first, just to get that part of w32 api working
+      - next, and IMPORTANTLY, make sure can switch windows from there too, as that was an issue before
+      - so for testing out switching, doesnt have to be anything fancy, maybe just get a list and switch to the sec one after some minimal input like a btn etc, which should be possible to just copy over from another/prior sample too etc
+   d/x- as needed for these steps and further, make clean sub-repos for testing things out.. the switchenator big repo is fine for that, just make sub-folders to try out the various stages of progress... simple electron js app, one w win32api integration, then onto sjs business as appropriate
+   - next up, can make a VERY quick stab at making a scalaJs wrapper .. really dont think should be that painful after getting it working in pure node/electron, and again, there shouldbe examples to look up on how to wrap js in scalaJs, and think it looked like it was pretty straightforward
+      x- ELSE however, can just consider writing the shit out in js itself.. cant be that bad, literally thousands of ppl seem to be doing it and saying its easy
+   i- anyway, only AFTER that, should seriously consider the app specific stuff, and really, if can validate this far, cranking out the app will be a VERY natural, motivating, and satisfying endeavor, at which point wont have to slave drive myself for it step at a time
+
+   d-- work details list
+      i- refer to the node-gyp installation page, esp windows part.. the visual studio build tools works well, will install python as well.. took a couple tries, and it might have restarted windows, though not sure.. also better to run those from actual cmd console rather than from conEmu
+      i- on that node-gyp page, ignore the parts about the binding.gyp file etc, not required for just this, and creating that file will ask for srcs etc and prevent the electron app from building
+      i- the rebuilding of electron (and ffi/electron-rebuild install) only need to be done once.. even for the project itself only need to do 'install' once, after that can just do npm start and should pick up changed code (at least for the simple changes looks like)
+      d-- hmm, at some point it was complaining of not finding node-gyp in the right place, after quick look at https://github.com/nodejs/node-gyp/issues/1463, ended up just making a junction at the right place for the installed node-gyp folder (the err wanted things in ..node_modules/node_modules/node-gyp etc)
+      
+      i-- however, stuff has been pretty flaky despite this.. sometimes the handles get returned 0 for windows instead of the actual hwnd, adn sometimes they dont activate the windows, but at other times it works.. so not clear if its something addressable locally or something else going on
+         - and even that guys sample code calls out on that, and gets around by calling the find window way too many times
+         - for us though, we just want the listing business, and that seems to be more robust.. maybe wont have to worry about that find bug much
+      
+   d-- huh, so got the basics of a nodejs thing working, with some pain on getting node-gyp etc working, but interesting side note from there..
+      - looks like it was using ShowWindow (instead of SetForegroundWindow), which might not actually have the same restrictions on what it can activate based on the description at https://docs.microsoft.com/en-us/windows/desktop/api/winuser/nf-winuser-showwindow
+      - so, if thats the case, then could keep going w what we were doing before w the server/cli w/o having to do the ffi/node-gyp (although prob still should)
+      - also, there's more fns that are similar there, incl 'BringWindowToTop' which also looks similar and unconstrained
+      - hmm, and btw, just trying out 'SetForegroundWindow' via npm console w/o triggering browser window still works (in contrast to what we had seen w the background java process triggering that), though presumably because the active process then is the node/npm process which is the active process calling for that to happen, which might be all that was required (jsut that a bkg process was prevented from doing so... hmm, nah, think at least once, go it to do SetForegroundWindow even after going around to activate another window after kicking off npm start.. so who knows)
+   
+   -- anyway, so def an interesting wrinkle and fork in the path on what to do now given this
+      - so, first off, maybe gotta fire that old shite back up, and test to see if it actually works if using ShowWindow, and maybe even just to familiarize again
+      - in absolute sense, should definitely go w the client-only node soln w node-gyp and ffi.. should be much faster, avoids pointless server/client roundtrip, avoids having a pointless server process/jvm running, and will be a LOT more easily distributable/shareable etc.. 
+      - besides, already have the painful ffi/gyp part mostly going, shouldnt be that hard to hack up something usable going from there
+      - and can still do almost everything there in sjs anyway, as the issues w getting it up werent to do w sjs
+      - and note that a pure sjs/node sln requires no jvm at all, as ofc thats the point of sjs to compile scala to js and run in v8/node along w electron
+      - and besides, whether have that stupid srv process or not, gonna be doing almost all the ui etc work in sjs in electron anyway
+      - so really, the only possible reason to try out the old srv/cli jvm thing is to just see if using that alt fn it actually works (just for curiosity sake)
+      - and maybe, maybe, if run into issues w sjs + ffi/elec then could hash out something quick, but even then will need to keep working w sjs/elec anyway
+      
+      
+   - k, more work details list.. 
+      - so now that, for pure js/node, have got the basics mostly covered, can start looking at doing it in scalajs.. shouldnt be too bad
+         - also, spending further time in js is counter-productive as figuring out things like array symantics etc is just not worth the effort here
+      - aight, so found a npm win32-api .. prob should have looked for it earlier, but either way, could make it easier to deal w stff in sjs.. but first, should try and get that working in regular js itself.. still runs on ffi etc, so all that prior work is useful, just add it, try it, get it working
+         - code is at https://github.com/waitingsong/node-win32-api
+         - do note that, it too is just a wrapper, and since we dont need much else of win32 other than what we already have, not much more we get out of it
+      - next up can try in sjs, though depending on running into issues, might have to go back to basics in sjs and get that working too if win32-api gives issues
+      
+      -- anyway, so first off, just want to get anything minimal as is running in sjs.. 
+         - and there's some fs code there, see if that works
+         - then see if can do similar by just adding a very simple js file/package of ours w a simple exported fn, that we want to call from sjs
+         - and if so, then can try and do that w the ffi/win32 sample code that we had
+         - else, or if desired afterwards, can do the same setup w the npm packages, though really the step wise progress steps above are likelty to be more reliable
+         - and at that, we should be good to go if it works.. else if we take the npms path, will have to work more to figure out how to set code to use those
+         - although, there's also the thing our sample was from : https://github.com/MrTimcakes/node-hide, and could try to make that work if doing the 'require' w our own version has issues, but really shouldnt be, and ours will be lot more customizable for our needs than pulling that from npm
+         
+      -- uhh, looking back after a break again.. so quick path list
+         - set up some very basic js scripts outside, and make them callable from scalajs
+         - so maybe, first up, look up some very basic script file, use that in an elec project in js itself, making it callable/exportable as a module
+         - next up, try and use that same w an sjs project calling externally .. prob the biggest step here
+         - then upgrade that to use ffi, again make sure can be used from js which should be straightforward, then try and do that from sjs
+         - after that, well we're good to go w adapting the actual code we want to do so and testing it out from the elec/sjs proj
+         - ooh, and thats mostly it, then we can start cranking out the actual elec app to do what we actually want!.. which will be nice!
+         
+      -- slight change of plans
+         - saw that example of including ext js dependency.. looks pretty straightforward, so maybe just start that way, but dont want ffi complexity to start out with.. soo, set up in sjs, ext js dependency, to do some very basic js lib stuff.. try it out, see if it works, then put ffi, see if it works, and if so, we're off to the real stuff
+   
+
+02/15 .. way later thoughts, on possible ui improvement w/ a narrow icons-only side-panel
+
+   - so, its been a while and this has been shelved for a bit, but the nagging thing does keep coming back, esp when doing heavy duty work w lots of switching, and esp since the newer alt-tab-terminator still doesnt seem to be heading in the right direction despite updates, and the usual vistaswitcher seems substantially slower these days for whatever reason upon the hotkey press
+   - anyway, ofc since we're hurting for speed, any of this would only be worthwhile doing if the speed of bringing it up would be fast enough, so gotta check that out first before any fancy ui etc work, and ofc the primary functionality stuff still stands of doing the switching w/ foregrnd/bkgrnd app etc
+   
+   - anyway, so the ui thought was that to have like a side panel
+      - with only icons list, and with all of the same apps windows collapsed
+      - and when you hover on, will replace the main list of window w just the windows of that particular app
+      - and ofc some way of going back to global as well, maybe when you get into area of bar w/o app icons, or a specific header area etc 
+      - would be very handy when have piles of interspersed app windows, esp w chrome, explorer, winmerge etc
+      - and ofc, can have some key shortcut to switch around those too etc
+   
+
+09/29 .. well SHIIIITTT...
+   - looks like while the SetForegroundWindow worked reliably from intepreter during testing, it does NOT work when called in a server process!!
+   - basically there seem to be a long list of conditions that MS wants enforced before it allows focus stealing, of particular relevance here, when testing from eclipse, the calling process was foreground and/or received last input event, either of which is sufficient for MS to let it bring some other window to front, but for a bkg serving java process, thats not the case and so its failed.. uhh.. they only end up flashing the taskbar for that thing!
+   - makes sense on actual straightforward appswitcher apps too, right before they switch they are taking input so its allowable
+   - so anyway, not sure what to do next, could possibly impl the damn thing completely in electron/node w/ some mix of sjs/js and ffi etc, but will be a pain, and not sure how worthwhile it woudl be
+
+09/29 .. aright, so on to adding some actual functionality..
+
+   - so, general functionality in brief : 
+      - need backend to query for tasks, compile up into prob json, send over to client, thats it
+      - and for frontend, parse that json, display basic list, add scroll/click fn, register hotkey, make window hidden/viz, add sorting, add searching
+      
+   - much later thoughts / optimization etc, but ONLY to keep in mind while focusing on immdt progress work etc
+      - want some speedup, so prob want to have decent cache on FE, and all icon loading etc should be directly on FE ofc
+      - prob also means, eventually might not want directly bknd querying on call, but something like bkg updates etc, but not clear how worthwhile that would be, or what would be the fastest way (tick queries, websocket etc), or if thats too resource intensive, or lead to more frequent crashes
+      - if early issues seen w jna calls for winamp monitor continue, then on long running, the jna jvm might be crashing, in which case might need more resilient design w a monitor jvm process and supervised/replaceable jvm for actual jna work.. but meh we'll see
+      
+   - for starters, should hash out the backend part, shouldnt be bad, and can just print out on api call, the json part should be quick too
+   - possibly could look at adding the rev api too, to activate something, just to get it over w and usable via api, but prob really not needed for a bit
+      - also prob means, for fidelity across changes, that'd prob require actually passing around actual window ids etc
+   - and the calling can be directly done when switchenator is invoked, dont worry about lag/speeds etc there for now
+   
+   - then setup very basic parsing on elec frontend just to print out the list, (just titles is prob fine, later can add exe path, icons etc)
+   - should prob add a bknd call right after that to actually allow switching.. on FE, can be on simple click handling (or maybe kbd) etc
+   - that'd be pretty minimally usable by then, so should start looking at global hotkey reg to call that up, still dont need to worry about hiding window
+   - then can look at reading and showing the icons as thatd be important for usability.. can cache those up for speed
+   - then should add sort handling prob, as that prob adds the most immdt value
+   - then prob getting win to hide on action (along w showing on hotkey) might be worthwhile, though really, both could prob be skipped, esp the hiding
+   - further out, should add the partial-match search ui.. itll be useful, but not something I find wishing for, esp once I'd have sorting/grouping
+   - at some point can look at ui prettiness etc.. window locations, menu bars, title bars, bkg, scrolling, maybe even bknd configs!
+   - way way down the road could consider packaging into installer etc, but really think might be fine just as is in dev mode potentially forever
+
+
 09/29 .. operational minimal shell .. reference notes
    -- so, leveraging the setups for nuncer/airenator and the eary shell for airenator nunce sjse app, this was thrown together quickly
    - note that this skeleton was mostly made by copying/deleting/modifying from those mentioned projects, might be some leftovers to clear out still
@@ -14,9 +153,11 @@ RUNNING NOTES DUMP ON POSSIBLE WORK ON THE SWITCHENATOR PROJECT :
    - in particular, in main build.sbt, a 'elPack' task takes sjs outputs and massages/copies them to a electron target location
    - a simple npm/electron package.json looks at the location and runs the app (when calling npm start), with hot reload when things there change!
    - and with separate live targets in build.sbt for both server and client code, can have changed to server code auto picked up and deployed to server, client code auto picked and compiled to sjs and moved to electron folder, then npm/electron auto reload the client frontend.. its nice!
+      - although do note that the reloading part happens on global change, so any code change will trigger both server and client to rebuild/redeploy, but prob is bearable, and certainly so for this particular proj w/o much internal state
+      - and realistically, once backend stabilizes, as its straight forward, might end up doing that w/o hot reload when just working on the client
 
    
-09/29 .. SO IT BEGINS !!
+09/29/2018 .. SO IT BEGINS !!
 
    -- so, the motivation and bkg for this came together quickly, and might be ephemeral, but quick progress has been made, and giving it independent life here
    - anyway, so some more on details and bkg are copied over from elsewhere below, but mostly for historical reasons   

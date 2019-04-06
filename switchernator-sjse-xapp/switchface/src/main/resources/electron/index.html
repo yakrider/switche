@@ -12,7 +12,10 @@
       window.onload = function() {
         var appName = process.env['npm_package_name'];
         require('./' + appName + '-deps');
+        require('./' + appName + '-jsdeps');
         require('./' + appName);
+        require('require.js');
+        require('WinHelper');
         SwitchFace.SwitchFaceWindow();
       }
     })();

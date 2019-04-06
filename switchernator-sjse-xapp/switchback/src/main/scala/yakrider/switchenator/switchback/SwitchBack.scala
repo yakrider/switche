@@ -54,8 +54,7 @@ class SwitchBackWebApp extends ScalatraServlet with ScalateSupport with CorsSupp
 
    def asyncHandler = {
       val cmdOpt = params.get("cmd")
-      val isJsonCmd = cmdOpt.map(_.startsWith("json")).getOrElse(false)
-      contentType = if (isJsonCmd) "application/json" else "text/html"
+      contentType = "application/json"
       val result = cmdOpt .map (runAsyncCmd) .getOrElse(s"Empty cmd : $cmdOpt")
       result
    }
@@ -72,6 +71,9 @@ class SwitchBackWebApp extends ScalatraServlet with ScalateSupport with CorsSupp
    import yakrider.switchenator.switchback.{SwitchBackService => sv}
    def runAsyncCmd (cmd:String) = { runCmdsLock.synchronized {
       cmd match {
+         case "queryTasks" => { SwitchBackJnaCore.getTasksListJson() }
+         case "activateHwnd" => { params.get("hwnd").map(SwitchBackJnaCore.activateApp).getOrElse("{}") }
+         case "activateHwndTest" => { SwitchBackJnaCoreTest.testActivateWinamp() }
          case _ => { s"""{"status":200, "response":"Unsupported cmd $cmd}"""" }
       }
    } }

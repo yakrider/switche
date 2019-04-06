@@ -48,18 +48,14 @@ lazy val switchface = (project in file("switchface")) .settings (
     scalacOptions += "-P:scalajs:suppressExportDeprecations",
     
     libraryDependencies ++= GlobalSettings.sharedDependencies.value,
-    libraryDependencies ++= GlobalSettings.scalajsDependencies.value,
+    libraryDependencies ++= GlobalSettings.scalajsDependencies.value,    
     jsDependencies ++= GlobalSettings.jsDependencies.value,
+
+    skip in packageJSDependencies := false,   
+
+    resolvers += Resolver.sonatypeRepo("public")
     
-    skip in packageJSDependencies := false,
-   
-    resolvers += Resolver.sonatypeRepo("public"),
-    
-    libraryDependencies ++= GlobalSettings.sharedDependencies.value,
-    libraryDependencies ++= GlobalSettings.scalajsDependencies.value,
-    jsDependencies ++= GlobalSettings.jsDependencies.value
-    
-)
+) 
 //.dependsOn(sharedJS) // disabled until we have shared stuff
 .enablePlugins(ScalaJSPlugin)
 
@@ -71,7 +67,7 @@ EclipseKeys.withSource := true
 
 lazy val elPack = taskKey[Unit]("electronPackage:elPack")
 lazy val elPackProd = taskKey[Unit]("electronPackage:elPackProd")
-addCommandAlias("goLiveServer", "; jetty:stop; switchback/compile; jetty:start")
+addCommandAlias("goLiveServer", "; jetty:stop; switchback/compile; jetty:start; jetty:join")
 
 
 lazy val electronPackage = project.in(file("target/electronPackage")) settings(
