@@ -17,13 +17,35 @@ RUNNING NOTES DUMP ON POSSIBLE WORK ON THE SWITCHENATOR PROJECT :
    - ok, so for more concrete stuff on what exactly the sjs 1.0.x.Mx milestone versions vs 0.6.* versions, here's the starting point
       - https://www.scala-js.org/news/2017/07/03/announcing-scalajs-1.0.0-M1/
       - think biggest stuff was about moving core dependencies out etc, so prob wont be too bad other than code reorg and so on
-      - and uh, best of all, the 1.0.x.Mx path explicitly is setup to deal with js globals such that the nodejs 'require' works nicely.. uhh awesome!!
+      - and uh, best of all, the 1.0.x.Mx path explicitly is setup to deal with js globals such that the nodejs 'require' works nicely.. hmm
+         - although realistically, that only ensures the require, to use from sjs, still need facade etc, at which point, as it suggests, should just use the usual suggested mechanism of '@JSImport and/or CommonJSModule', and create a simple facade for the calls
       
    - finer grained log/notes
       - lots of shit w things that break from default tutorial at https://www.scala-js.org/doc/tutorial/basic/
       - so instead refer to https://github.com/scala-js/scalajs-tutorial which seems to be more recently maintained
          --> but make sure to be on the 1.x branch of it!!
-      - 
+         
+      - next up gotta look up the sjs bundler that interfaces better w npm packaging etc, though for us, could also go the ProvidedJS route
+      - sjs-bundler also has links to examples for writing simple facades to js! sounds like exactly what we wanted!
+         - https://scalacenter.github.io/scalajs-bundler/getting-started.html
+         - maybe could actually try that, but w/o the sjs bundler, i.e just w the local js (via ProvidedJS) and a facade for it
+         - also noting that a facade in sjs for js module/file is not that different from a facade for winapi via ffi in js itself! (which we did/verified earlier!)
+      - as for doing both sjs bundler (for npm dependencies/facades) and provided-js, there's some links here on how that could be made to work
+         - https://github.com/scalacenter/scalajs-bundler/issues/190
+         - and really, think the bunder is the way things are moving forward, and the rec for 1.0+, so should try and go w that unless get stuck there
+      - note ofc, that if bundler works well but provided-js becomes a pain, could also just try to go by some win-api npm package that think we've run into before as well etc, and if necessary write facades for those which dont seem too bad.. although being able to do local stuff will def be handy
+      - also, the bundler has a nice cookbook, which, at this time, will be the most up to date, and give good broad instincts too.. should really go w that
+         - https://scalacenter.github.io/scalajs-bundler/cookbook.html
+      - ooh, also note that there seems to be at least one skeleton for sjs/electron w the webpack/bundler branch !
+         - https://github.com/massung/scala-js-skeleton.g8/tree/webpack
+      - there's also a footnote on packaging for electron w bundler merged into some tree of that cookbook, not sure why its not (at least currently) in trunk
+         - https://github.com/scalacenter/scalajs-bundler/blob/4e121bfb1aeb743af500887635bd723c183979a4/manual/src/ornate/cookbook.md
+      - on setting up actual JSImport schemes, this link should help get the basic idea
+         - https://www.scala-js.org/doc/interoperability/facade-types.html#import
+         
+      -- sweet, so using simple file position import, ext calling seems to work! thats awesome.. gonna get that committteddd!
+         - hmm, so wonder if its worthwhile trying out simple ffi based stuff now..
+         - nah, should go to elec based stuff and try and get local import working there first.. that'd go a long way to getting us set up
 
 
 03/25/2019 .. micro task notes, as looking at ffi setups etc 
