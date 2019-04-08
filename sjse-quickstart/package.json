@@ -1,0 +1,14 @@
+{
+  "name": "scalajs-electron-quick-start",
+  "version": "1.0.0",
+  "description": "A minimal Electron application with Scala.js support",
+  "scripts": {
+    "start": "electron target/electronPackage/scalajs-electron-quick-start-launcher.js",
+    "debug": "electron target/electronPackage/scalajs-electron-quick-start-launcher.js",
+    "test": "sbt test"
+  },
+  "devDependencies": {
+    "electron": "^1.1.1",
+    "source-map-support": "^0.4.0"
+  }
+}

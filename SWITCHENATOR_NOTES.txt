@@ -8,8 +8,8 @@ RUNNING NOTES DUMP ON POSSIBLE WORK ON THE SWITCHENATOR PROJECT :
    - aight, so the last one sputtered out, w the sjs setup just not working to get ext js modules working at all, let alone getting to try out ffi
       - but saw that maybe there were improvements in latest sjs versions to make that a bit easier, though all the material etc we've based shit on is from older versions and just trying to ram it through just wasnt working
    - so now, gonna try and restart the process from a bit more grounds up fashion..
-      - first take the more recent sjs tutorial etc to build up a clean skeleton project in sjs/node .. no electron, no ffi, no x-proj deps etc
-      - try and get basic js import/require working there, and if so, can see where to go from there
+      d- first take the more recent sjs tutorial etc to build up a clean skeleton project in sjs/node .. no electron, no ffi, no x-proj deps etc
+      d- try and get basic js import/require working there, and if so, can see where to go from there
       - (and on plus side, might get us much better situated to be able to deal w electron, ffi etc incorporation going forward too, having understood better from the grounds up how the integration etc ends up happening
       
    - more concrete, start w basic tutorial, try out import, if really get stuck, can ask guys in gitter for samples/pointer/link to get that working
@@ -46,6 +46,34 @@ RUNNING NOTES DUMP ON POSSIBLE WORK ON THE SWITCHENATOR PROJECT :
       -- sweet, so using simple file position import, ext calling seems to work! thats awesome.. gonna get that committteddd!
          - hmm, so wonder if its worthwhile trying out simple ffi based stuff now..
          - nah, should go to elec based stuff and try and get local import working there first.. that'd go a long way to getting us set up
+         
+   -- so, 04/07 here's a checklist on various partial stagest to getting there (i.e to sjs + js-local-imports + electron + win32 ffi)
+         d- 0.0.1 - js, js local imports
+         d- 0.0.2 - js, js-ffi-w32
+         d- 0.0.3 - js, js-ffi-w32, elec (elec-win32-test)
+         d- 0.1.1 - sjs, js-loc (sjs-node-ext-module-test)
+         ?- 0.1.2 - sjs, js-loc, sjs-elec
+         ?- 0.1.3 - sjs, js-loc, js-ffi-w32
+         ?- 0.1.4 - sjs, js-loc, js-ffiw32, sjs-elec
+      - so given we've finally gotten 0.1.1 (sjs + js-local) working, q is do +sjs-elec or +ffi next
+         - think def should do sjs-elec next, as might be able to do ffi just from js, as ffi parts are only called from js imports
+         
+   - so starting w the sjse-elec test.. doing a separate build since the old one is a xapp, and older versions
+      - ended up buidling from 'sbt new massung/scala-js-skeleton.g8 -b webpack'  (i.e. from that github repo webpack branch)
+      - fk, those dont work w 1.0.x milestones.. for now going down to 0.6.27.. will see how that pans out
+      -- uhh, that shit also has weird setup, not even clear how the electron shit actually gets integrated into sjs.. gonna be a pain.. 
+      
+   - fk, trying back now on sjse-xapp.. we have some more insight from the js-elec-w32 app tests, maybe can leverage that to get the old sjse app working now
+      - dammit, even w fkn around, looks like there's incompatibility between using the scalaJSLinkerConfig for module import (as used for local module import) which makes it not work w jsDependencies, and how the electron app structure was
+      - suggested soln is to try adn figure out how to use scalajs-bundler w that shit.. prob means should go back to the non-elec version and get that working w/o the scalaJSLinkerConfig? (ref : up top at https://www.scala-js.org/doc/project/module.html)
+      --> so, the old sjse format uses the jsDependencies in sbt crap, and thats not gonna work w JSImports, so maybe this isnt worthwhile anyway, and gotta go back and revisit the massung version and see if can set that up for easier electron use then instead?
+         - and while at it, could first try the inclusions to make sure those work (say from console) before dealing w actual electron crap
+      -- wait a sec, the working sjs-node-ext-module-test still doesnt use bundler, and uses scalaJSLinkerConfig and Imports..
+         - so should be able to get working w that for sjse (hopefully letting jsDependencies in sbt do all but local shit)
+         
+   - goddamn, so gonna start a clean sjse-quickstart, just to get to a point w working elec again, and w/o any of the cross-proj bs.. then can move on from there
+      
+   
 
 
 03/25/2019 .. micro task notes, as looking at ffi setups etc 
