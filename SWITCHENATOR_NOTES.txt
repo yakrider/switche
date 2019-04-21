@@ -3,7 +3,7 @@ RUNNING NOTES DUMP ON POSSIBLE WORK ON THE SWITCHENATOR PROJECT :
 
 
 
-04/05 .. another dive-in
+04/05 ++ .. another dive-in
 
    - aight, so the last one sputtered out, w the sjs setup just not working to get ext js modules working at all, let alone getting to try out ffi
       - but saw that maybe there were improvements in latest sjs versions to make that a bit easier, though all the material etc we've based shit on is from older versions and just trying to ram it through just wasnt working
@@ -29,7 +29,7 @@ RUNNING NOTES DUMP ON POSSIBLE WORK ON THE SWITCHENATOR PROJECT :
       - sjs-bundler also has links to examples for writing simple facades to js! sounds like exactly what we wanted!
          - https://scalacenter.github.io/scalajs-bundler/getting-started.html
          - maybe could actually try that, but w/o the sjs bundler, i.e just w the local js (via ProvidedJS) and a facade for it
-         - also noting that a facade in sjs for js module/file is not that different from a facade for winapi via ffi in js itself! (which we did/verified earlier!)
+         - also noting that a facade in sjs for js module/file is not that different from a facade for winapi via ffi in js itself (which we did/verified earlier)
       - as for doing both sjs bundler (for npm dependencies/facades) and provided-js, there's some links here on how that could be made to work
          - https://github.com/scalacenter/scalajs-bundler/issues/190
          - and really, think the bunder is the way things are moving forward, and the rec for 1.0+, so should try and go w that unless get stuck there
@@ -48,14 +48,15 @@ RUNNING NOTES DUMP ON POSSIBLE WORK ON THE SWITCHENATOR PROJECT :
          - nah, should go to elec based stuff and try and get local import working there first.. that'd go a long way to getting us set up
          
    -- so, 04/07 here's a checklist on various partial stagest to getting there (i.e to sjs + js-local-imports + electron + win32 ffi)
-         d- 0.0.1 - js, js local imports
-         d- 0.0.2 - js, js-ffi-w32
-         d- 0.0.3 - js, js-ffi-w32, elec (elec-win32-test)
-         d- 0.1.1 - sjs, js-loc (sjs-node-ext-module-test)
-         ?- 0.1.11  sjs-elec
-         ?- 0.1.2 - sjs, js-loc, sjs-elec
-         ?- 0.1.3 - sjs, js-loc, js-ffi-w32
-         ?- 0.1.4 - sjs, js-loc, js-ffiw32, sjs-elec
+         d- 0.0.1 - js, js-loc
+         d- 0.0.2 - js, js-loc-ffi-w32
+         d- 0.0.3 - js, js-loc-ffi-w32, elec (elec-win32-test)
+         d- 0.1.1 - sjs, sjs-js-loc (sjs-node-ext-module-test)
+         d- 0.1.11  sjs, sjs-elec, js-loc (sjs-elec-local-js-test, others) .. note that its sjse + js-loc so far NOT sjs-js-loc
+         d- 0.1.12  sjs, sjs-elec, sjs-loc (sjs-elec-local-js-test, others) .. aight, direct path works apparently for JSImport, will have to see if ok for ffi too
+         ?- 0.1.2 - sjs, sjs-js-loc, sjs-elec
+         ?- 0.1.3 - sjs, sjs-js-loc, js-ffi-w32
+         ?- 0.1.4 - sjs, sjs-js-loc, js-ffiw32, sjs-elec
       - so given we've finally gotten 0.1.1 (sjs + js-local) working, q is do +sjs-elec or +ffi next
          - think def should do sjs-elec next, as might be able to do ffi just from js, as ffi parts are only called from js imports
          
@@ -92,15 +93,46 @@ RUNNING NOTES DUMP ON POSSIBLE WORK ON THE SWITCHENATOR PROJECT :
       - however, for that to even be worthwhile, we should def test out that w the bundling setup, we actually can indeed use local js stuff!!
       - and that could be tested out just from console w/o elec shit, so should get that figured out and tested first before trying to take that over to other sjse!!
       
+   - well damn, that webpack stuff does seem to pick up local JSImports and its prob doable to run w it the whole way.. now just gotta make sure ffi works too
+      - man, havent even looked at ffi in a LOONG while.. we'll have to see if we can brush up quickly looking up old working shit.. glad had separate samples!
+      - wish there was more stuff on that I had written down below than seems to exist.. fk.. think beyond just requiring/installing ffi, it reuqired for electron to be rebuilt, likely using the electron-rebuild in dev-dep, and that in turn might need the node-gyp.. and basically that the app will ONLY work with such a recompiled electron.. now if desperate, could try copying over that electron/node_depencies tree over, but that seems bone-headed.. should try and get this working, then diligently note things down to make it easy to follow through when inevitably will run into it again
+      
+   - aight, so starting w direct ffi from node (same as in elec-w32-test, but now for sjs-elec-local-js-test), will later try for its sjs node_modules
+      - so just to see, tried to just add the dependencies to package.json and install/run .. the install actually called a node-gyp rebuild.. which despite complaints, esp about not seeing a binding.cc, seemed to eventually finish w all the c stuff, realistically though, think it only did the ffi build, nothing for electron itself.. either way, when trying to run it fails complaining about dll binding etc
+      - so now, trying to do an actual electron rebuild.. looking up at that reference again.. its below.. basically three cmds
+         - 'npm install ffi', ' npm install electron-rebuild', ' .\node_modules\.bin\electron-rebuild.cmd'
+      - the node-gyp was installed globally previously, and so not needed again
+      - and thats it for this! .. after that w the copied over win-api ffi code, printed out the list of active windows !!
+         
+   - alright, now there's one big hurdle left.. trying to get that to actually be usable from electron
+      - first blush, since its local, gonna try and see if can just move that to local file, and hopefully not have to install any of the shit into sbt's own version of 'node_dependencies' that its compiling up to later put into webpack bundle.. fk we'll see
+      - huh, interesting, on quick attempt, sbt webpack fails saying it cant find fs in ffi libs.. and its pointing to the dependencies in the root npm not in its own target stuff.. so at least that part is good, but clearly npm as/is is runing fine.. maybe it does more thorough checks, or maybe its because we might have installed ffi globally? though dont really think so.. 
+      -- well, seems to be a WELL decried issue w webpack.. we'll see if the possible workarounds mentioned by folk in tickets and stack-overflow work for us
+         - aight, so crux of the issue is in https://jlongster.com/Backend-Apps-with-Webpack--Part-I .. basically it looks like webpack tries to bundle all the piles of js as it would for a frontend project, but we have backend/node stuff which makes no sense to bundle for frontend and would fail in bunch of ways regardless when attempted
+         - however, the soln there is a little heavy handed, and maybe not necessary for us
+         - folk in https://github.com/webpack-contrib/css-loader/issues/447 have a bunch of other lighter/piecemeal solutions, including specifically excluding out particular modules from webpack.. which might be ok.. esp since going by above blog, looks like can quickly find out which ones have a /bin folder and so shoudl be excluded.. e.g. run 'tree -dfin | grep bin' showed we had ffi, ref, node-gyp as expected, but also sshpk, semver, uuid, which, nopt, mkdirp, combined-stream, detect-libc and so on.. not sure if worth dealing w all those
+         - anyway, so for now, gonna try quick stuff w ffi/ref/node-gyp that we mention/use, and see if that gets rids of the misleading 'fs' complaint and works out
+         - so actual exclusions go into webpack.config.js .. but dammit, didnt work
+         - aight, so went w a related but a much simpler setup.. just added module.exports.target = 'node'; in the webpack config file and it was enough to let webpack understand it was for node and get through compilation w/o complaining
+      -- except the damn thing when trying to run, now complains 'Could not locate the bindings file' .. goddamit, felt soo close
+         - fk, even adding back in the bin file navigating and excluding those from that guys code didnt get rid of it.. fkn hell
+         
+      -- holy fk it worked!! .. ended up having to go to the bundler location (..target/scala-2.12/scalajs-bundler/main) where the node_modules are, and doing a 'npm install ffi ref' .. and next time it built, completed fine, and when ran didnt puke about bindings etc, dumped out window names !! fkn hell goddamn.. feels almost crazy after all this shit pain.. hope its worthwhile but freakinA!!
+      
+      - side note.. so basically that part, incl ffi seems to be running from sbts managed node_modules.. so presumably its possibly the way its currently set up, its gonna be pain to get things that are electron specific to work from there.. hoepfully there's not that many.. we'll see
+      - hmm, could mean that later we might want to slowly migrate everything from the current setup, where there's an outside node/electron setup that opens up a window, and only the page loading there is from a sjs managed bundle and its node/modules .. to a setup where we basically dont need the outside node/elec anymore.. we'd have to try and install elec to the managed modules, somehow find a way to launch using that, and just reference node/elec apis that way.. else currently, it'll be a pain to try and do anything that needs to leverage electron from the sjs code.. and in particular, among the first things might be global key shortcut handling etc..  anyway, we'll see how far this compromise can go
+      
    
 
 
-03/25/2019 .. micro task notes, as looking at ffi setups etc 
+03/25/2019 ++ .. micro task notes, as looking at ffi setups etc 
 
    d- first off, want to find some basic example, get that running again.. the basics w npm etc, getting ui to appear, doesnt need scala/sbt
    d- do a similar, but including win32 api this time.. think there might even be a sample around already.. still just js, write code in js too as need be
       i- setup ffi, some good resources available, 
          - win32 api setup: https://stackoverflow.com/questions/37396157/hiding-other-windows-programs-from-electron-app
+            - basically talks about the three cmds required: 'npm install ffi', ' npm install electron-rebuild', ' .\node_modules\.bin\electron-rebuild.cmd'
+            - now node-gyp is a global install, so once set up, wont have to deal w again for other similar projects here etc
          - will need to have node-gyp setup: https://github.com/nodejs/node-gyp#installation
       - try and get the window list to work and printable first, just to get that part of w32 api working
       - next, and IMPORTANTLY, make sure can switch windows from there too, as that was an issue before

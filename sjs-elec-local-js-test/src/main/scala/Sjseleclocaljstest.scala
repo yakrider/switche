@@ -6,6 +6,7 @@ import scala.scalajs.js.annotation.{JSExport, JSExportTopLevel, JSGlobal, JSImpo
 import org.scalajs.dom
 import scalatags.JsDom.all._
 
+
 object Sjseleclocaljstest extends js.JSApp {
     def main(): Unit = {
         println("Hello from sjseApp..")
@@ -18,16 +19,44 @@ object Sjseleclocaljstest extends js.JSApp {
 }
 
 
+
+@js.native
+@JSImport("./local-js-test.js", JSImport.Default)
+object LocalJs extends js.Object {
+   def hello():String = js.native
+}
+
+@js.native
+@JSImport("./win-helper.js", JSImport.Default)
+object WinapiLocal extends js.Object {
+   def printVisibleWindows():Unit = js.native
+} 
+
+
+
 @JSExportTopLevel("SwitchFacePage")
 object SwitchFacePage {
    def getHelloOutput() = {
       s"Hello! from node ${g.process.versions.node}, Chromium ${g.process.versions.chrome}, and Electron ${g.process.versions.electron}."
    }
+   def getLocalJsHello() = {
+       val localHello = "from local js : " + LocalJs.hello()
+       println (localHello);
+       localHello
+   }
+   def getLocalWinApiHello() = {
+      WinapiLocal.printVisibleWindows(); 
+      s"check console for printout of local windows!"
+   }
    def getShellPage () = {
       val helloOutDiv = div (getHelloOutput)
+      val localHelloDiv = div (getLocalJsHello)
+      val wapiHelloDiv = div (getLocalWinApiHello)
       //val testOutDiv = div ( getTestOutput )
       //val page = div ( helloOutDiv, br, testOutDiv, br, s" **done!** " ).render
-      val page = div ( helloOutDiv, br, s" **done!** " ).render
+      //val page = div ( helloOutDiv, br, s" **done!** " ).render
+      //val page = div ( helloOutDiv, br, localHelloDiv, br, s" **done!** " ).render
+      val page = div ( helloOutDiv, br, localHelloDiv, br, wapiHelloDiv, br, s" **done!** " ).render
       //val page = div ("dammit, yet another hello, from shell page").render
       page
    }

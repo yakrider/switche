@@ -38,7 +38,8 @@ function createWindow () {
 // Some APIs can only be used after this event occurs.
 //app.on('ready', createWindow)
 //app.on('ready', test)
-app.on('ready', inclTest)
+app.on('ready', printVisibleWindows)
+//app.on('ready', inclTest)
 
 // Quit when all windows are closed.
 app.on('window-all-closed', function () {
@@ -87,6 +88,9 @@ var user32 = new ffi.Library('user32.dll', {
   GetWindowTextLengthA  : ['long', ['long']],
   IsWindowVisible  : ['long', ['long']]
 });
+// note on EnumWindows usage.. check the ms docs, but from usage below, looks like it repeatedly calls the callback w new found
+// windows, until either the callback returns false, or it has nothing more to send.. also looks like it only gives 'top-level' windows
+// whatever that means, and apparently not any child-windows.. we'll have to see in practice if need to supplement w EnumChildWindows
 
 function findWindow (name) {
   for(i=0;i<50;i++){ //ensure accurate reading, sometimes returns 0 when window does exist .. horrible horrible crap this is!

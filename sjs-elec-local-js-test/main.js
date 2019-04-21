@@ -1,6 +1,8 @@
 const electron = require('electron');
 const path = require('path');
 
+
+
 // get the index of the first command line argument
 const argv = process.argv.slice(
     process.argv.findIndex((arg) => !path.relative(arg, __filename)) + 1
@@ -75,16 +77,16 @@ function createWindow() {
 // initialization and is ready to create browser windows.
 // Some APIs can only be used after this event occurs.
 //
-//app.on('ready', createWindow);
+app.on('ready', createWindow);
 //app.on('ready', quickTest);
 //app.on('ready', inclTest);
-app.on('ready', tests);
+//app.on('ready', tests);
 
 function tests() {
     quickTest();
     inclTest();
     // note that while the elec main in sjs runs, that outputs to the window... so gotta create that to test from sjs
-    createWindow();
+    //createWindow();    
     //app.quit();
 }
 
@@ -97,6 +99,9 @@ function quickTest() {
 function inclTest() {
     var wapiTest = require('./win-helper');
     console.log(wapiTest.hello());  
+
+    //wapiTest.printVisibleWindows();
+
     //app.quit();  
 }
   
@@ -119,3 +124,5 @@ app.on('activate', function () {
         createWindow();
     }
 });
+
+

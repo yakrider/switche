@@ -6,11 +6,11 @@
     "start": "electron ."
   },
   "devDependencies": {
-    "electron": "^2.0.0"
+    "electron": "^2.0.0",
+    "electron-rebuild": "^1.8.4",
+    "node-gyp": "^3.8.0"
   },
   "dependencies": {
-    "electron-rebuild": "^1.8.4",
-    "ffi": "^2.3.0",
-    "node-gyp": "^3.8.0"
+    "ffi": "^2.3.0"
   }
 }
