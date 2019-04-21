@@ -1,3 +1,10 @@
+
+
+./**/project/project/
+./**/project/target/
+
+
+
 *.class
 *.log
 

@@ -52,6 +52,7 @@ RUNNING NOTES DUMP ON POSSIBLE WORK ON THE SWITCHENATOR PROJECT :
          d- 0.0.2 - js, js-ffi-w32
          d- 0.0.3 - js, js-ffi-w32, elec (elec-win32-test)
          d- 0.1.1 - sjs, js-loc (sjs-node-ext-module-test)
+         ?- 0.1.11  sjs-elec
          ?- 0.1.2 - sjs, js-loc, sjs-elec
          ?- 0.1.3 - sjs, js-loc, js-ffi-w32
          ?- 0.1.4 - sjs, js-loc, js-ffiw32, sjs-elec
@@ -71,7 +72,25 @@ RUNNING NOTES DUMP ON POSSIBLE WORK ON THE SWITCHENATOR PROJECT :
       -- wait a sec, the working sjs-node-ext-module-test still doesnt use bundler, and uses scalaJSLinkerConfig and Imports..
          - so should be able to get working w that for sjse (hopefully letting jsDependencies in sbt do all but local shit)
          
-   - goddamn, so gonna start a clean sjse-quickstart, just to get to a point w working elec again, and w/o any of the cross-proj bs.. then can move on from there
+   - goddamn, so gonna start a clean 'sjse-quickstart', just to get to a point w working elec again, and w/o any of the cross-proj bs.. then can move on from there
+      - uhh fk .. feel like was close, but now appears we need to be on 1.x versions, while the only thing the dumb mscharley facades available are way old
+      x- hmm, coudl try adn force use whatever dependencies are available and see if that works out
+         - nope, shit be pain in the ass
+      - or could try and just copy over the facades and keep em around for local use
+         - well, brought over the dep files, tried to compile, copmlains of @JSExportDescendentObjects annotation, orig being in sjs 0.6.9 and sbt 0.13.9
+      --> fkn sob, this stupid shit, after all this, getting this to compile. upgrading all of those dumb elec facades to work w sjs 1.x , and STILL gives the fkn error saying cant find the modules.. un fkn believable
+      
+   -- k, so at this point, think it might make most sense to go back to that massung 'sjse-elec-local-js-test' which was already set for webpack, and try and see if can just get that to print/play nicely on electron launch.. shouldnt actually be that bad if its all setup, and since we're now quite familiar w how the launches etc work there too.. prob our best bet.. and maybe if that works, but we want to come back to our setups, it might give clues on whats needed to get things to work w webpack too   
+      - fkn shit, that thing, while it comes up (note to use fastOptJS::webpack instead, and checkout the webpack branch), it doesnt really seem to have the electron and regular sjs/js/html parts connected.. whatever the 'left as exercise for reader' part is, is fkn infuriating... i tried a bit, but really prob not worth fkn around w something that the guy didnt even try out.. who know if its straightforward or just stuck up in painful shit
+      - (do note that, on trying to build w webpack, it complains of a bunch of shit and assertion failures, but does seem to create the right js bundles!)
+      - and besides, it has no/minimal elec support for sjs.. its all in js mostly.. so even if get it working prob a continuing pain in the ass
+      - the minimal sjs connection though, is there.. i.e. the bundle calls its 'main' in scala, and that executes and prints in console, just the elec part sucks
+      -- ugh, turned out the simple integration just required that the div i'm trying to pullin main code was defined in html before the bundled script was included.. dammit that sucked!.. anyway, we'll see if this is an adequate way (elec integration but more like a page call), but at least we can move ahead from this part.. the stuff below about trying to make use of local js though still applies 
+   
+   -- ok, here's a round about thought.. so the pain w that massung webpack version was connecting w elec.. but why care about that, we have other mostly working samples for that part.. the missing stuff there was trying to get the sjs w elec to load up local js stuff right.. and that was what we were trying to get to by using the webpack bundling shit for our sjs compilation.. until we got stuck wasting time on that template's elec setup...
+      - so first thought from there would be to try and take the bundling setup from there onto other working sjse setups.. and thats not a bad idea
+      - however, for that to even be worthwhile, we should def test out that w the bundling setup, we actually can indeed use local js stuff!!
+      - and that could be tested out just from console w/o elec shit, so should get that figured out and tested first before trying to take that over to other sjse!!
       
    
 

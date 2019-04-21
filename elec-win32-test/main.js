@@ -37,7 +37,8 @@ function createWindow () {
 // initialization and is ready to create browser windows.
 // Some APIs can only be used after this event occurs.
 //app.on('ready', createWindow)
-app.on('ready', test)
+//app.on('ready', test)
+app.on('ready', inclTest)
 
 // Quit when all windows are closed.
 app.on('window-all-closed', function () {
@@ -155,7 +156,12 @@ function test() { // huh, both options below seems really unreliable, often retu
 
   //printVisibleWindows()
 
+}
 
+function inclTest() {
+  var wapiTest = require('./win-helper');
+  console.log(wapiTest.hello());  
+  app.quit();
 
 }
 
