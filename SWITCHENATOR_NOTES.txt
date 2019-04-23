@@ -3,6 +3,53 @@ RUNNING NOTES DUMP ON POSSIBLE WORK ON THE SWITCHENATOR PROJECT :
 
 
 
+04/21 ++ .. post minimal workable path notes ..
+   
+   - k, so, dates above might be deceiving, but finally got done through the last part of getting basic win-api working via ffi in an electron hosted node app, all of which makes most of the second half of the long note below.. but anyway now that the minimal mechanism is validated, although more can be done there, can start thinking about what exactly is next on going about shaping things here quickly
+   
+   - so first off, there's still that disconnect thing going on w electron launcher/host, and the frontend like sjs bundler connected to the index.html that gets loaded into the electron page.. not that big a deal since still can get pretty much full access to node stuff from the sbt/bundler managed part, but at least as of now, that isnt doing anything electron.. eventually could look into seeing if can eliminate the external stuff jsut to fire up electron
+   
+   - also note that, the bundler when its trying to look up stuff, 
+   
+   - eitherway, as it stands, among the few things we'd prob want electron functionality is in registering a global shortcut.. 
+      - now ofc its quick and easy to do that in js, and examples are straightforward (https://electronjs.org/docs/api/global-shortcut)
+      - if so, we'd have to pass those events into the page.. and currently we dont have very good comm between those.. 
+      - presumably we could do so by making the bundler compile not just as an app, but as app+library 
+         (https://scalacenter.github.io/scalajs-bundler/reference.html#bundling-mode-library-and-application)
+      - then could just call the desired sjs fns from js code as necessary, as should be able to import the bundle js in any js code just like in index.htm
+      
+   - would prob also want to update the window to be more reasonable, but for now prob nbd, might as well keep going till more usable
+   
+   d-- def first in line for functionality testing, is to make sure that can do activations as well, otherwise, kind of pointless !!
+      d- oh yeah.. shit def works! .. freaking feels nice man, to finally get to this point after unending stream of frustrations!
+      
+   - next up, is getting the list of windows, and minimally at least, the hwnd, back to scala via return val rather than printing in console
+   - the other half on making the make-fgnd by passing hwnd should be even easier
+   - then can have a minimal ui w printed out the titles in ui as links, and having them clicked to activate the window!!
+   
+   - hmm, although given we're this far, and know how things work a lot better.. could be worthwhile to try and see if we can do the win-api directly in our code..
+      - basically to make facades directly using ffi, and use that as npm dependencies for bundler.. making facades should be that bad
+      - and further, it will give MUCH better control and easier iteration to make things fast like 
+         - e.g. calling get window fns w callbacks to update dynamically, 
+      --  impl notes on this
+         - to pass around callbacks etc, worth looking at http://www.scala-js.org/doc/interoperability/types.html
+   
+   - and then can quickly start iterating on usability, as all that is just sjs stuff that can be done w/o much pain! 
+   
+   - and while doing the sjs ui stuff, should REALLY look into the 'webpack-dev-server' as that would save good time and annoyance on code/build/test cycle
+      - https://scalacenter.github.io/scalajs-bundler/cookbook.html#webpack-dev-server
+      
+   - and then ofc, lets start eating eating our own dogfood.. sooner the better!
+   
+   - hmm, and will have to figure out what makes sense for bkg tasks etc.. basically doing periodic polling to keep querying data etc
+      - esp if looks like we'll be stuck waiting for winapi calls in any thread etc, def gotta figure out async kind of work to have things be snappy
+      
+   - ugh, and there's work to get icons etc, even just to have minimally usable stuff, not gonna be handy to use w/o visual guidance on apps etc
+   - and ofc, gotta see what makes most sense to querying the details other than just the title etc for the windows.. 
+      - want enough at least to be able to group by exe, filter out stuff, lookup icons, etc .. and hopefully keep it fast and/or cached
+   
+
+
 04/05 ++ .. another dive-in
 
    - aight, so the last one sputtered out, w the sjs setup just not working to get ext js modules working at all, let alone getting to try out ffi
@@ -80,7 +127,8 @@ RUNNING NOTES DUMP ON POSSIBLE WORK ON THE SWITCHENATOR PROJECT :
       - or could try and just copy over the facades and keep em around for local use
          - well, brought over the dep files, tried to compile, copmlains of @JSExportDescendentObjects annotation, orig being in sjs 0.6.9 and sbt 0.13.9
       --> fkn sob, this stupid shit, after all this, getting this to compile. upgrading all of those dumb elec facades to work w sjs 1.x , and STILL gives the fkn error saying cant find the modules.. un fkn believable
-      
+     
+   -- 04/21+   
    -- k, so at this point, think it might make most sense to go back to that massung 'sjse-elec-local-js-test' which was already set for webpack, and try and see if can just get that to print/play nicely on electron launch.. shouldnt actually be that bad if its all setup, and since we're now quite familiar w how the launches etc work there too.. prob our best bet.. and maybe if that works, but we want to come back to our setups, it might give clues on whats needed to get things to work w webpack too   
       - fkn shit, that thing, while it comes up (note to use fastOptJS::webpack instead, and checkout the webpack branch), it doesnt really seem to have the electron and regular sjs/js/html parts connected.. whatever the 'left as exercise for reader' part is, is fkn infuriating... i tried a bit, but really prob not worth fkn around w something that the guy didnt even try out.. who know if its straightforward or just stuck up in painful shit
       - (do note that, on trying to build w webpack, it complains of a bunch of shit and assertion failures, but does seem to create the right js bundles!)
