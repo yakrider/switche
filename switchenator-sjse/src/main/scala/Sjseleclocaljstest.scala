@@ -5,6 +5,7 @@ import scala.scalajs.js.Dynamic.{global => g, literal => JsObject}
 import scala.scalajs.js.annotation.{JSExport, JSExportTopLevel, JSGlobal, JSImport}
 import org.scalajs.dom
 import scalatags.JsDom.all._
+import js.JSConverters._
 
 
 object Sjseleclocaljstest extends js.JSApp {
@@ -21,18 +22,22 @@ object Sjseleclocaljstest extends js.JSApp {
 
 
 @js.native
-@JSImport("./local-js-test.js", JSImport.Default)
+@JSImport("../../../../src/main/resources/local-js-test.js", JSImport.Default)
 object LocalJs extends js.Object {
    def hello():String = js.native
 }
 
 @js.native
-@JSImport("./win-helper.js", JSImport.Default)
+@JSImport("../../../../src/main/resources/win-helper.js", JSImport.Default)
 object WinapiLocal extends js.Object {
-   def printVisibleWindows():Unit = js.native
-} 
+   //def printVisibleWindows():Unit = js.native
+   def activateTestWindow():Unit = js.native
+   //def getVisibleWindows(cb:Array[String]=>Unit):Unit = js.native
+   def getVisibleWindows (cb:js.Function1[js.Array[String], Unit]):Unit = js.native
+   def streamWindowsQuery (cb:js.Function2[Int,Int,Boolean], callId:Int):Boolean = js.native
+}
 
-
+ 
 
 @JSExportTopLevel("SwitchFacePage")
 object SwitchFacePage {
@@ -44,9 +49,20 @@ object SwitchFacePage {
        println (localHello);
        localHello
    }
+   def procWinListCallback(warr:js.Array[String]) = {warr.foreach(println)}
+   def procStreamWinQueryCallback (hwnd:Int, callId:Int) = {
+      // ms docs api reference : BOOL EnumWindows( WNDENUMPROC lpEnumFunc, LPARAM lParam );
+      // ms docs ref for callback : BOOL CALLBACK EnumWindowsProc( _In_ HWND   hwnd, _In_ LPARAM lParam );
+      println (s"for call-id: ${callId}, got hwnd: ${hwnd}")
+      true
+   }
    def getLocalWinApiHello() = {
-      WinapiLocal.printVisibleWindows(); 
-      s"check console for printout of local windows!"
+      //WinapiLocal.printVisibleWindows(); 
+      //WinapiLocal.activateTestWindow();
+      //WinapiLocal.getVisibleWindows(procWinListCallback _);
+      //s"check console for printout of local windows!"
+      WinapiLocal.streamWindowsQuery(procStreamWinQueryCallback _, 17);
+      ""
    }
    def getShellPage () = {
       val helloOutDiv = div (getHelloOutput)

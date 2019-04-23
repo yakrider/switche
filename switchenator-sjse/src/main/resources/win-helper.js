@@ -20,8 +20,8 @@ function TEXT(text) {
  
  var user32v0 = new ffi.Library('user32', {
    'FindWindowW': ['int', ['string', 'string']],
-   'SetForegroundWindow': ['int', ['int']],
-   'BringWindowToTop': ['int', ['int']],
+   'SetForegroundWindow': ['bool', ['int']],
+   'BringWindowToTop': ['bool', ['int']],
    'ShowWindow': ['int', ['int', 'int']],
    'ShowWindowAsync': ['int', ['int', 'int']],
  });
@@ -46,19 +46,23 @@ function TEXT(text) {
  
  function findWindow (name) {
    for(i=0;i<50;i++){ //ensure accurate reading, sometimes returns 0 when window does exist .. horrible horrible crap this is!
-     handle = user32.FindWindowW(null, TEXT(name))
+     handle = user32.FindWindowW(null, TEXT(name));
      if(handle!==0){break;}
    }
    return handle;
  }
+
  
  
  var enumWindowsArray = []; //{};
  var enumWindowsTimeout;
  var enumWindowsCallback;
- function getVisibleWindows (callback) {
+ exports.getVisibleWindows = function getVisibleWindows (callback) {
    enumWindowsArray = []; //{};
+   console.log(callback);
    enumWindowsCallback = callback;
+   // ms docs api reference : BOOL EnumWindows( WNDENUMPROC lpEnumFunc, LPARAM lParam );
+   // ms docs ref for callback : BOOL CALLBACK EnumWindowsProc( _In_ HWND   hwnd, _In_ LPARAM lParam );
    user32.EnumWindows (ffi.Callback ('bool', ['long', 'int32'], function (hwnd, lParam) {
      clearTimeout(enumWindowsTimeout);
      enumWindowsTimeout = setTimeout(enumWindowsCallback,50,enumWindowsArray); // 50ms after last run, assume ended
@@ -73,23 +77,48 @@ function TEXT(text) {
      //enumWindowsArray[hwnd] = name;
      //enumWindowsArray.push (const {h:hwnd,n:name})
      //enumWindowsArray.push (hwnd,name)
-     enumWindowsArray.push (name)
+     enumWindowsArray.push (name);
  
      return true;
    }), 0);
  }
 
+exports.streamWindowsQuery = function streamWindowsQuery (callback, callId) {
+  user32.EnumWindows (ffi.Callback ('bool', ['long', 'int32'], callback), callId);
+}
+exports.checkWindowVisible = function checkWindowVisible (hwnd) {
+  user32.IsWindowVisible(hwnd)
+}
+exports.getWindowText = function getWindowText (hwnd) {
+  //var length = user32.GetWindowTextLengthA(hwnd);
+  //if (length == 0) return "";
+  //var limlen = (length < 200) ? length+1 : 200; // limit to 200 chars max
+  //var buf = new Buffer(limlen);
+  var buf = new Buffer(200);
+  var copiedLen = user32.GetWindowTextA(hwnd, buf, 128);
+  var name = ref.readCString(buf, 0); // reads till first null so shorter strings are fine
+  return name;
+}
+
 exports.printVisibleWindows = function printVisibleWindows() {
-   getVisibleWindows ( function () {
-     console.log(enumWindowsArray)
-     //app.quit()
+   getVisibleWindows ( function (arr) {
+    //console.log(enumWindowsArray);
+    console.log(arr);
+    //app.quit()
    });
  }
+
+exports.activateTestWindow = function activateTestWindow() {
+  var h = findWindow ('Untitled - Notepad');
+  console.log('found handle : ' + h);
+  user32.SetForegroundWindow(h);
+}
+
  
  function test() { // huh, both options below seems really unreliable, often returning 0 for handle while finding it at other times, and not reliably activating window either
    var handle = user32v0.FindWindowW (null, TEXT('Untitled - Notepad'));
    //var h2 = user32.FindWindowW (null, TEXT('Untitled - Notepad'));
-   var h2 = findWindow ('Untitled - Notepad')
+   var h2 = findWindow ('Untitled - Notepad');
    var h3 = user32.FindWindowW (null, TEXT('Rapid Environment Editor'));
    console.log('handle is : ' + handle); // hmm, at least this works!
    console.log('h2 is : ' + h2); // hmm, at least this works!
