@@ -21,7 +21,7 @@ module.exports.externals = nodeModules;
 
 // modify the output directory where the bundle.js file is written
 module.exports.output = {
-    filename: 'Sjseleclocaljstest-bundle.js',
+    filename: 'switchenator-sjse-bundle.js',
     path: outputPath,
 };
 

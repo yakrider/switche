@@ -3,6 +3,23 @@ RUNNING NOTES DUMP ON POSSIBLE WORK ON THE SWITCHENATOR PROJECT :
 
 
 
+04/25 .. taking stock
+   - having gotten past the massive initila winapi blockage, a huge amount of progress has been made, though new issues do keep surfacing..
+   - have a minimally working setup, w actual listing and switching working!
+      - took a bit to get at the flakiness on activation, but activating after a tiny timeout to let win register the app did proces last input helped a lot!
+      - ended up working a bit on the ui/presentation .. and its already not bad.. thats nice!
+      - some very decent caching and call optimization has been built in.. gotta say its not bad at all speed wise, after the first startup
+      - getting at the exe has been a pain that still needs addressing.. the getWindowModuleFile was a red herring.. only works for windows of same exe process!
+      - ugh the webpack dev server didnt look like would pan out either, its built into sjs, and doesnt play well w electron
+      
+   - next up sets of things to focus on
+      - def gotta get that exe extraction working.. not least because we wanted that for all of exclusion filtering, ico extraction, grouping/sorting!
+      - really want to work on the icon work too, but maybe can wait and see how far just the exe names can get us, though feels it might be crucial for usability
+      - need to start putting in at least some minimal keyboard handling.. even if just inside page for now.. for sorts, search, grouping etc
+      - gotta add in the outside hotkey handling for the elec app too, just to get the thing to show up on hotkey, and maybe hide/reappear too
+      - and really at some point, gotta try and merge in the two nested electron setups for this into just the sjs ele.. though might not be easy/worthwhile yet
+      
+
 04/21 ++ .. post minimal workable path notes ..
    
    - k, so, dates above might be deceiving, but finally got done through the last part of getting basic win-api working via ffi in an electron hosted node app, all of which makes most of the second half of the long note below.. but anyway now that the minimal mechanism is validated, although more can be done there, can start thinking about what exactly is next on going about shaping things here quickly

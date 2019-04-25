@@ -11,7 +11,7 @@ var ffi = require('ffi');
 
 var voidPtr = ref.refType(ref.types.void);
 var stringPtr = ref.refType(ref.types.CString);
-
+var lpdwordPtr = ref.refType(ref.types.int);
 
 function TEXT(text) {
    return new Buffer(text, 'ucs2').toString('binary');
@@ -28,17 +28,26 @@ function TEXT(text) {
  
  
  // e.g https://github.com/MrTimcakes/node-hide/blob/master/main.js
+ // note that references are in https://docs.microsoft.com/en-us/windows/desktop/api/winuser/
+ // the A and W versions of things deal with / return strings are for Ansi and Unicode/Wide variant strings
  var user32 = new ffi.Library('user32.dll', {
-   EnumWindows : ['bool', [voidPtr, 'int32']],
+   // BOOL EnumWindows( WNDENUMPROC lpEnumFunc, LPARAM lParam );
+   // BOOL CALLBACK EnumWindowsProc( _In_ HWND   hwnd, _In_ LPARAM lParam );
+   EnumWindows : ['int', [voidPtr, 'int32']],
    FindWindowW : ['int', ['string', 'string']],
    ShowWindow : ['int', ['int', 'int']],
    ShowWindowAsync : ['int', ['int', 'int']],
-   SetForegroundWindow: ['long', ['long']],
+   SetForegroundWindow: ['int', ['int']],
    BringWindowToTop: ['long', ['long']],
    CloseWindow  : ['long', ['long']],
-   GetWindowTextA  : ['long', ['long', stringPtr, 'long']],
+   GetWindowTextA  : ['int', ['int',stringPtr,'int']],
+   GetWindowTextW  : ['int', ['int',stringPtr,'int']],
    GetWindowTextLengthA  : ['long', ['long']],
-   IsWindowVisible  : ['long', ['long']]
+   GetWindowTextLengthW  : ['long', ['long']],
+   IsWindowVisible  : ['int', ['int']],
+   GetWindowModuleFileNameA : ['int', ['int',stringPtr,'int']],
+   GetWindowModuleFileNameW : ['int', ['int',stringPtr,'int']],
+   GetWindowThreadProcessId : ['int', ['int', lpdwordPtr]]
  });
  // note on EnumWindows usage.. check the ms docs, but from usage below, looks like it repeatedly calls the callback w new found
  // windows, until either the callback returns false, or it has nothing more to send.. also looks like it only gives 'top-level' windows
@@ -52,7 +61,44 @@ function TEXT(text) {
    return handle;
  }
 
- 
+
+// hmm, fails to load
+/*
+var oleacc = new ffi.Library('oleacc.dll' {
+  // HANDLE WINAPI GetProcessHandleFromHwnd( _In_ HWND hwnd );
+  GetProcessHandleFromHwnd : ['int', ['int']]
+});*/
+exports.getWindowProcessId = function getWindowProcessId (hwnd) {
+   //return oleacc.GetProcessHandleFromHwnd(hwnd);
+}
+exports.getWindowThreadProcessId = function getWindowThreadProcessId (hwnd) {
+   //DWORD GetWindowThreadProcessId( HWND hWnd, LPDWORD lpdwProcessId );
+   var pidRef = ref.alloc(lpdwordPtr);
+   user32.GetWindowThreadProcessId(hwnd,pidRef);
+   var pid = pidRef.readInt32LE(0);
+   return pid
+}
+
+
+var psapi = new ffi.Library('psapi.dll', {
+  // DWORD GetProcessImageFileNameA( HANDLE hProcess, LPSTR  lpImageFileName, DWORD  nSize );
+  // note that a process handle is not the same as the pid
+  GetProcessImageFileNameA : ['int', ['int',stringPtr,'int']]
+});
+exports.getProcessExe = function getProcessExe (handle) {
+   var buf = new Buffer(200);
+   var copiedLen = psapi.GetProcessImageFileNameA(handle,buf,200);
+   var name = ref.readCString(buf,0);
+   return name
+}
+exports.getProcessExeFromHwnd = function getProcessExeFromHwnd(hwnd) {
+   var handle = 0; //oleacc.GetProcessHandleFromHwnd(hwnd);
+   var buf = new Buffer(200);
+   var copiedLen = psapi.GetProcessImageFileNameA(handle,buf,200);
+   var name = ref.readCString(buf,0);
+   return name
+}
+
  
  var enumWindowsArray = []; //{};
  var enumWindowsTimeout;
@@ -84,10 +130,13 @@ function TEXT(text) {
  }
 
 exports.streamWindowsQuery = function streamWindowsQuery (callback, callId) {
-  user32.EnumWindows (ffi.Callback ('bool', ['long', 'int32'], callback), callId);
+  // no return, will repeatedly call callback w new windows found, incl non-visible ones
+  // in theory returns 0/1 code, but chrome console says returns 'undefined'
+  user32.EnumWindows (ffi.Callback ('int', ['long', 'int32'], callback), callId);
 }
 exports.checkWindowVisible = function checkWindowVisible (hwnd) {
-  user32.IsWindowVisible(hwnd)
+  // in theory returns bool, but think its still 0/1
+  return user32.IsWindowVisible(hwnd);
 }
 exports.getWindowText = function getWindowText (hwnd) {
   //var length = user32.GetWindowTextLengthA(hwnd);
@@ -95,10 +144,27 @@ exports.getWindowText = function getWindowText (hwnd) {
   //var limlen = (length < 200) ? length+1 : 200; // limit to 200 chars max
   //var buf = new Buffer(limlen);
   var buf = new Buffer(200);
-  var copiedLen = user32.GetWindowTextA(hwnd, buf, 128);
+  var copiedLen = user32.GetWindowTextA(hwnd, buf, 200);
   var name = ref.readCString(buf, 0); // reads till first null so shorter strings are fine
   return name;
 }
+exports.activateWindow = function activateWindow (hwnd) {
+  // returns bool as 0/1
+  user32.ShowWindowAsync(hwnd, 9); // 9 is the SW_RESTORE cmd, works whether minimized or not
+  return user32.SetForegroundWindow(hwnd);
+}
+exports.getWindowModuleFile = function getWindowModuleFile (hwnd) {
+  // uhh, this is pointless, only works for windows or children matching the same as the requesting process!
+  // UINT GetWindowModuleFileNameW ( HWND   hwnd, LPWSTR pszFileName, UINT   cchFileNameMax );
+  //GetWindowModuleFileNameA : ['int', ['long',stringPtr,'int']],
+  var buf = new Buffer(512);
+  var copiedLen = user32.GetWindowModuleFileNameA(hwnd,buf,512);
+  var name = ref.readCString(buf,0);
+  return name;
+}
+exports.getProcessIcon = function getProcessIcon (pid) {
+}
+
 
 exports.printVisibleWindows = function printVisibleWindows() {
    getVisibleWindows ( function (arr) {

@@ -1,7 +1,7 @@
 enablePlugins(ScalaJSPlugin, ScalaJSBundlerPlugin)
 
 // project name/version
-name := "Sjseleclocaljstest"
+name := "switchenator-sjse"
 version := "0.1.0"
 
 // what version of scala to use

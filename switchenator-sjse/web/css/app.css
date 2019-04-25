@@ -1,3 +1,48 @@
 * {
     margin: 0;
 }
+#scala-js-root-div {
+   background: #404040;
+}
+
+#top-ribbon { color: yellowgreen; }
+#top-ribbon a { color: yellowgreen; }
+
+.titleSpan {
+  display: inline-block;
+  width: 800px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.exeSpan {
+  display: inline-block;
+  width: 120px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  text-align: right;
+}
+.exeIcoSpan {
+  display: inline-block;
+  width: 32px;
+  overflow: hidden;
+}
+.elemBox {
+   background: #404040;
+   color: gold;
+   font: status-bar;
+   font-size: medium;
+}
+.elemBox:hover{
+    color: floralwhite;
+    background: slateblue;
+}
+.elemBox:active{
+   background: slateblue;
+   color: aquamarine;
+}
+
+/*
+- light good colors : honeydew, lightyellow, lightgrey, lightcyan, azure, bisque, beige, ghostwhite, ivory, lavender, mintcream, oldlace, aliceblue
+*/
