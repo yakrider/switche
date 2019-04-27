@@ -12,7 +12,8 @@ fs.readdirSync('node_modules')
   });
 
 // where the final bundle be written
-const outputPath = path.resolve('../../../../web/js');
+//const outputPath = path.resolve('../../../../web/js');
+const outputPath = path.resolve('./');
 
 // load the auto-generated webpack config file
 module.exports = require('./scalajs.webpack.config');

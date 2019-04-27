@@ -11,21 +11,12 @@ var ffi = require('ffi');
 
 var voidPtr = ref.refType(ref.types.void);
 var stringPtr = ref.refType(ref.types.CString);
-var lpdwordPtr = ref.refType(ref.types.int);
+var lpdwordPtr = ref.refType(ref.types.ulong);
 
 function TEXT(text) {
    return new Buffer(text, 'ucs2').toString('binary');
  }
- 
- 
- var user32v0 = new ffi.Library('user32', {
-   'FindWindowW': ['int', ['string', 'string']],
-   'SetForegroundWindow': ['bool', ['int']],
-   'BringWindowToTop': ['bool', ['int']],
-   'ShowWindow': ['int', ['int', 'int']],
-   'ShowWindowAsync': ['int', ['int', 'int']],
- });
- 
+
  
  // e.g https://github.com/MrTimcakes/node-hide/blob/master/main.js
  // note that references are in https://docs.microsoft.com/en-us/windows/desktop/api/winuser/
@@ -52,7 +43,14 @@ function TEXT(text) {
  // note on EnumWindows usage.. check the ms docs, but from usage below, looks like it repeatedly calls the callback w new found
  // windows, until either the callback returns false, or it has nothing more to send.. also looks like it only gives 'top-level' windows
  // whatever that means, and apparently not any child-windows.. we'll have to see in practice if need to supplement w EnumChildWindows
- 
+
+ var kernel32 = new ffi.Library('kernel32.dll', {
+    //HANDLE OpenProcess( DWORD dwDesiredAccess, BOOL  bInheritHandle, DWORD dwProcessId );
+    OpenProcess : ['int', ['int','int','int']],
+    //BOOL CloseHandle( HANDLE hObject );
+    CloseHandle : ['int', ['int']]
+ });
+
  function findWindow (name) {
    for(i=0;i<50;i++){ //ensure accurate reading, sometimes returns 0 when window does exist .. horrible horrible crap this is!
      handle = user32.FindWindowW(null, TEXT(name));
@@ -69,6 +67,7 @@ var oleacc = new ffi.Library('oleacc.dll' {
   GetProcessHandleFromHwnd : ['int', ['int']]
 });*/
 exports.getWindowProcessId = function getWindowProcessId (hwnd) {
+   console.log('this oleacc call has been disabled')
    //return oleacc.GetProcessHandleFromHwnd(hwnd);
 }
 exports.getWindowThreadProcessId = function getWindowThreadProcessId (hwnd) {
@@ -77,6 +76,24 @@ exports.getWindowThreadProcessId = function getWindowThreadProcessId (hwnd) {
    user32.GetWindowThreadProcessId(hwnd,pidRef);
    var pid = pidRef.readInt32LE(0);
    return pid
+}
+exports.openProcess = function openProcess (pid) {
+   //HANDLE OpenProcess( DWORD dwDesiredAccess, BOOL  bInheritHandle, DWORD dwProcessId );
+   // re access-bitmap arg, sending 1040.. we want 0x0400 and 0x0010 (QUERY, and VM_READ), but we're passing as decimal int
+   return kernel32.OpenProcess (1040,0,pid)
+}
+exports.getProcessExeFromPid = function getProcessExeFromPid (pid) {
+   //HANDLE OpenProcess( DWORD dwDesiredAccess, BOOL  bInheritHandle, DWORD dwProcessId );
+   // re access-bitmap arg, sending 1040.. we want 0x0400 and 0x0010 (QUERY, and VM_READ), but we're passing as decimal int
+   var handle = kernel32.OpenProcess (1040,0,pid)
+   var buf = new Buffer(512);
+   // DWORD GetProcessImageFileNameA( HANDLE hProcess, LPSTR  lpImageFileName, DWORD  nSize );
+   var copiedLen = psapi.GetProcessImageFileNameA(handle,buf,512);
+   var name = ref.readCString(buf,0);
+   //console.log('pid:',pid,', handle:',handle,', copied len:',copiedLen,', name: ', name)
+   //BOOL CloseHandle( HANDLE hObject );
+   kernel32.CloseHandle(handle);
+   return name
 }
 
 

@@ -18,7 +18,49 @@ RUNNING NOTES DUMP ON POSSIBLE WORK ON THE SWITCHENATOR PROJECT :
       - need to start putting in at least some minimal keyboard handling.. even if just inside page for now.. for sorts, search, grouping etc
       - gotta add in the outside hotkey handling for the elec app too, just to get the thing to show up on hotkey, and maybe hide/reappear too
       - and really at some point, gotta try and merge in the two nested electron setups for this into just the sjs ele.. though might not be easy/worthwhile yet
-      
+
+
+04/23 .. moving these impl notes from code to here, as they are quickly getting outdated, but could be useful for thought-evolution reference..
+   -- some thoughts on rules..
+      - note that it might be easier to explore these using jna code from the initial switchback project
+   - not sure if all things with empty titles can be ignored.. but maybe ok to start out with
+   ?- but most things w len/width 0 windows can be ignored, and most, but not all, have empty titles..
+      ?- meaning checking title can be an initial shortcut, but if find empty, can go ahead and check win sizes
+   - looks like there's 'Desktop' window named 'Program Manager' usually at bottom of stack, not sure if should exclude it
+   - there'll be a bunch of other spurious windows explorer windows.. looks like filtering for empty title should clar most/all of those
+   - some w hidden windows should always be ignored.. like our own ShakenMouseEnlarger.exe
+   - most things from ApplicationFrameHost.exe can prob be ignored
+      - especially if they have dup titles w some other windows thing (e.g. Store, Settings)
+   - winamp seems to give two windows too, size wise looks like one is for the titlebar-only/windowshade mode.. but doesnt matter which one we keep
+   
+   -- so anyway, will need some mix of generic and specific rules
+      - abstract rule by exe .. specific instantiation for ShakenMouseEnlarger
+      - generic rule for empty titles
+      - abstract rule by exe/title .. specific inst for explorer 'DesktopWindow'
+      - abstract combined rule .. specific inst (dup ApplicationFrameHost), inst (dup winamp)
+         - e.g. chained AND rule w/ a generic is dup title, and inst of check exe, maybe even check exe of other dup
+         
+   - hopefully can avoid having to read win sizes etc.. likely to slow things down etc
+   - hopefully dont have to rely on list order either (e.g. that ShakenMouseEnlarger/Start are at top, and the desktop is at bottom
+   
+   -- as for actual processing strategy..
+      -- we want to make approx presentation fast, then increase accuracy as we go along
+      - display pre-existing render immediately
+      - then maka a EnumWindows call w streaming callbacks w just hwnds
+      - have callback handlers (atomically? no, js is single-threaded!) update an ordering holder, or update a new one per winlist call
+      - on each callback, check if hwnd already in cache, if so update display w it in right position
+         - if not in cache, fire off call for isVis and get Title checks, when those are back, update cache
+         - given results, if meet inclusion criteria, update/reorder display, if need more info queue more calls (e.g exe loc)
+         - ditto w handling any further calls make async like w results from exe loc lookup
+      - for the ones in cache, and now displayed, still fire off lookups, as will want updated title at least
+      - as things come back, stuff that doesnt come up shoudl move lower and lower in queue, should prob put a timeout to remove them after some time
+         - could also explicitly queue a check for isWindow before removing the ones that dont come back.. not clear if should leave those in cache
+         
+      - also, since all this might (hopefully) be really fast, and its pointless redoing layout repeatedly w/o display, should call requestAnimationFrame(cb)
+         - will let us naively continue making page updates on any winapi callback, while the re-render only happens right when chrome is about to repaint (~16.6ms)
+         - also, its just a one time request that get collated till next paint, so everytime we get win callback that precipitates a change, queue it up, thats it
+   
+       
 
 04/21 ++ .. post minimal workable path notes ..
    
@@ -183,6 +225,7 @@ RUNNING NOTES DUMP ON POSSIBLE WORK ON THE SWITCHENATOR PROJECT :
          - fk, even adding back in the bin file navigating and excluding those from that guys code didnt get rid of it.. fkn hell
          
       -- holy fk it worked!! .. ended up having to go to the bundler location (..target/scala-2.12/scalajs-bundler/main) where the node_modules are, and doing a 'npm install ffi ref' .. and next time it built, completed fine, and when ran didnt puke about bindings etc, dumped out window names !! fkn hell goddamn.. feels almost crazy after all this shit pain.. hope its worthwhile but freakinA!!
+         - also a later added note, if regives pain on say webpack dev server stuff, reinstall those, also do npm install --save-dev loglevel, can also consider adding "ffi" -> "^2.3.0", and "loglevel" -> "^1.6.1" to build.sbt as npmDependencies 
       
       - side note.. so basically that part, incl ffi seems to be running from sbts managed node_modules.. so presumably its possibly the way its currently set up, its gonna be pain to get things that are electron specific to work from there.. hoepfully there's not that many.. we'll see
       - hmm, could mean that later we might want to slowly migrate everything from the current setup, where there's an outside node/electron setup that opens up a window, and only the page loading there is from a sjs managed bundle and its node/modules .. to a setup where we basically dont need the outside node/elec anymore.. we'd have to try and install elec to the managed modules, somehow find a way to launch using that, and just reference node/elec apis that way.. else currently, it'll be a pain to try and do anything that needs to leverage electron from the sjs code.. and in particular, among the first things might be global key shortcut handling etc..  anyway, we'll see how far this compromise can go

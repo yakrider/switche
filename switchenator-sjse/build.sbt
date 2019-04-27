@@ -28,10 +28,20 @@ libraryDependencies ++= Seq(
 // nodejs sources
 npmDependencies in Compile ++= Seq(
   // e.g. "snabbdom" -> "0.5.3"
+  "ffi" -> "^2.3.0",
+  "loglevel" -> "^1.6.1", 
+  "strip-ansi" -> "^5.2.0"
 )
 
 // root webpack config file
 webpackConfigFile := Some(baseDirectory.value / "webpack.config.js")
+webpackDevServerExtraArgs in fastOptJS ++= Seq(
+  "--content-base", (baseDirectory in ThisBuild).value.getAbsolutePath
+)
+//version in webpack := "4.8.1"
+//version in webpack := "3.3.1"
+//version in startWebpackDevServer := "3.1.4"
+//version in startWebpackDevServer := "3.3.1"
 
 // optionally use yarn over npm
 useYarn := false

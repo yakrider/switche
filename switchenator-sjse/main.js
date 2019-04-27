@@ -23,7 +23,7 @@ var mainWindow;
 function createWindow() {
     mainWindow = new BrowserWindow({
         icon: `web/favicon.png`,
-        width: 1600,
+        width: 1000,
         height: 1200,
         frame: true,
         useContentSize: true,
@@ -35,18 +35,25 @@ function createWindow() {
         webaudio: true,
     });
 
-    // Load the index.html of the app.
-    mainWindow.loadURL(`file://${__dirname}/web/index.html`);
-
     // Disable the default menu bar.
     mainWindow.setMenu(null);
 
     // Open the DevTools in debug mode.
-    if (argv[0] === 'debug') {
-        mainWindow.webContents.openDevTools({ mode: "detach" });
+    if (argv[0] === 'dev') {
+       mainWindow.setSize(1850,1200);
+       //mainWindow.webContents.openDevTools({ mode: "detach" });
+       mainWindow.webContents.openDevTools();
+       mainWindow.loadURL(`file://${__dirname}/web/index-dev.html`);
+    } else if (argv[0] === 'dev-server') {
+       mainWindow.setSize(1850,1200);
+       mainWindow.webContents.openDevTools();
+       //mainWindow.loadURL(`file://${__dirname}/web/index-dev.html`);
+       //mainWindow.loadURL('http://localhost:8080/target/scala-2.12/scalajs-bundler/main/index-dev.html');
+       mainWindow.loadURL('http://localhost:8080/web/index-dev-server.html')
+    } else {
+       mainWindow.loadURL(`file://${__dirname}/web/index.html`);
     }
-    // meh whatever
-    mainWindow.webContents.openDevTools();
+
 
     // Emitted when the window is closed.
     mainWindow.on('closed', () => {
