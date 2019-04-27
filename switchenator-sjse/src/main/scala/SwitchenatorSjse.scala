@@ -9,18 +9,20 @@ import scalatags.JsDom.all._
 
 import js.JSConverters._
 import scala.collection.mutable
-import scala.collection.mutable.{ArrayBuffer, HashMap, HashSet, LinkedHashMap, LinkedHashSet, Seq}
+import scala.collection.mutable.{ArrayBuffer, HashMap, HashSet, LinkedHashMap, LinkedHashSet}
 
 
 object SwitchenatorSjse extends js.JSApp {
     def main(): Unit = {
         println("Hello from sjseApp..")
-        g.console.log("uhh, from sjse main for now...")
         //g.console.log(g.document)
-        //g.console.log(g.document.getElementById("scala-js-root-div"))
-        //g.console.log(SwitchFacePage.getShellPage())
         g.document.getElementById("scala-js-root-div").appendChild (SwitchFacePage.getShellPage())
-        SwitcheState.handleRefreshRequest()
+        
+        SwitcheState.handleRefreshRequest() // fire up first call
+        
+        // hmm how about keeping this updated say once a sec..
+        //js.timers.setInterval(1000) {SwitcheState.handleRefreshRequest()}
+        // ugh, ^ not worthwhile.. messes up scroll logic etc too, should just keep to doing when window is recalled back or gets focus etc
     }
 }
 
@@ -89,7 +91,7 @@ object ExclusionsManager {
    }
    object WinampDupExcluder {
       var curCallId = -1; var alreadySeen = false;
-      def exclWinampDup (e:WinDatEntry, callId:Int): Boolean = { println("winamp checked!")
+      def exclWinampDup (e:WinDatEntry, callId:Int): Boolean = { //println("winamp checked!")
          var shouldExclude = false
          if (curCallId != callId) { curCallId = callId; alreadySeen = false } // reset upon new callId
          if (e.exeName.map(_=="winamp.exe").getOrElse(false)) { shouldExclude = alreadySeen; alreadySeen = true } // update if see winamp
@@ -113,6 +115,7 @@ object SwitcheState {
    var hMapCur = LinkedHashMap[Int,WinDatEntry]();
    var hMapPrior = LinkedHashMap[Int,WinDatEntry]();
    //var wDatCache = HashMap[Int,Map[String,CacheEntry]]()
+   var inGroupedMode = true;
    
    def prepForNewEnumWindowsCall (callId:Int) = {
       println (s"starting new win enum-windows call w callId: ${callId}")
@@ -160,7 +163,7 @@ object SwitcheState {
       hMapCur .get(hwnd) .foreach {d =>
          hMapCur .put (hwnd, d.copy(winText = Some(winText)))
          if (!winText.isEmpty) {
-            ElemsDisplay.queueRender();
+            SwitchFacePage.queueRender();
             if (hMapCur.get(hwnd).map(_.exeName.isEmpty).getOrElse(true)) { setAsnycQModuleFile(0,hwnd) }
          }
    } }
@@ -168,7 +171,7 @@ object SwitcheState {
       cbCountForCallId += 1; val ccSnap = cbCountForCallId; js.timers.setTimeout(10){delayedTaskListCleanup(ccSnap)}
       hMapCur .get(hwnd) .foreach {d =>
          hMapCur .put (hwnd, d.copy(exeName = Some(exePath)))
-         if (!exePath.isEmpty) { ElemsDisplay.queueRender() }
+         if (!exePath.isEmpty) { SwitchFacePage.queueRender() }
    } }
    def cbProcProcId (hwnd:Int, pid:Int) = {
       cbCountForCallId += 1; val ccSnap = cbCountForCallId; js.timers.setTimeout(10){delayedTaskListCleanup(ccSnap)}
@@ -182,7 +185,7 @@ object SwitcheState {
          val updatedExclFlag = ExclusionsManager.shouldExclude(exeUpdatedEntry,latestTriggeredCallId)
          hMapCur .put (hwnd, exeUpdatedEntry.copy(shouldExclude = Some(updatedExclFlag)))
          //if (None != exeName && !exeName.get.isEmpty) { ElemsDisplay.queueRender() }
-         if (!updatedExclFlag) { ElemsDisplay.queueRender() }
+         if (!updatedExclFlag) { SwitchFacePage.queueRender() }
       }
    }
    def delayedTaskListCleanup (cbCountSnapshot:Int) = {
@@ -225,6 +228,7 @@ object SwitcheState {
       println (s"Printing full data incl excl flags for titled Vis entries:")
       hMapCur.values.filter(e => e.isVis.filter(identity).isDefined && e.winText.filterNot(_.isEmpty).isDefined).foreach(println)
    }
+   def handleGroupModeRequest() = { inGroupedMode = !inGroupedMode; SwitchFacePage.render() }
    
    
 }
@@ -234,43 +238,58 @@ object SwitcheFaceConfig {
    def clearElem (e:dom.raw.Element) { e.innerHTML = ""}
    def clearedElem (e:dom.raw.Element) = { e.innerHTML = ""; e }
 }
+
 object ElemsDisplay {
    import SwitcheFaceConfig._
-   
-   def makeElemBox (e:WinDatEntry) = {
-      val exeSpan = span (`class`:="exeSpan", e.exeName.getOrElse("exe..").toString)
+   val elemsDiv = div (id:="elemsDiv").render
+   var elemsCount = 0
+
+   def getElemsDiv = elemsDiv
+   def makeElemBox (e:WinDatEntry, dimExeSpan:Boolean=false) = {
+      val exeSpanClass = s"exeSpan${if (dimExeSpan) " dim" else ""}"
+      val exeSpan = span (`class`:=exeSpanClass, e.exeName.getOrElse("exe..").toString)
       val icoSpan = span (`class`:="exeIcoSpan", "ico")
       val titleSpan = span (`class`:="titleSpan", e.winText.getOrElse("title").toString)
       div (`class`:="elemBox", exeSpan, nbsp(3), icoSpan, nbsp(), titleSpan, onclick:= {ev:MouseEvent => SwitcheState.handleWindowActivationRequest(e.hwnd)})
    }
-   
-   def render() = {
-      val elems = SwitcheState.getRenderList.map(makeElemBox)
-      clearedElem(SwitchFacePage.elemsDiv).appendChild(div(elems).render)
-      clearedElem(SwitchFacePage.countSpan).appendChild(span(s"(${elems.size})").render)
+   def updateElemsDiv (renderList:Seq[WinDatEntry]) = {
+      val elemsList = if (SwitcheState.inGroupedMode) {
+         val groupedList = renderList.zipWithIndex.groupBy(_._1.exeName).mapValues(l => l.map(_._1)->l.map(_._2).min).toSeq.sortBy(_._2._2).map(_._2._1)
+         groupedList.map(l => Seq(l.take(1).map(makeElemBox(_,false)),l.tail.map(makeElemBox(_,true))).flatten).flatten
+      } else { renderList.map(makeElemBox(_)) }
+      clearedElem(elemsDiv) .appendChild (div(elemsList).render)
    }
-   def queueRender() = g.window.requestAnimationFrame({t:js.Any => render()})
-   
 }
+
+object RibbonDisplay {
+   import SwitcheFaceConfig._
+   import SwitcheState._
+   val countSpan = span (id:="countSpan").render
+   def updateCountsSpan (n:Int) = clearedElem(countSpan).appendChild(span(s"($n)").render)
+   def getTopRibbonDiv() = {
+      val reloadLink = a ( href:="#", "Reload", onclick:={e:MouseEvent => g.window.location.reload()} )
+      val refreshLink = a ( href:="#", "Refresh", onclick:={e:MouseEvent => handleRefreshRequest()} )
+      val printExclLink = a (href:="#", "ExclPrint", onclick:={e:MouseEvent => handleExclPrintRequest()} )
+      val groupModeLink = a (href:="#", "ToggleGrouping", onclick:={e:MouseEvent => handleGroupModeRequest()} )
+      div (id:="top-ribbon", reloadLink, nbsp(4), refreshLink, nbsp(4), printExclLink, nbsp(4), countSpan, nbsp(4), groupModeLink).render
+   }
+}
+
 
 object SwitchFacePage {
    import SwitcheFaceConfig._
    
-   val elemsDiv = div (id:="elemsDiv").render
-   //val topRibbon = div (id:="topRibbon").render
-   val countSpan = span (id:="countSpan").render
-   
-   def getTopRibbonDiv() = {
-      val reloadLink = a ( href:="#", "Reload", onclick:={e:MouseEvent => g.window.location.reload()} )
-      val refreshLink = a ( href:="#", "Refresh", onclick:= {e:MouseEvent => SwitcheState.handleRefreshRequest()} )
-      val printExclLink = a (href:="#", "ExclPrint", onclick:= {e:MouseEvent => SwitcheState.handleExclPrintRequest()} )
-      div (id:="top-ribbon", reloadLink, nbsp(4), refreshLink, nbsp(4), printExclLink, nbsp(4), countSpan).render
-   }
    def getShellPage () = {
-      val topRibbon = getTopRibbonDiv()
+      val topRibbon = RibbonDisplay.getTopRibbonDiv()
+      val elemsDiv = ElemsDisplay.getElemsDiv
       val page = div (topRibbon, elemsDiv)
-      
       page.render
+   }
+   def queueRender() = g.window.requestAnimationFrame({t:js.Any => render()})
+   def render() = {
+      val renderList = SwitcheState.getRenderList()
+      ElemsDisplay.updateElemsDiv(renderList)
+      RibbonDisplay.updateCountsSpan(renderList.size)
    }
    
 }

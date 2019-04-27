@@ -1,12 +1,22 @@
 * {
     margin: 0;
 }
-#scala-js-root-div {
+body {
    background: #404040;
+}
+#scala-js-root-div {
+   /* background: #404040; */
 }
 
 #top-ribbon { color: yellowgreen; }
 #top-ribbon a { color: yellowgreen; }
+
+.elemBox {
+   font: status-bar;
+   font-size: medium;
+}
+.elemBox:hover{ background: slateblue; }
+.elemBox:active{ background: slateblue;}
 
 .titleSpan {
   display: inline-block;
@@ -14,7 +24,11 @@
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  color: gold;
 }
+.elemBox:hover .titleSpan { color: floralwhite}
+.elemBox:active .titleSpan { color: aquamarine}
+
 .exeSpan {
   display: inline-block;
   width: 120px;
@@ -23,27 +37,18 @@
   text-overflow: ellipsis;
   text-align: right;
   font-size: small;
+  color: burlywood;
 }
+.elemBox:hover .exeSpan { color: floralwhite; }
+.exeSpan.dim { color: grey; }
+
 .exeIcoSpan {
   display: inline-block;
   width: 32px;
   overflow: hidden;
+  color: darkcyan;
 }
-.elemBox {
-   background: #404040;
-   color: gold;
-   font: status-bar;
-   font-size: medium;
-}
-.elemBox:hover{
-    color: floralwhite;
-    background: slateblue;
-}
-.elemBox:active{
-   background: slateblue;
-   color: aquamarine;
-}
-
 /*
 - light good colors : honeydew, lightyellow, lightgrey, lightcyan, azure, bisque, beige, ghostwhite, ivory, lavender, mintcream, oldlace, aliceblue
+- slightly dark contrast colors considered for exespan (cf w gold for elemBox).. burlwood, tan, goldenron, darkkhaki, darkgrey, silver
 */

@@ -3,21 +3,41 @@ RUNNING NOTES DUMP ON POSSIBLE WORK ON THE SWITCHENATOR PROJECT :
 
 
 
-04/25 .. taking stock
-   - having gotten past the massive initila winapi blockage, a huge amount of progress has been made, though new issues do keep surfacing..
-   - have a minimally working setup, w actual listing and switching working!
-      - took a bit to get at the flakiness on activation, but activating after a tiny timeout to let win register the app did proces last input helped a lot!
-      - ended up working a bit on the ui/presentation .. and its already not bad.. thats nice!
-      - some very decent caching and call optimization has been built in.. gotta say its not bad at all speed wise, after the first startup
-      - getting at the exe has been a pain that still needs addressing.. the getWindowModuleFile was a red herring.. only works for windows of same exe process!
-      - ugh the webpack dev server didnt look like would pan out either, its built into sjs, and doesnt play well w electron
+04/25 + .. taking stock and immediate paths forward
+
+   d- having gotten past the massive initial winapi blockage, a huge amount of progress has been made, though new issues do keep surfacing..
+   d-- have a minimally working setup, w actual listing and switching working!
+   d- took a bit to get at the flakiness on activation, but activating after a tiny timeout to let win register the app did proces last input helped a lot!
+   d- ended up working a bit on the ui/presentation .. and its already not bad.. thats nice!
+   d- some very decent caching and call optimization has been built in.. gotta say its not bad at all speed wise, after the first startup
+   d- getting at the exe has been a pain that still needs addressing.. the getWindowModuleFile was a red herring.. only works for windows of same exe process!
+   - ugh the webpack dev server didnt look like would pan out either, its built into sjs, and doesnt play well w electron
       
-   - next up sets of things to focus on
-      - def gotta get that exe extraction working.. not least because we wanted that for all of exclusion filtering, ico extraction, grouping/sorting!
-      - really want to work on the icon work too, but maybe can wait and see how far just the exe names can get us, though feels it might be crucial for usability
-      - need to start putting in at least some minimal keyboard handling.. even if just inside page for now.. for sorts, search, grouping etc
-      - gotta add in the outside hotkey handling for the elec app too, just to get the thing to show up on hotkey, and maybe hide/reappear too
-      - and really at some point, gotta try and merge in the two nested electron setups for this into just the sjs ele.. though might not be easy/worthwhile yet
+   -- next up sets of things to focus on:
+   
+   -- impl internals   
+   d- def gotta get that exe extraction working.. not least because we wanted that for all of exclusion filtering, ico extraction, grouping/sorting!
+   - really want to work on the icon work too, but maybe can wait and see how far just the exe names can get us, though feels it might be crucial for usability
+   
+   -- new functionality over vswitch
+   d- think we're already actually faster than vswitch given all the caching, esp for anything after first invocation.. its awesome!
+   - the first key improvements ofc, would be sort by app mechanism.. gotta put than in earlier rather than later!
+   - and soon after, want to start on a find-as-you-type search.. right in there, maybe w a box on ribbon.. would be nice
+   
+   - later could think of less missed enhancements.. say considering adding a close mechanism, say via middle click, or an icon on hover, context menu etc
+   - might be too much, but could consider what it would take to do selective preview.. say when holding onto something.. would be useful for windows w tabs
+   - way way later, could revisit that thought on making an exension for chrome that could feed this tab info data.. but w TabOutiner around.. prob not worthwhile
+
+   -- ui work
+   - need to start putting in at least some minimal keyboard handling.. even if just inside page for now.. for sorts, search, grouping etc
+   - gotta add in the outside hotkey handling for the elec app too, just to get the thing to show up on hotkey, and maybe hide/reappear too
+   - need to get mouse scrolls working better too, as think the scroll on elems w mouse as in vswitch works better than just having to always point to stuff
+   - should revisit unicode char display.. dont seem to be working despite making calls to winapi unicode fns.. prob something w electron or html page encoding
+   
+   -- misc setups
+   - and really at some point, gotta try and merge in the two nested electron setups for this into just the sjs ele.. though might not be easy/worthwhile yet
+   - same w trying to get webpack/hot-reload working, but given already tried the ovious stuff, and its a tradeoff w actual dev. and it gets less useful further along, will have to see how much it still makes sense as a bunch of the early dev gets completed
+   
 
 
 04/23 .. moving these impl notes from code to here, as they are quickly getting outdated, but could be useful for thought-evolution reference..
