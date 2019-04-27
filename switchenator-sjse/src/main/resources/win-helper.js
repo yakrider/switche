@@ -161,7 +161,7 @@ exports.getWindowText = function getWindowText (hwnd) {
   //var limlen = (length < 200) ? length+1 : 200; // limit to 200 chars max
   //var buf = new Buffer(limlen);
   var buf = new Buffer(512);
-  var copiedLen = user32.GetWindowTextW(hwnd, buf, 512);
+  var copiedLen = user32.GetWindowTextA(hwnd, buf, 512);
   var name = ref.readCString(buf, 0); // reads till first null so shorter strings are fine
   return name;
 }
