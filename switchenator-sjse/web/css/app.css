@@ -44,10 +44,11 @@ body {
 
 .exeIcoSpan {
   display: inline-block;
-  width: 32px;
+  width: 22px;
   overflow: hidden;
   color: darkcyan;
 }
+.ico { width: 17px; }
 /*
 - light good colors : honeydew, lightyellow, lightgrey, lightcyan, azure, bisque, beige, ghostwhite, ivory, lavender, mintcream, oldlace, aliceblue
 - slightly dark contrast colors considered for exespan (cf w gold for elemBox).. burlwood, tan, goldenron, darkkhaki, darkgrey, silver

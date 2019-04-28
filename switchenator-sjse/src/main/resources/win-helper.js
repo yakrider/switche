@@ -14,8 +14,17 @@ var stringPtr = ref.refType(ref.types.CString);
 var lpdwordPtr = ref.refType(ref.types.ulong);
 
 function TEXT(text) {
-   return new Buffer(text, 'ucs2').toString('binary');
- }
+  return new Buffer(text, 'ucs2').toString('binary');
+}
+
+var icoExt = require('icon-extractor');
+var defaultIconsCallback = function(ctxStr,path,data) {console.error('No callback registered for icon-extractor!!')};
+var iconsCallback = defaultIconsCallback
+icoExt.emitter.on ('icon', function(data){ iconsCallback (data.Context, data.Path, data.Base64ImageData) });
+icoExt.emitter.on ('error', function(e){console.error(e)} );
+exports.registerIconsCallback = function registerIconsCallback (callback) {iconsCallback = callback}
+exports.unregisterIconsCallback = function unregisterIconsCallback() {iconsCallback = defaultIconsCallback}
+exports.queueIconsQuery = function queueIconsQuery (ctxStr,path) { icoExt.getIcon(ctxStr,path); }
 
  
  // e.g https://github.com/MrTimcakes/node-hide/blob/master/main.js

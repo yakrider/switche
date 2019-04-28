@@ -29,8 +29,9 @@ libraryDependencies ++= Seq(
 npmDependencies in Compile ++= Seq(
   // e.g. "snabbdom" -> "0.5.3"
   "ffi" -> "^2.3.0",
-  "loglevel" -> "^1.6.1", 
-  "strip-ansi" -> "^5.2.0"
+  "icon-extractor" -> "^1.0.3"
+  //"loglevel" -> "^1.6.1"
+  //"strip-ansi" -> "^5.2.0"
 )
 
 // root webpack config file
@@ -54,3 +55,6 @@ scalaJSUseMainModuleInitializer := true
 
 // do not emit source maps in production
 emitSourceMaps in fullOptJS := false
+
+// skip in fastOpt too, seldom used and makes build slow
+emitSourceMaps in fastOptJS := false

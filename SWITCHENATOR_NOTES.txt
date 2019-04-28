@@ -2,6 +2,28 @@
 RUNNING NOTES DUMP ON POSSIBLE WORK ON THE SWITCHENATOR PROJECT :
 
 
+04/28 + .. note on perf after getting to a mostly working state
+   - so, we have a mostly usable working test setup now, lists all the windows, does activation, allows grouping by task, decent ui, fetches/loads icons too!
+   - and its not too slow either, esp after the initial app startup once it gets most things cached..
+   - so def dont need to redo it etc.. but had some interesting revelations as I've been looking at perf and the initial load time..
+   
+   - so, the bkg queries take some pieces of time, esp the first win query, there's also fetching icons etc, but those are indiv actually not that slow
+   - and we were using the requestAnimationFrame feature so things could be timed w when browser wants to do rendering updates
+   - it looked like despite those, at least when making frequent rendering requests, the thing actually was quite slow (was fixed a bit by bunching render reqs)
+   - essentially, two shit things happenend.. because we wanted to jump on the requestAnimationFrame, the code got written to queue those calls on state change, and on render call, to actually re-render the whole freaking page again! .. that sucks, esp w all the scalatags indirection, plus just inlined icon images!
+   - it does make code easier, but if we were doing our old usual stuff, we'd have kept handles on parts of the dom internally as we created them, and just updated those instead.. which would have been way faster whether we used requestAnimationFrame or not, although ofc we'd have to do that management ourselves
+   
+   - now, its not clear if its gonna be worth rewriting that part where instead of rendering everything, we just try adn update the changed elems
+      - in particular, would mean keep array of entry elems, update when we have title changes or icons come in etc, or when grp/ungrp happens and so on
+      - would also need to figure out ordering logic if dont want to re-render.. which could be thorny..
+         - say a refresh happens, and couple entries moved up/down in the list.. not gonna be trivial to monkey-patch the dom, although could be done, by say walking on the old and new list, noting moved vs new/removed, then doing inserts and deletes as needed.. but prob a pain not worth the hassle
+         - alt, if could have the elems created but not displayed, and browser is efficient when just 'placing' them somewhere as opposed to rebuild, could consider
+         - and just noting, that if so, then doing similar w icon images would be good too, as there's bunch of inline copies
+         
+   - so, w that in mind, one way of looking at what we did, is we acted like there was a virtual-dom while there wasnt.. in theory if we were using react, then we'd make the new page, react would calc the changed components etc and render just those parts.. that'd make it similar to our element caching solution, but w/o us having to do all that complexity, and prob w bunch other optimizations they do at their ends
+   - but, obv def prob not worthwhile trying to rewrite this in react.. esp at this point, though maybe should really have considered that before starting
+   - eitherway, its a good reminder to pick up on that before starting something like this again, and hence noting here for future reference/reminder.
+
 
 04/25 + .. taking stock and immediate paths forward
 
@@ -38,6 +60,23 @@ RUNNING NOTES DUMP ON POSSIBLE WORK ON THE SWITCHENATOR PROJECT :
    - and really at some point, gotta try and merge in the two nested electron setups for this into just the sjs ele.. though might not be easy/worthwhile yet
    - same w trying to get webpack/hot-reload working, but given already tried the ovious stuff, and its a tradeoff w actual dev. and it gets less useful further along, will have to see how much it still makes sense as a bunch of the early dev gets completed
    
+
+04/~26 .. about that icon display stuff
+   - so actually writing this following up on tasklists above.. that icon display actually seems surprisingly involved
+   - so there does seem to be a guy's effort to take a stab at it, and its decent too.. 
+      - https://www.npmjs.com/package/icon-extractor .. http://sciencevikinglabs.com/icon-extractor/ .. https://github.com/ScienceVikings/IconExtractor
+   - however, that too goes about the round about way of using a c process to extract the icon the tx over to node as base64
+   - but could be a pain integrating that c included project.. although could also be straightforward, so prob def should try it out via npm quick first
+   - but if its any pain, been considering why not just do it offline.. for personal use for myself might not be that big a deal, and could be lot quicker to have it
+      - basically, on switche side, keep an updated running set in disk of all exes seen so far
+      - and have it check some other config file to see if there's matching icons for those to load from some given location, and if so to do it
+      - offline, we could use some other seprate utility to extract icons for exes, maybe based on switche's list, or proactively at first too, and save them
+      - thats it, would make it way straightforward to get it running, and keep all that shit complexity out of the node/elec project
+      - and def there's piles of utilities to extract icons from exes, incl standalone tools, as well as java libs if so desired
+   - well hot damn, tried the icon extractor.. and a little bit of fiddling around w translating around js data vs sjs etc.. but it freaking mostly works!
+      - and the base64 icons appear to not be all that big to be a pain either.. its nice!
+      - now the code's a lil messy w global pseudo registered callbacks etc, but damn that was lot easier than how it could have panned out!
+      - note that in sjs node, it installed the reqs when the updated build.sbt was reloaded and webpack ran, but since ours is running from an outside electron/node, had to install it there manually for it to be found I think, but given the murkiness of many things breaking/fixing together, who knows
 
 
 04/23 .. moving these impl notes from code to here, as they are quickly getting outdated, but could be useful for thought-evolution reference..

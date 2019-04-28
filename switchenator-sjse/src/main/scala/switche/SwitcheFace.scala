@@ -23,14 +23,13 @@ object SwitchFacePage {
       val page = div (topRibbon, elemsDiv)
       page.render
    }
-   def queueRender() = g.window.requestAnimationFrame({t:js.Any => render()})
-   def render() = {
+   //def queueRender() = g.window.requestAnimationFrame({t:js.Any => render()}) // used spaced render call instead
+   def render() = { println("rendering")
       val renderList = SwitcheState.getRenderList()
       ElemsDisplay.updateElemsDiv(renderList)
       RibbonDisplay.updateCountsSpan(renderList.size)
    }
 }
-
 
 object ElemsDisplay {
    import SwitcheFaceConfig._
@@ -40,15 +39,18 @@ object ElemsDisplay {
    def getElemsDiv = elemsDiv
    def makeElemBox (e:WinDatEntry, dimExeSpan:Boolean=false) = {
       val exeSpanClass = s"exeSpan${if (dimExeSpan) " dim" else ""}"
-      val exeSpan = span (`class`:=exeSpanClass, e.exeName.getOrElse("exe..").toString)
-      val icoSpan = span (`class`:="exeIcoSpan", "ico")
+      val exeSpan = span (`class`:=exeSpanClass, e.exePathName.map(_.name).getOrElse("exe..").toString)
+      val ico = Some(SwitcheState.okToRenderImages).filter(identity).flatMap(_=> e.exePathName.map(_.fullPath) .map {path =>
+         IconsManager.getCachedIcon(path) .map (ico => img(`class`:="ico", src:=s"data:image/png;base64, $ico"))
+      }).flatten.getOrElse(span("ico"))
+      val icoSpan = span (`class`:="exeIcoSpan", ico)
       val titleSpan = span (`class`:="titleSpan", e.winText.getOrElse("title").toString)
       div (`class`:="elemBox", exeSpan, nbsp(3), icoSpan, nbsp(), titleSpan, onclick:= {ev:MouseEvent => SwitcheState.handleWindowActivationRequest(e.hwnd)})
    }
    def updateElemsDiv (renderList:Seq[WinDatEntry]) = {
       val elemsList = if (SwitcheState.inGroupedMode) {
          //val groupedList = renderList.zipWithIndex.groupBy(_._1.exeName).mapValues(l => l.map(_._1)->l.map(_._2).min).toSeq.sortBy(_._2._2).map(_._2._1)
-         val groupedList = renderList.zipWithIndex.groupBy(_._1.exeName).values.map(l => l.map(_._1)->l.map(_._2).min).toSeq.sortBy(_._2).map(_._1)
+         val groupedList = renderList.zipWithIndex.groupBy(_._1.exePathName.map(_.fullPath)).values.map(l => l.map(_._1)->l.map(_._2).min).toSeq.sortBy(_._2).map(_._1)
          groupedList .map (l => Seq ( l.take(1).map(makeElemBox(_,false)), l.tail.map(makeElemBox(_,true)) ).flatten ).flatten
       } else { renderList.map(makeElemBox(_)) }
       clearedElem(elemsDiv) .appendChild (div(elemsList).render)

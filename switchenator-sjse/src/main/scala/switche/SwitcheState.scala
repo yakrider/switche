@@ -1,13 +1,14 @@
 package switche
 
-import scala.collection.mutable.LinkedHashMap
+import scala.collection.mutable.{HashMap,LinkedHashMap}
 import scala.scalajs.js
 
 
-// ugh, gonna use strings for cache entry instead of enums etc for now.. also later, will have to extend w at least icon data
-// current cache types: 'exe', 'isVis', 'winText', 'excl'?(no, the rest in cache is enough)
-//case class CacheEntry (hwnd:Int, entryType:String, valString:String, cacheStamp:Long)
-case class WinDatEntry (hwnd:Int, isVis:Option[Boolean], winText:Option[String], exeName:Option[String], shouldExclude:Option[Boolean])
+case class ExePathName (fullPath:String, name:String)
+case class WinDatEntry (
+   hwnd:Int, isVis:Option[Boolean]=None, winText:Option[String]=None,
+   exePathName:Option[ExePathName]=None, shouldExclude:Option[Boolean]=None
+)
 
 
 object SwitcheState {
@@ -15,14 +16,16 @@ object SwitcheState {
    var latestTriggeredCallId = 0; var cbCountForCallId = 0;
    var hMapCur = LinkedHashMap[Int,WinDatEntry]();
    var hMapPrior = LinkedHashMap[Int,WinDatEntry]();
-   //var wDatCache = HashMap[Int,Map[String,CacheEntry]]()
    var inGroupedMode = true;
    
+   def parseIntoExePathName (path:String) = ExePathName(path, path.split("""\\""").lastOption.getOrElse(""))
    def prepForNewEnumWindowsCall (callId:Int) = {
       println (s"starting new win enum-windows call w callId: ${callId}")
       latestTriggeredCallId = callId; cbCountForCallId = 0;
       hMapPrior = hMapCur; hMapCur = LinkedHashMap[Int,WinDatEntry]();
    }
+   def okToRenderImages() = true //false //cbCountForCallId > 1000
+   def kickPostCbCleanup() = {cbCountForCallId += 1; val ccSnap = cbCountForCallId; js.timers.setTimeout(20){delayedTaskListCleanup(ccSnap)}}
    
    def procStreamWinQueryCallback (hwnd:Int, callId:Int):Boolean = {
       if (callId > latestTriggeredCallId) {
@@ -31,14 +34,14 @@ object SwitcheState {
       }
       cbCountForCallId += 1
       if (callId == latestTriggeredCallId && !hMapCur.contains(hwnd)) {
-         val dat = hMapPrior .get(hwnd) .orElse (Some(WinDatEntry (hwnd,None,None,None,None))) .map { priorDat =>
+         val dat = hMapPrior .get(hwnd) .orElse (Some(WinDatEntry (hwnd))) .map { priorDat =>
             // for isVis, if prior has data, use it, else queue query
             val isVis = priorDat .isVis .orElse { setAsnycQVisCheck(0,hwnd); None }
             // for winText, if prior has data, use it but queue query too, else query if isVis already true, else we'll handle in isVis cb
             val winText = priorDat .winText .map {wt => setAsnycQWindowText(0,hwnd); wt }
                .orElse { if (isVis.isDefined && true==isVis.get) {setAsnycQWindowText(0,hwnd)}; None }
-            // for exePath, if not in cache, we'll query later only as needed, ditto for exclusion flag
-            WinDatEntry (hwnd, isVis, winText, priorDat.exeName, priorDat.shouldExclude)
+            // for exePath/ico, if not in cache, we'll query later only as needed, ditto for exclusion flag
+            WinDatEntry (hwnd, isVis, winText, priorDat.exePathName, priorDat.shouldExclude)
          } .get
          hMapCur .put (hwnd, dat)
       }
@@ -51,7 +54,7 @@ object SwitcheState {
    def setAsnycQModuleFile (t:Int, hwnd:Int) = js.timers.setTimeout(t) {cbProcProcId(hwnd, WinapiLocal.getWindowThreadProcessId(hwnd))}
    
    def cbProcVisCheck (hwnd:Int, isVis:Int) = {
-      cbCountForCallId += 1; val ccSnap = cbCountForCallId; js.timers.setTimeout(10){delayedTaskListCleanup(ccSnap)}
+      kickPostCbCleanup()
       // update the map data, also if we're here then it was previously unknown, so if now its true, then queue query for winText
       hMapCur .get(hwnd) .foreach { d =>
          hMapCur .put (hwnd, d.copy(isVis = Some(isVis>0), shouldExclude = Some(isVis<=0).filter(identity)))
@@ -60,37 +63,28 @@ object SwitcheState {
    } }
    
    def cbProcWindowText (hwnd:Int, winText:String) = {
-      cbCountForCallId += 1; val ccSnap = cbCountForCallId; js.timers.setTimeout(10){delayedTaskListCleanup(ccSnap)}
+      kickPostCbCleanup()
       // update the map data, also if its displayable title (non-empty), queue render, then if exePath is undefined, queue that query too
       hMapCur .get(hwnd) .foreach {d =>
-         hMapCur .put (hwnd, d.copy(winText = Some(winText)))
          if (!winText.isEmpty) {
-            SwitchFacePage.queueRender();
-            if (hMapCur.get(hwnd).map(_.exeName.isEmpty).getOrElse(true)) { setAsnycQModuleFile(0,hwnd) }
+            if (d.winText!=Some(winText)) { RenderSpacer.queueSpacedRender() }
+            if (hMapCur.get(hwnd).map(_.exePathName.isEmpty).getOrElse(true)) { setAsnycQModuleFile(0,hwnd) }
          }
-   } }
-   
-   def cbProcModuleFile (hwnd:Int, exePath:String) = { println(exePath) // if this is obsolete, should clear it out
-      cbCountForCallId += 1; val ccSnap = cbCountForCallId; js.timers.setTimeout(10){delayedTaskListCleanup(ccSnap)}
-      hMapCur .get(hwnd) .foreach {d =>
-         hMapCur .put (hwnd, d.copy(exeName = Some(exePath)))
-         if (!exePath.isEmpty) { SwitchFacePage.queueRender() }
+         hMapCur .put (hwnd, d.copy(winText = Some(winText)))
    } }
    
    def cbProcProcId (hwnd:Int, pid:Int) = {
-      cbCountForCallId += 1; val ccSnap = cbCountForCallId; js.timers.setTimeout(10){delayedTaskListCleanup(ccSnap)}
-      // note that we're putting a Some("") if we dont get a decent path, as we dont want to keep querying it subsequently regardless
+      kickPostCbCleanup()
       val exePath = WinapiLocal.getProcessExeFromPid(pid)
-      //val exeName = exePath.split("""\\""").lastOption.map(_.split("""\.""").reverse.take(2).reverse.mkString(".")).orElse(Some(""))
-      val exeName = exePath.split("""\\""").lastOption.orElse(Some(""))
-      //println (s"**for hwnd ${hwnd}, got pid ${pid}, which gave file : ${exeNameOpt.getOrElse("")}")
       hMapCur .get(hwnd) .foreach {d =>
-         val exeUpdatedEntry = d.copy(exeName = exeName)
-         val updatedExclFlag = ExclusionsManager.shouldExclude(exeUpdatedEntry,latestTriggeredCallId)
-         hMapCur .put (hwnd, exeUpdatedEntry.copy(shouldExclude = Some(updatedExclFlag)))
-         //if (None != exeName && !exeName.get.isEmpty) { ElemsDisplay.queueRender() }
-         if (!updatedExclFlag) { SwitchFacePage.queueRender() }
-      }
+         val exePathName = Some(parseIntoExePathName(exePath))
+         val exeUpdatedEntry = d.copy(exePathName = exePathName)
+         val updatedShouldExclFlag = ExclusionsManager.shouldExclude(exeUpdatedEntry,latestTriggeredCallId)
+         hMapCur .put (hwnd, exeUpdatedEntry.copy(shouldExclude = Some(updatedShouldExclFlag)))
+         if (updatedShouldExclFlag!=true) {
+            exePathName.map(_.fullPath).foreach(IconsManager.processFoundIconPath)
+            RenderSpacer.queueSpacedRender()
+      } }
    }
    
    def delayedTaskListCleanup (cbCountSnapshot:Int) = {
@@ -111,6 +105,7 @@ object SwitcheState {
    def handleRefreshRequest() = {
       latestTriggeredCallId += 1
       prepForNewEnumWindowsCall(latestTriggeredCallId)
+      js.timers.setTimeout(100) {RenderSpacer.queueSpacedRender()} // mandatory repaint per refresh, simpler this way to catch only ordering changes
       WinapiLocal.streamWindowsQuery (procStreamWinQueryCallback _, latestTriggeredCallId)
       //js.timers.setTimeout(50) {delayedTaskListCleanup()} // no need anymore, now we queue it kick-the-can style on each callback
    }
@@ -128,16 +123,32 @@ object SwitcheState {
       //val nonVisEs = hMapCur.values.filter(!_.isVis.getOrElse(false))
       //println (s"Printing non-vis entries (${nonVisEs.size}) :")
       //nonVisEs.foreach(println)
+      
       val emptyTextEs = hMapCur.values.filter(e => e.isVis==Some(true) && e.winText==Some(""))
-      println (s"Printing isVis true empty title entries (${emptyTextEs.size}) :")
-      emptyTextEs.foreach (e => println(e.toString))
-      //val exclEs = Seq[String]();
-      //println (s"Printing Excluded entries (${exclEs.size}) :")
-      println (s"Printing full data incl excl flags for titled Vis entries:")
+      println (s"isVis true empty title entries: (${emptyTextEs.size}) :")
+      //emptyTextEs.foreach (e => println(e.toString))
+      
+      println(); println (s"Printing full data incl excl flags for titled Vis entries:")
       hMapCur.values.filter(e => e.isVis.filter(identity).isDefined && e.winText.filterNot(_.isEmpty).isDefined).foreach(println)
+      
+      println(); IconsManager.printIconCaches()
+      
    }
    
    def handleGroupModeRequest() = { inGroupedMode = !inGroupedMode; SwitchFacePage.render() }
    
    
+}
+
+object RenderSpacer {
+   // so to many requestAnimationFrame interspersed are taking a lot of time, as they each are upto 100ms, so gonna bunch them up too
+   val minRenderSpacing = 50; val slop = 4; // in ms, slop is there just to catch jitter, delays etc, might not be needed
+   var lastRenderTargStamp = 0d // js.Date.now()
+   def queueSpacedRender () = {
+      val targStamp = js.Date.now + minRenderSpacing
+      if ( js.Date.now >= (lastRenderTargStamp-slop)) {
+         lastRenderTargStamp = js.Date.now + minRenderSpacing
+         js.timers.setTimeout (minRenderSpacing) {js.Dynamic.global.window.requestAnimationFrame({t:js.Any => SwitchFacePage.render()})}
+
+   } }
 }

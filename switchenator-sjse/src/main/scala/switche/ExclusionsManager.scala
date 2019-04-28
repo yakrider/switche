@@ -18,7 +18,7 @@ object ExclusionsManager {
          "MicrosoftEdgeCP.exe", "MicrosoftEdge.exe", // microshit seems to put all these almost-there windows while actual stuff comes under ApplicationFrameHost
          "WindowsInternal.ComposableShell.Experiences.TextInput.InputApp.exe"
       )
-      val exclExeMatches: ExclFnType = {_.exeName.map(exeMatchExclusions.contains).getOrElse(true) }
+      val exclExeMatches: ExclFnType = {_.exePathName.map(_.name).map(exeMatchExclusions.contains).getOrElse(true) }
       
       val exeAndTitleMatchExclusions = Set[(Option[String],Option[String])] (
          //(Some("ShellExperienceHost.exe"), Some("Start"))
@@ -29,7 +29,7 @@ object ExclusionsManager {
          (Some("SystemSettings.exe"), Some("Settings")),
          (Some("ApplicationFrameHost.exe"), Some("Microsoft Edge"))
       )
-      val exclExeAndTitleMatches: ExclFnType = {e => exeAndTitleMatchExclusions.contains((e.exeName,e.winText)) }
+      val exclExeAndTitleMatches: ExclFnType = {e => exeAndTitleMatchExclusions.contains((e.exePathName.map(_.name),e.winText)) }
       
       val exclusions = List[ExclFnType] (
          // NOTE: exclInvis and exclEmptyTitles have also been partially built into upstream processing to eliminate pointless winapi queries etc
@@ -44,7 +44,7 @@ object ExclusionsManager {
       def exclWinampDup (e:WinDatEntry, callId:Int): Boolean = { //println("winamp checked!")
          var shouldExclude = false
          if (curCallId != callId) { curCallId = callId; alreadySeen = false } // reset upon new callId
-         if (e.exeName.map(_=="winamp.exe").getOrElse(false)) { shouldExclude = alreadySeen; alreadySeen = true } // update if see winamp
+         if (e.exePathName.map(_.name).map(_=="winamp.exe").getOrElse(false)) { shouldExclude = alreadySeen; alreadySeen = true } // update if see winamp
          shouldExclude
       }
    }
