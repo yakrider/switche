@@ -52,5 +52,8 @@ object ExclusionsManager {
       // if value already calculated, use that, else check other excluders in a short-circuiting manner
       e.shouldExclude.getOrElse ( RulesExcluder.shouldExclude(e) || WinampDupExcluder.exclWinampDup(e,callId) )
    }
+   def selfSelector (e:WinDatEntry) = {
+      e.winText.map(_=="Sjs-Electron-Local-JS-Test").getOrElse(false) && e.exePathName.map(_.name=="electron.exe").getOrElse(false)
+   }
    
 }

@@ -22,29 +22,30 @@ object SwitchenatorSjse extends js.JSApp {
       // .. though if really want to listen for changes, looks like can do that w SetWinEventHook, listening for EVENT_SYSTEM_FOREGROUND
       
       // k, but for now, prob still worthwhile doing like once a minute or so just to keep things somewhat fresh?
-      js.timers.setInterval(60*1000) {SwitcheState.handleRefreshRequest()}
+      //js.timers.setInterval(60*1000) {SwitcheState.handleRefreshRequest()}
       // ughh.. makes it a pita to work w ui for debug/dev etc
+      
+      //g.window.GlobalSetSwitcheObject = GlobalSetSwitcheObject
+      //g.updateDynamic("handleElectronHotkeyCall")(SwitcheState.handleElectronHotkeyCall _)
    }
 }
 
 
 @js.native @JSImport ("../../../../src/main/resources/win-helper.js", JSImport.Default)
 object WinapiLocal extends js.Object {
-   // from user32.dll
+   // underneath, most use user32.dll, some use kernel32.dll and psapi.dll
    def activateWindow (hwnd:Int):Int = js.native
    //def getVisibleWindows (cb:js.Function1[js.Array[String], Unit]):Unit = js.native
    //def printVisibleWindows():Unit = js.native
    def streamWindowsQuery (cb:js.Function2[Int,Int,Boolean], callId:Int):Unit = js.native
    def checkWindowVisible (hwnd:Int):Int = js.native
    def getWindowText (hwnd:Int):String = js.native
+   def hideWindow (hwnd:Int):Int = js.native
    def getWindowThreadProcessId (hwnd:Int):Int = js.native
    def getProcessExeFromPid (pid:Int):String = js.native
-   
-   // from psapi.dll and oleacc.dll
    def getWindowProcessId (hwnd:Int):Int = js.native
    def getProcessExe (hand:Int):String = js.native
    def getProcessExeFromHwnd (hwnd:Int):String = js.native
-   
 }
 
 

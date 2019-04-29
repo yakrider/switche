@@ -19,10 +19,18 @@ RUNNING NOTES DUMP ON POSSIBLE WORK ON THE SWITCHENATOR PROJECT :
          - say a refresh happens, and couple entries moved up/down in the list.. not gonna be trivial to monkey-patch the dom, although could be done, by say walking on the old and new list, noting moved vs new/removed, then doing inserts and deletes as needed.. but prob a pain not worth the hassle
          - alt, if could have the elems created but not displayed, and browser is efficient when just 'placing' them somewhere as opposed to rebuild, could consider
          - and just noting, that if so, then doing similar w icon images would be good too, as there's bunch of inline copies
+         - hmm, actually there's def gotta be a way to just move things around.. e.g. jquery has a detach/reattach mechanism, so similar must be doable in plain js.. its possible just holding on to an elem w a reference in sjs and using it elsewhere might already do it?
+         - i.e for the last part, proposing to just use an array/map of rendered elems, then recreating the list putting them in right order might already be way faster than currently where the elems literally get created everytime?
          
    - so, w that in mind, one way of looking at what we did, is we acted like there was a virtual-dom while there wasnt.. in theory if we were using react, then we'd make the new page, react would calc the changed components etc and render just those parts.. that'd make it similar to our element caching solution, but w/o us having to do all that complexity, and prob w bunch other optimizations they do at their ends
    - but, obv def prob not worthwhile trying to rewrite this in react.. esp at this point, though maybe should really have considered that before starting
    - eitherway, its a good reminder to pick up on that before starting something like this again, and hence noting here for future reference/reminder.
+   - and finally, taking a look at react, it might not be that big  to learn/change to impl for me anyway, feels somewhat similar to scalatags in use!
+   
+   -- also, just noting that that for the end purpose.. to ACTUALLY USE IT .. given that its already pretty darn fast after init, should really focus on a bunch of other more essential improvements rather than going down a perf focused rewrite of big chunks..
+      - e.g. just to list out a few .. electron hotkey bring up, search, mouse wheel handling, kbd up/down etc handling, window close etc enchancements!
+      - hmm, although come to think of it, when getting around to the search impl, could look at doing some of that perf rethinking as we have to move rows up and down.. might also be worthwhile taking a look at the dynamic search think lihaoyi had that was pretty efficient I think
+      - http://www.lihaoyi.com/hands-on-scala-js/#Re-rendering
 
 
 04/25 + .. taking stock and immediate paths forward
@@ -39,11 +47,11 @@ RUNNING NOTES DUMP ON POSSIBLE WORK ON THE SWITCHENATOR PROJECT :
    
    -- impl internals   
    d- def gotta get that exe extraction working.. not least because we wanted that for all of exclusion filtering, ico extraction, grouping/sorting!
-   - really want to work on the icon work too, but maybe can wait and see how far just the exe names can get us, though feels it might be crucial for usability
+   d- really want to work on the icon work too, but maybe can wait and see how far just the exe names can get us, though feels it might be crucial for usability
    
    -- new functionality over vswitch
    d- think we're already actually faster than vswitch given all the caching, esp for anything after first invocation.. its awesome!
-   - the first key improvements ofc, would be sort by app mechanism.. gotta put than in earlier rather than later!
+   d- the first key improvements ofc, would be sort by app mechanism.. gotta put than in earlier rather than later!
    - and soon after, want to start on a find-as-you-type search.. right in there, maybe w a box on ribbon.. would be nice
    
    - later could think of less missed enhancements.. say considering adding a close mechanism, say via middle click, or an icon on hover, context menu etc

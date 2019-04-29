@@ -28,7 +28,10 @@ libraryDependencies ++= Seq(
 // nodejs sources
 npmDependencies in Compile ++= Seq(
   // e.g. "snabbdom" -> "0.5.3"
+  //"electron" -> "2.0.0", // this gives issues, but should run w/o it in sjs
   "ffi" -> "^2.3.0",
+  "ref" -> "^1.3.5",
+  "ref-struct" -> "^1.1.0",
   "icon-extractor" -> "^1.0.3"
   //"loglevel" -> "^1.6.1"
   //"strip-ansi" -> "^5.2.0"

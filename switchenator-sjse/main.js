@@ -12,6 +12,7 @@ const argv = process.argv.slice(
 const app = electron.app;
 const remote = electron.remote;
 const shell = electron.shell;
+const globalShortcut = electron.globalShortcut;
 const BrowserWindow = electron.BrowserWindow;
 
 // Keep a global reference of the window object, if you don't, the window will
@@ -23,16 +24,15 @@ var mainWindow;
 function createWindow() {
     mainWindow = new BrowserWindow({
         icon: `web/favicon.png`,
-        width: 1000,
-        height: 1200,
+        width: 1000, height: 1400,
+        x: 1200, y:20,
         frame: true,
         useContentSize: true,
         resizable: true,
         fullscreen: false,
-        centered: true,
         autoHideMenuBar: true,
         webgl: true,
-        webaudio: true,
+        skipTaskbar: true,
     });
 
     // Disable the default menu bar.
@@ -40,12 +40,13 @@ function createWindow() {
 
     // Open the DevTools in debug mode.
     if (argv[0] === 'dev') {
-       mainWindow.setSize(1850,1200);
+       mainWindow.setSize(1850,1400);
+       mainWindow.frame = true;
        //mainWindow.webContents.openDevTools({ mode: "detach" });
        mainWindow.webContents.openDevTools();
        mainWindow.loadURL(`file://${__dirname}/web/index-dev.html`);
     } else if (argv[0] === 'dev-server') {
-       mainWindow.setSize(1850,1200);
+       mainWindow.setSize(1850,1400);
        mainWindow.webContents.openDevTools();
        //mainWindow.loadURL(`file://${__dirname}/web/index-dev.html`);
        //mainWindow.loadURL('http://localhost:8080/target/scala-2.12/scalajs-bundler/main/index-dev.html');
@@ -84,10 +85,24 @@ function createWindow() {
 // initialization and is ready to create browser windows.
 // Some APIs can only be used after this event occurs.
 //
-app.on('ready', createWindow);
+app.on('ready', () => {
+   createWindow()
+   globalShortcut.register ('F1', () => {hotkeyHandler()})
+   globalShortcut.register ('Alt+1', () => {hotkeyHandler()})
+
+   //globalShortcut.register ('Esc', () => {mainWindow.hide()})
+   // lol ^ cant do that.. lots of ppl need Esc.. gonna have to handle it from inside window, not globally
+})
 //app.on('ready', quickTest);
 //app.on('ready', inclTest);
 //app.on('ready', tests);
+
+function hotkeyHandler() {
+    //console.log('electron global hotkey pressed!')
+    //mainWindow.webContents.executeJavaScript('window.handleElectronHotkeyCall()', function(result){console.log(result)})
+    mainWindow.webContents.executeJavaScript('window.handleElectronHotkeyCall()')
+    mainWindow.show()
+}
 
 function tests() {
     quickTest();
@@ -114,10 +129,8 @@ function inclTest() {
   
 // Quit when all windows are closed.
 app.on('window-all-closed', () => {
-
     // On OS X it is common for applications and their menu bar
     // to stay active until the user quits explicitly with Cmd + Q.
-    //
     if (process.platform !== 'darwin') {
         app.quit();
     }

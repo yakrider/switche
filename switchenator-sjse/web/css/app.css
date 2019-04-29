@@ -8,19 +8,25 @@ body {
    /* background: #404040; */
 }
 
-#top-ribbon { color: yellowgreen; }
+#top-ribbon {
+  color: yellowgreen;
+  font-size: 14px;
+  line-height: 1.4;
+  padding: 4px;
+}
 #top-ribbon a { color: yellowgreen; }
 
 .elemBox {
    font: status-bar;
-   font-size: medium;
+   font-size: 14px;
+   line-height: 1.2;
 }
 .elemBox:hover{ background: slateblue; }
 .elemBox:active{ background: slateblue;}
 
 .titleSpan {
   display: inline-block;
-  width: 800px;
+  width: 850px;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -36,7 +42,7 @@ body {
   overflow: hidden;
   text-overflow: ellipsis;
   text-align: right;
-  font-size: small;
+  font-size: 13px;
   color: burlywood;
 }
 .elemBox:hover .exeSpan { color: floralwhite; }
@@ -48,7 +54,7 @@ body {
   overflow: hidden;
   color: darkcyan;
 }
-.ico { width: 17px; }
+.ico { width: 14px; }
 /*
 - light good colors : honeydew, lightyellow, lightgrey, lightcyan, azure, bisque, beige, ghostwhite, ivory, lavender, mintcream, oldlace, aliceblue
 - slightly dark contrast colors considered for exespan (cf w gold for elemBox).. burlwood, tan, goldenron, darkkhaki, darkgrey, silver

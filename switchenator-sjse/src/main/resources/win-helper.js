@@ -6,26 +6,50 @@ exports.hello = function hello() {
 }
 
 
-var ref = require('ref');
-var ffi = require('ffi');
+var ref = require('ref')
+var ffi = require('ffi')
+var refStruct = require('ref-struct')
 
 var voidPtr = ref.refType(ref.types.void);
 var stringPtr = ref.refType(ref.types.CString);
 var lpdwordPtr = ref.refType(ref.types.ulong);
 
+var point_t_x = ref.types.long
+var point_t_y = ref.types.long
+var point_t = refStruct ({ x:point_t_x, y:point_t_y })
+// typedef struct tagPOINT { LONG x; LONG y; } POINT, *PPOINT;
+
+var rect_t_left = ref.types.long
+var rect_t_top = ref.types.long
+var rect_t_right = ref.types.long
+var rect_t_bottom = ref.types.long
+var rect_t = refStruct ({left:rect_t_left, top:rect_t_top, right:rect_t_right, bottom:rect_t_bottom})
+// typedef struct _RECT { LONG left; LONG top; LONG right; LONG bottom; } RECT, *PRECT;
+
+var lpwndpl_t_length = ref.types.uint
+var lpwndpl_t_flags = ref.types.uint
+var lpwndpl_t_showCmd = ref.types.uint
+var lpwndpl_t_ptMinPosition = ref.refType(point_t)
+var lpwndpl_t_ptMaxPosition = ref.refType(point_t)
+var lpwndpl_t_rcNormalPosition = ref.refType(rect_t)
+var lpwndpl_t_rcDevice = ref.refType(rect_t)
+
+var lpwndpl_t = refStruct ({
+  length: lpwndpl_t_length,
+  flags: lpwndpl_t_flags,
+  showCmd: lpwndpl_t_showCmd,
+  ptMinPosition: lpwndpl_t_ptMinPosition,
+  ptMaxPosition: lpwndpl_t_ptMaxPosition,
+  rcNormalPosition: lpwndpl_t_rcNormalPosition,
+  rcDevice: lpwndpl_t_rcDevice
+})
+var lpwndpl_t_ptr = ref.refType(lpwndpl_t)
+//var lpwndpl = new lpwndpl_t
+// typedef struct tagWINDOWPLACEMENT {UINT length; UINT flags; UINT showCmd; POINT ptMinPosition; POINT ptMaxPosition; RECT rcNormalPosition; RECT rcDevice;} WINDOWPLACEMENT;
+
 function TEXT(text) {
   return new Buffer(text, 'ucs2').toString('binary');
 }
-
-var icoExt = require('icon-extractor');
-var defaultIconsCallback = function(ctxStr,path,data) {console.error('No callback registered for icon-extractor!!')};
-var iconsCallback = defaultIconsCallback
-icoExt.emitter.on ('icon', function(data){ iconsCallback (data.Context, data.Path, data.Base64ImageData) });
-icoExt.emitter.on ('error', function(e){console.error(e)} );
-exports.registerIconsCallback = function registerIconsCallback (callback) {iconsCallback = callback}
-exports.unregisterIconsCallback = function unregisterIconsCallback() {iconsCallback = defaultIconsCallback}
-exports.queueIconsQuery = function queueIconsQuery (ctxStr,path) { icoExt.getIcon(ctxStr,path); }
-
  
  // e.g https://github.com/MrTimcakes/node-hide/blob/master/main.js
  // note that references are in https://docs.microsoft.com/en-us/windows/desktop/api/winuser/
@@ -47,11 +71,15 @@ exports.queueIconsQuery = function queueIconsQuery (ctxStr,path) { icoExt.getIco
    IsWindowVisible  : ['int', ['int']],
    GetWindowModuleFileNameA : ['int', ['int',stringPtr,'int']],
    GetWindowModuleFileNameW : ['int', ['int',stringPtr,'int']],
-   GetWindowThreadProcessId : ['int', ['int', lpdwordPtr]]
+   GetWindowThreadProcessId : ['int', ['int', lpdwordPtr]],
+   //BOOL GetWindowPlacement( HWND hWnd, WINDOWPLACEMENT *lpwndpl );
+   GetWindowPlacement : ['int', ['int',lpwndpl_t_ptr]]
  });
  // note on EnumWindows usage.. check the ms docs, but from usage below, looks like it repeatedly calls the callback w new found
  // windows, until either the callback returns false, or it has nothing more to send.. also looks like it only gives 'top-level' windows
  // whatever that means, and apparently not any child-windows.. we'll have to see in practice if need to supplement w EnumChildWindows
+
+
 
  var kernel32 = new ffi.Library('kernel32.dll', {
     //HANDLE OpenProcess( DWORD dwDesiredAccess, BOOL  bInheritHandle, DWORD dwProcessId );
@@ -74,11 +102,12 @@ exports.queueIconsQuery = function queueIconsQuery (ctxStr,path) { icoExt.getIco
 var oleacc = new ffi.Library('oleacc.dll' {
   // HANDLE WINAPI GetProcessHandleFromHwnd( _In_ HWND hwnd );
   GetProcessHandleFromHwnd : ['int', ['int']]
-});*/
+});
 exports.getWindowProcessId = function getWindowProcessId (hwnd) {
    console.log('this oleacc call has been disabled')
-   //return oleacc.GetProcessHandleFromHwnd(hwnd);
-}
+   return oleacc.GetProcessHandleFromHwnd(hwnd);
+}*/
+
 exports.getWindowThreadProcessId = function getWindowThreadProcessId (hwnd) {
    //DWORD GetWindowThreadProcessId( HWND hWnd, LPDWORD lpdwProcessId );
    var pidRef = ref.alloc(lpdwordPtr);
@@ -126,44 +155,42 @@ exports.getProcessExeFromHwnd = function getProcessExeFromHwnd(hwnd) {
 }
 
  
- var enumWindowsArray = []; //{};
- var enumWindowsTimeout;
- var enumWindowsCallback;
- exports.getVisibleWindows = function getVisibleWindows (callback) {
-   enumWindowsArray = []; //{};
-   console.log(callback);
-   enumWindowsCallback = callback;
-   // ms docs api reference : BOOL EnumWindows( WNDENUMPROC lpEnumFunc, LPARAM lParam );
-   // ms docs ref for callback : BOOL CALLBACK EnumWindowsProc( _In_ HWND   hwnd, _In_ LPARAM lParam );
-   user32.EnumWindows (ffi.Callback ('bool', ['long', 'int32'], function (hwnd, lParam) {
-     clearTimeout(enumWindowsTimeout);
-     enumWindowsTimeout = setTimeout(enumWindowsCallback,50,enumWindowsArray); // 50ms after last run, assume ended
-     if (!user32.IsWindowVisible(hwnd)) return true;
-     var length = user32.GetWindowTextLengthA(hwnd);
-     if (length == 0) return true;
- 
-     var buf = new Buffer(length+1);
-     user32.GetWindowTextA(hwnd, buf, length+1);
-     var name = ref.readCString(buf, 0);
- 
-     //enumWindowsArray[hwnd] = name;
-     //enumWindowsArray.push (const {h:hwnd,n:name})
-     //enumWindowsArray.push (hwnd,name)
-     enumWindowsArray.push (name);
- 
-     return true;
-   }), 0);
- }
+var enumWindowsArray = []; //{};
+var enumWindowsTimeout;
+var enumWindowsCallback;
+exports.getVisibleWindows = function getVisibleWindows (callback) {
+  enumWindowsArray = []; //{};
+  console.log(callback);
+  enumWindowsCallback = callback;
+  // ms docs api reference : BOOL EnumWindows( WNDENUMPROC lpEnumFunc, LPARAM lParam );
+  // ms docs ref for callback : BOOL CALLBACK EnumWindowsProc( _In_ HWND   hwnd, _In_ LPARAM lParam );
+  user32.EnumWindows (ffi.Callback ('bool', ['long', 'int32'], function (hwnd, lParam) {
+    clearTimeout(enumWindowsTimeout);
+    enumWindowsTimeout = setTimeout(enumWindowsCallback,50,enumWindowsArray); // 50ms after last run, assume ended
+    if (!user32.IsWindowVisible(hwnd)) return true;
+    var length = user32.GetWindowTextLengthA(hwnd);
+    if (length == 0) return true;
+
+    var buf = new Buffer(length+1);
+    user32.GetWindowTextA(hwnd, buf, length+1);
+    var name = ref.readCString(buf, 0);
+    enumWindowsArray.push (name);
+
+    return true;
+  }), 0);
+}
 
 exports.streamWindowsQuery = function streamWindowsQuery (callback, callId) {
   // no return, will repeatedly call callback w new windows found, incl non-visible ones
   // in theory returns 0/1 code, but chrome console says returns 'undefined'
   user32.EnumWindows (ffi.Callback ('int', ['long', 'int32'], callback), callId);
 }
+
 exports.checkWindowVisible = function checkWindowVisible (hwnd) {
   // in theory returns bool, but think its still 0/1
   return user32.IsWindowVisible(hwnd);
 }
+
 exports.getWindowText = function getWindowText (hwnd) {
   //var length = user32.GetWindowTextLengthA(hwnd);
   //if (length == 0) return "";
@@ -174,11 +201,31 @@ exports.getWindowText = function getWindowText (hwnd) {
   var name = ref.readCString(buf, 0); // reads till first null so shorter strings are fine
   return name;
 }
+
+exports.getWindowPlacement = function getWindowPlacement (hwnd) {
+  //BOOL GetWindowPlacement( HWND hWnd, WINDOWPLACEMENT *lpwndpl );
+  var lpwndpl = new lpwndpl_t
+  var bResult = user32.GetWindowPlacement (hwnd, lpwndpl.ref())
+  console.log ('result is ', bResult)
+  console.log ('showCmd is ', lpwndpl.showCmd)
+}
+
 exports.activateWindow = function activateWindow (hwnd) {
-  // returns bool as 0/1
-  user32.ShowWindowAsync(hwnd, 9); // 9 is the SW_RESTORE cmd, works whether minimized or not
+  var lpwndpl = new lpwndpl_t
+  user32.GetWindowPlacement (hwnd, lpwndpl.ref())
+  //console.log ('showCmd is ', lpwndpl.showCmd)
+  if (lpwndpl.showCmd == 2) { // means minimized, gotta do the restore first
+    user32.ShowWindow(hwnd, 9) // 9 is the SW_RESTORE cmd, required for minimized windows, but will 'restore' maximized ones
+  } else {
+    user32.ShowWindowAsync(hwnd, 5) // 5 is SW_SHOW, it shows windows in cur size and position
+  }
   return user32.SetForegroundWindow(hwnd);
 }
+
+exports.hideWindow = function hideWindow (hwnd) {
+  return user32.ShowWindow(hwnd,0) // 0 is for hide cmd, can be shown by show cmd
+}
+
 exports.getWindowModuleFile = function getWindowModuleFile (hwnd) {
   // uhh, this is pointless, only works for windows or children matching the same as the requesting process!
   // UINT GetWindowModuleFileNameW ( HWND   hwnd, LPWSTR pszFileName, UINT   cchFileNameMax );
@@ -188,48 +235,22 @@ exports.getWindowModuleFile = function getWindowModuleFile (hwnd) {
   var name = ref.readCString(buf,0);
   return name;
 }
-exports.getProcessIcon = function getProcessIcon (pid) {
-}
-
 
 exports.printVisibleWindows = function printVisibleWindows() {
-   getVisibleWindows ( function (arr) {
+  getVisibleWindows ( function (arr) {
     //console.log(enumWindowsArray);
     console.log(arr);
     //app.quit()
-   });
- }
-
-exports.activateTestWindow = function activateTestWindow() {
-  var h = findWindow ('Untitled - Notepad');
-  console.log('found handle : ' + h);
-  user32.SetForegroundWindow(h);
+  });
 }
 
- 
- function test() { // huh, both options below seems really unreliable, often returning 0 for handle while finding it at other times, and not reliably activating window either
-   var handle = user32v0.FindWindowW (null, TEXT('Untitled - Notepad'));
-   //var h2 = user32.FindWindowW (null, TEXT('Untitled - Notepad'));
-   var h2 = findWindow ('Untitled - Notepad');
-   var h3 = user32.FindWindowW (null, TEXT('Rapid Environment Editor'));
-   console.log('handle is : ' + handle); // hmm, at least this works!
-   console.log('h2 is : ' + h2); // hmm, at least this works!
-   console.log('h3 is : ' + h3); // hmm, at least this works!
-   // look up show-window details at https://docs.microsoft.com/en-us/windows/desktop/api/winuser/nf-winuser-showwindow
-   //user32v0.ShowWindow(handle,0); // --> this will literally hide the window (so wont be visible in taskbar!)
-   //user32v0.ShowWindow(handle,1); // - works sometimes, though seems very unreliable.. hmm, dont think ShowWindow is designed for this purpose
-   //user32v0.ShowWindowAsync(handle,1);
-   //user32v0.SetForegroundWindow(handle); // <- works
-   //user32.BringWindowToTop(handle); // <- 
-   //user32.ShowWindow(h2,1);
-   //user32.ShowWindowAsync(h2,1);
-   //user32.BringWindowToTop(h3); // <- does not work
-   //user32.SetForegroundWindow(h3); // <- that works reliably too if handle is available
-   //user32.SetForegroundWindow(2232222); // <- that works reliably
-   console.log('done!');
-   
- 
-   //printVisibleWindows()
-   app.quit();
- 
-   }  
+
+var icoExt = require('icon-extractor');
+var defaultIconsCallback = function(ctxStr,path,data) {console.error('No callback registered for icon-extractor!!')};
+var iconsCallback = defaultIconsCallback
+icoExt.emitter.on ('icon', function(data){ iconsCallback (data.Context, data.Path, data.Base64ImageData) });
+icoExt.emitter.on ('error', function(e){console.error(e)} );
+exports.registerIconsCallback = function registerIconsCallback (callback) {iconsCallback = callback}
+exports.unregisterIconsCallback = function unregisterIconsCallback() {iconsCallback = defaultIconsCallback}
+exports.queueIconsQuery = function queueIconsQuery (ctxStr,path) { icoExt.getIcon(ctxStr,path); }
+

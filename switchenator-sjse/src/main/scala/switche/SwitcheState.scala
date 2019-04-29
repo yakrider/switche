@@ -17,15 +17,15 @@ object SwitcheState {
    var hMapCur = LinkedHashMap[Int,WinDatEntry]();
    var hMapPrior = LinkedHashMap[Int,WinDatEntry]();
    var inGroupedMode = true;
+   var isDismissed = false;
    
    def parseIntoExePathName (path:String) = ExePathName(path, path.split("""\\""").lastOption.getOrElse(""))
    def prepForNewEnumWindowsCall (callId:Int) = {
-      println (s"starting new win enum-windows call w callId: ${callId}")
       latestTriggeredCallId = callId; cbCountForCallId = 0;
       hMapPrior = hMapCur; hMapCur = LinkedHashMap[Int,WinDatEntry]();
    }
    def okToRenderImages() = true //false //cbCountForCallId > 1000
-   def kickPostCbCleanup() = {cbCountForCallId += 1; val ccSnap = cbCountForCallId; js.timers.setTimeout(20){delayedTaskListCleanup(ccSnap)}}
+   def kickPostCbCleanup() = {cbCountForCallId += 1; val ccSnap = cbCountForCallId; js.timers.setTimeout(250){delayedTaskListCleanup(ccSnap)}}
    
    def procStreamWinQueryCallback (hwnd:Int, callId:Int):Boolean = {
       if (callId > latestTriggeredCallId) {
@@ -102,7 +102,7 @@ object SwitcheState {
       renderList
    }
    
-   def handleRefreshRequest() = {
+   def handleRefreshRequest():Unit = { //println ("refresh called!")
       latestTriggeredCallId += 1
       prepForNewEnumWindowsCall(latestTriggeredCallId)
       js.timers.setTimeout(100) {RenderSpacer.queueSpacedRender()} // mandatory repaint per refresh, simpler this way to catch only ordering changes
@@ -110,13 +110,20 @@ object SwitcheState {
       //js.timers.setTimeout(50) {delayedTaskListCleanup()} // no need anymore, now we queue it kick-the-can style on each callback
    }
    
-   def handleWindowActivationRequest(hwnd:Int) = {
+   def handleWindowActivationRequest(hwnd:Int):Unit = {
       // note that win rules to allow switching require the os to register our switche app processing the most recent ui input (which would've triggered this)
       // hence calling this immediately here can actually be flaky, but putting it on a small timeout seems to make it a LOT more reliable!
       // note also, that the set foreground doesnt bring back minimized windows, which requires showWindow, currently handled by js
       //WinapiLocal.activateWindow(hwnd)
       js.timers.setTimeout(10) {WinapiLocal.activateWindow(hwnd)}
       //js.timers.setTimeout(50) {WinapiLocal.activateWindow(hwnd)}
+      // also might as well queue up a refresh as things change, even if the app window might be going away anyway
+      js.timers.setTimeout(25) {handleSelfWindowHideRequest()}
+      js.timers.setTimeout(50) {handleRefreshRequest()}
+   }
+   def handleSelfWindowHideRequest() = {
+      isDismissed = true
+      hMapPrior.values.filter(ExclusionsManager.selfSelector).headOption.map(_.hwnd).map(WinapiLocal.hideWindow)
    }
    
    def handleExclPrintRequest() = {
@@ -136,7 +143,16 @@ object SwitcheState {
    }
    
    def handleGroupModeRequest() = { inGroupedMode = !inGroupedMode; SwitchFacePage.render() }
+
+   def handleElectronHotkeyCall() = {
+      //println ("..electron main reports global hotkey press!")
+      if (isDismissed) { handleRefreshRequest() }
+      // TODO : this should scroll through tasklist as well
+   }
+   js.Dynamic.global.updateDynamic("handleElectronHotkeyCall")(SwitcheState.handleElectronHotkeyCall _)
    
+   def handleEscPress () = {handleSelfWindowHideRequest()}
+
    
 }
 

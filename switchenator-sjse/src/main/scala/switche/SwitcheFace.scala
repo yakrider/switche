@@ -2,7 +2,7 @@ package switche
 
 
 import org.scalajs.dom
-import org.scalajs.dom.raw.MouseEvent
+import org.scalajs.dom.raw.{KeyboardEvent, MouseEvent}
 import scalatags.JsDom.all._
 
 import scala.scalajs.js
@@ -21,14 +21,21 @@ object SwitchFacePage {
       val topRibbon = RibbonDisplay.getTopRibbonDiv()
       val elemsDiv = ElemsDisplay.getElemsDiv
       val page = div (topRibbon, elemsDiv)
+      setKeyBoardEventHandlers()
       page.render
    }
    //def queueRender() = g.window.requestAnimationFrame({t:js.Any => render()}) // used spaced render call instead
-   def render() = { println("rendering")
+   def render() = { //println("rendering")
       val renderList = SwitcheState.getRenderList()
       ElemsDisplay.updateElemsDiv(renderList)
       RibbonDisplay.updateCountsSpan(renderList.size)
    }
+   def setKeyBoardEventHandlers() = {
+      dom.document.onkeydown = (e:KeyboardEvent) => {
+         if (e.key == "Escape") {SwitcheState.handleSelfWindowHideRequest()}
+      }
+   }
+   
 }
 
 object ElemsDisplay {
