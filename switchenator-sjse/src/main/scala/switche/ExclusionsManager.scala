@@ -25,6 +25,7 @@ object ExclusionsManager {
          //(Some("ShellExperienceHost.exe"), Some("Windows Shell Experience Host"))
          //(Some("ShellExperienceHost.exe"), Some("New notification"))
          (Some("explorer.exe"), Some("Program Manager")),
+         (Some("explorer.exe"), Some("SubFolderTipWindow")),
          (Some("electron.exe"), Some("Sjs-Electron-Local-JS-Test")),
          (Some("SystemSettings.exe"), Some("Settings")),
          (Some("ApplicationFrameHost.exe"), Some("Microsoft Edge"))

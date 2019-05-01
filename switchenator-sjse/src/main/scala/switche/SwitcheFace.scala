@@ -34,19 +34,35 @@ object SwitchFacePage {
       RibbonDisplay.updateCountsSpan(SwitcheState.getRenderList.size)
    }
    def setPageEventHandlers() = {
-      // note that Escape/Tab only give key down/up
+      import SwitchePageState._
+      import SwitcheState._
+      // note that Escape/Tab only give key down/up.. all kbd actions should trigger a short hover lock to avoid mouse clashes
       dom.document.onkeydown = (e:KeyboardEvent) => {
-         if (e.key == "Escape") {SwitcheState.handleSelfWindowHideRequest()}
-         else if (e.key == "Tab") { e.stopPropagation(); e.preventDefault();  SwitchePageState.focusNextElem() }
+         triggerHoverLockTimeout()
+         if (e.key == "F5") {dom.window.location.reload()}
+         //else if (e.key == "F1") {focusNextElem()} // note: as its registered as global hotkey, electron intercepts it, we forward it from there
+         else if (e.key == "F2") {focusPrevElem()}
+         else if (e.key == "Escape") {SwitcheState.handleSelfWindowHideReq()}
+         else if (e.key == "Tab") { e.stopPropagation(); e.preventDefault();  focusNextElem() }
+         else if (e.key == "ArrowDown") {focusNextElem()}
+         else if (e.key == "ArrowUp") {focusPrevElem()}
+         else if (e.key == "PageUp") {focusTopElem()}
+         else if (e.key == "PageDown") {focusBottomElem()}
       }
       dom.document.onkeypress = (e:KeyboardEvent) => {
-         if (e.key == "F5") {dom.window.location.reload()}
-         else if (e.key == "Enter") {SwitchePageState.handleCurElemActivationReq()}
-         else if (e.key == " ") {SwitchePageState.handleCurElemActivationReq()}
-         else if (e.key == "ArrowDown") {SwitchePageState.focusNextElem()}
-         else if (e.key == "ArrowUp") {SwitchePageState.focusPreviousElem()}
+         triggerHoverLockTimeout()
+         if (e.key == "Enter") {handleCurElemActivationReq()}
+         else if (e.key == " ") {handleCurElemActivationReq()}
+         else if (e.key == "t") {handleGroupModeToggleReq()}
+         else if (e.key == "w") {handleCurElemCloseReq()}
+         else if (e.key == "v") {handleCurElemShowReq()}
+         else if (e.key == "r") {handleRefreshRequest()}
       }
-      dom.document.onmousewheel = (e:WheelEvent) => { SwitchePageState.handleMouseWheel(e) }
+      dom.document.onmousewheel = (e:WheelEvent) => {
+         triggerHoverLockTimeout()
+         if (e.deltaY > 0) { focusNextElem() } else { focusPrevElem() }
+      }
+      dom.document.oncontextmenu = (e:MouseEvent) => { triggerHoverLockTimeout(); handleCurElemCloseReq() }
    }
 }
 
@@ -60,7 +76,7 @@ object SwitchePageState {
    var groupedIdsVec: Vector[String] = _
    var searchIdsVec: Vector[String] = _ // these could be grouped or recents based on mode (but no mixes).. if want highlights later, make another div map
    var curFocusId:String = ""; //var curFocusVecIdx:Int = _; // the idx is to be able to check after we rebuild if we can maintain id?
-   var isHoverLocked:Boolean = false; var lastWheelStamp:Double = 0 //js.Date.now()
+   var isHoverLocked:Boolean = false; var lastActionStamp:Double = 0 //js.Date.now()
    // set ^ these while mouse scrolling w a small timeout to disable mouse over screwing up the mouse scroll
    
    def rebuildElems() = {} // instead of full render, consider surgical updates to divs directly w/o waiting for global render etc
@@ -84,7 +100,7 @@ object SwitchePageState {
             else { groupedIdsVec .lift(idx+1) .map(focusElemIdGrouped) .orElse (recentsIdsVec.lift(0).map(focusElemIdRecents)) }
          }
    } }
-   def focusPreviousElem() = {
+   def focusPrevElem() = {
       groupedElemsMap .get(curFocusId) .map(e => (true,e.y)) .orElse {
          recentsElemsMap.get(curFocusId).map(e => (false,e.y))
       //} .orElse { searchElemsMap.get(curFocusId).map(e => (true,e.y))
@@ -96,15 +112,17 @@ object SwitchePageState {
             else { groupedIdsVec .lift(idx-1) .map(focusElemIdGrouped) .orElse (recentsIdsVec.lift(recentsIdsVec.size-1).map(focusElemIdRecents)) }
          }
    } }
-   def handleCurElemActivationReq() = { SwitcheState.handleWindowActivationRequest(idToHwnd(curFocusId)) }
-   def handleCurElemCloseReq() = { SwitcheState.handleWindowActivationRequest(idToHwnd(curFocusId)) }
+   def focusTopElem() = {recentsIdsVec.headOption.map(focusElemIdRecents)}
+   def focusBottomElem() = {if (SwitcheState.inGroupedMode) {groupedIdsVec.lastOption.map(focusElemIdGrouped)} else {recentsIdsVec.lastOption.map(focusElemIdRecents)}}
+   def handleCurElemActivationReq() = { SwitcheState.handleWindowActivationReq(idToHwnd(curFocusId)) }
+   def handleCurElemCloseReq() = { SwitcheState.handleWindowCloseReq(idToHwnd(curFocusId)) }
+   def handleCurElemShowReq() = { SwitcheState.handleWindowShowReq(idToHwnd(curFocusId)) }
    def handleMouseEnter (idStr:String, elem:Div) = { if (!isHoverLocked) { curFocusId = idStr; elem.focus() } }
-   def triggerHoverLockTimeout() = { val t = js.Date.now(); lastWheelStamp = t; js.timers.setTimeout(hoverLockTime){checkHoverLockTimeout(t)} }
-   def checkHoverLockTimeout(kickerStamp:Double) = { if (lastWheelStamp == kickerStamp) isHoverLocked = false; }
-   def handleMouseWheel (e:WheelEvent) = {
-      isHoverLocked = true; triggerHoverLockTimeout()
-      if (e.deltaY > 0) {SwitchePageState.focusNextElem()} else {SwitchePageState.focusPreviousElem()}
+   def triggerHoverLockTimeout() = {
+      isHoverLocked = true; val t = js.Date.now(); lastActionStamp = t;
+      js.timers.setTimeout(hoverLockTime){checkHoverLockTimeout(t)}
    }
+   def checkHoverLockTimeout(kickerStamp:Double) = { if (lastActionStamp == kickerStamp) isHoverLocked = false; }
    
    def makeElemBox (idStr:String, e:WinDatEntry, dimExeSpan:Boolean=false) = {
       val exeSpanClass = s"exeSpan${if (dimExeSpan) " dim" else ""}"
@@ -115,7 +133,7 @@ object SwitchePageState {
       val icoSpan = span (`class`:="exeIcoSpan", ico)
       val titleSpan = span (`class`:="titleSpan", e.winText.getOrElse("title").toString)
       val elem = div (`class`:="elemBox", id:=idStr, tabindex:=0, exeSpan, nbsp(3), icoSpan, nbsp(), titleSpan).render
-      elem.onclick = {ev:MouseEvent => SwitcheState.handleWindowActivationRequest(e.hwnd)}
+      elem.onclick = {ev:MouseEvent => SwitcheState.handleWindowActivationReq(e.hwnd)}
       elem.onmouseenter = {ev:MouseEvent => handleMouseEnter(idStr,elem)}
       elem
    }
@@ -136,14 +154,15 @@ object SwitchePageState {
       }.flatten .zipWithIndex .foreach {case ((id,e),i) => groupedElemsMap.put (id, OrderedElemsEntry(i,e)) }
       groupedIdsVec = groupedElemsMap.keys.toVector
    }
-   def reSyncCurFocusIdAfterRebuild() = {
-      if(isIdGrp(curFocusId)) { // note than on failure, both default to recents top
-         groupedElemsMap.get(curFocusId).map {o => groupedIdsVec.lift(o.y).map(id => (id,o.elem))}.flatten
-      } else {
-         recentsElemsMap.get(curFocusId).map {o => recentsIdsVec.lift(o.y).map(id => (id,o.elem))}.flatten
-      } .orElse(recentsElemsMap.headOption.map{case(id,o) => (id,o.elem)}) .foreach {case (id,elem) =>
-         curFocusId = id; elem.focus()
-      }
+   def reSyncCurFocusIdAfterRebuild() = { //g.window.xxx = ((recentsElemsMap.toList):js.Any)
+      println (s"${recentsElemsMap.keys.toList}")
+      def checkResyncIdRecents(idStr:String) = { recentsElemsMap.get(idStr).map {o => recentsIdsVec.lift(o.y).map(id => (id,o.elem))}.flatten }
+      def checkResyncIdGrouped(idStr:String) = { groupedElemsMap.get(idStr).map {o => groupedIdsVec.lift(o.y).map(id => (id,o.elem))} .flatten }
+      {  if (SwitcheState.inGroupedMode) {
+            checkResyncIdGrouped(curFocusId) .orElse (checkResyncIdRecents(curFocusId)) orElse (checkResyncIdGrouped(s"${curFocusId}_g"))
+         } else { checkResyncIdRecents(curFocusId.split("_").head) }
+      }.orElse { recentsElemsMap.headOption.map {case (id, o) => (id, o.elem)} }
+      .foreach {case (id,elem) => curFocusId = id; elem.focus() }
    }
    /*
    def focusElem (hwnd:Int, isGrpElem:Boolean=false) = {
@@ -187,8 +206,8 @@ object RibbonDisplay {
    def getTopRibbonDiv() = {
       val reloadLink = a (href:="#", "Reload", onclick:={e:MouseEvent => g.window.location.reload()} )
       val refreshLink = a (href:="#", "Refresh", onclick:={e:MouseEvent => handleRefreshRequest()} )
-      val printExclLink = a (href:="#", "ExclPrint", onclick:={e:MouseEvent => handleExclPrintRequest()} )
-      val groupModeLink = a (href:="#", "ToggleGrouping", onclick:={e:MouseEvent => handleGroupModeRequest()} )
+      val printExclLink = a (href:="#", "ExclPrint", onclick:={e:MouseEvent => handleExclPrintReq()} )
+      val groupModeLink = a (href:="#", "ToggleGrouping", onclick:={e:MouseEvent => handleGroupModeToggleReq()} )
       div (id:="top-ribbon", reloadLink, nbsp(4), refreshLink, nbsp(4), printExclLink, nbsp(4), countSpan, nbsp(4), groupModeLink).render
    }
 }

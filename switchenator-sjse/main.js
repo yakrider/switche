@@ -72,7 +72,6 @@ function createWindow() {
     let handleRedirect = (e, url) => {
         if (url != mainWindow.webContents.getURL()) {
             e.preventDefault();
-
             // Launch a new browser window.
             shell.openExternal(url);
         }
@@ -91,7 +90,6 @@ app.on('ready', () => {
    createWindow()
    globalShortcut.register ('F1', () => {hotkeyHandler()})
    globalShortcut.register ('Alt+1', () => {hotkeyHandler()})
-
    //globalShortcut.register ('Esc', () => {mainWindow.hide()})
    // lol ^ cant do that.. lots of ppl need Esc.. gonna have to handle it from inside window, not globally
 })

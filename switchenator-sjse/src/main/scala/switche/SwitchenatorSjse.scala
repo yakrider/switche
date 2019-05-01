@@ -21,7 +21,7 @@ object SwitchenatorSjse extends js.JSApp {
       // .. though if really want to listen for changes, looks like can do that w SetWinEventHook, listening for EVENT_SYSTEM_FOREGROUND
       
       // k, but for now, prob still worthwhile doing like once a minute or so just to keep things somewhat fresh?
-      js.timers.setInterval(60*1000) {SwitcheState.backgroundOnlyRefreshRequest()}
+      js.timers.setInterval(30*1000) {SwitcheState.backgroundOnlyRefreshReq()}
       // ughh.. still makes it a pita to work w ui for debug/dev etc as the bkg is activated only when 'dismissed'
       
    }
@@ -37,7 +37,9 @@ object WinapiLocal extends js.Object {
    def streamWindowsQuery (cb:js.Function2[Int,Int,Boolean], callId:Int):Unit = js.native
    def checkWindowVisible (hwnd:Int):Int = js.native
    def getWindowText (hwnd:Int):String = js.native
+   def showWindow (hwnd:Int):Int = js.native
    def hideWindow (hwnd:Int):Int = js.native
+   def closeWindow (hwnd:Int):Int = js.native
    def getWindowThreadProcessId (hwnd:Int):Int = js.native
    def getProcessExeFromPid (pid:Int):String = js.native
    def getWindowProcessId (hwnd:Int):Int = js.native

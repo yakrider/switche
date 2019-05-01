@@ -116,40 +116,56 @@ object SwitcheState {
       js.timers.setTimeout(250) {RenderSpacer.queueSpacedRender()} // mandatory repaint per refresh, simpler this way to catch only ordering changes
       WinapiLocal.streamWindowsQuery (procStreamWinQueryCallback _, latestTriggeredCallId)
    }
-   def backgroundOnlyRefreshRequest() = { if (isDismissed) handleRefreshRequest() }
+   def backgroundOnlyRefreshReq() = { if (isDismissed) handleRefreshRequest() }
    
-   def handleWindowActivationRequest(hwnd:Int):Unit = {
+   def handleWindowActivationReq(hwnd:Int):Unit = {
       // note that win rules to allow switching require the os to register our switche app processing the most recent ui input (which would've triggered this)
       // hence calling this immediately here can actually be flaky, but putting it on a small timeout seems to make it a LOT more reliable!
       // note also, that the set foreground doesnt bring back minimized windows, which requires showWindow, currently handled by js
       //WinapiLocal.activateWindow(hwnd)
       js.timers.setTimeout(25) {WinapiLocal.activateWindow(hwnd)}
       js.timers.setTimeout(50) {WinapiLocal.activateWindow(hwnd)}
-      js.timers.setTimeout(80) {handleSelfWindowHideRequest()}
-   }
-   def handleSelfWindowHideRequest() = {
       isDismissed = true;
-      hMapPrior.values.filter(ExclusionsManager.selfSelector).headOption.map(_.hwnd).map(WinapiLocal.hideWindow)
-      js.timers.setTimeout(100) {handleRefreshRequest()} // prime it for any quick next reactivations
+      js.timers.setTimeout(300) {getSelfWindowOpt.map(WinapiLocal.hideWindow)}
+      js.timers.setTimeout(500) {handleRefreshRequest()} // prime it for any quick next reactivations
+   }
+   def getSelfWindowOpt() = {
+      hMapPrior.values.filter(ExclusionsManager.selfSelector).headOption.map(_.hwnd)
+   }
+   def handleSelfWindowHideReq() = {
+      // want to make sure focus is returned to the window we were supposed to have active
+      js.timers.setTimeout(50) {SwitchePageState.recentsIdsVec.headOption.map(SwitchePageState.idToHwnd).map(WinapiLocal.activateWindow)}
+      isDismissed = true;
+      js.timers.setTimeout(100) {getSelfWindowOpt.map(WinapiLocal.hideWindow)}
+      js.timers.setTimeout(300) {handleRefreshRequest()} // prime it for any quick next reactivations
+   }
+   def handleWindowCloseReq(hwnd:Int) = {
+      // we try and activate the window first so it doesnt just die in the bkg, then send close, then after some delay, a refresh to update
+      js.timers.setTimeout(30) {WinapiLocal.activateWindow(hwnd)}
+      js.timers.setTimeout(50) {WinapiLocal.activateWindow(hwnd)}
+      js.timers.setTimeout(100) {WinapiLocal.closeWindow(hwnd)} // this can take a while, if the window even agrees to close!
+      js.timers.setTimeout(500) {handleRefreshRequest()}
+      js.timers.setTimeout(1000) {handleRefreshRequest()}
+   }
+   def handleWindowShowReq(hwnd:Int) = { // useful for inspection/closing.. brings that window to top, then brings ourselves back
+      js.timers.setTimeout(30) {WinapiLocal.activateWindow(hwnd)}
+      js.timers.setTimeout(50) {WinapiLocal.activateWindow(hwnd)}
+      js.timers.setTimeout(1000) {getSelfWindowOpt.map(WinapiLocal.activateWindow)}
    }
    
-   def handleExclPrintRequest() = {
+   def handleExclPrintReq() = {
       //val nonVisEs = hMapCur.values.filter(!_.isVis.getOrElse(false))
       //println (s"Printing non-vis entries (${nonVisEs.size}) :")
       //nonVisEs.foreach(println)
-      
       val emptyTextEs = hMapCur.values.filter(e => e.isVis==Some(true) && e.winText==Some(""))
       println (s"..isVis true empty title entries: (${emptyTextEs.size}) :")
       //emptyTextEs.foreach (e => println(e.toString))
-      
       println(); println (s"Printing full data incl excl flags for titled Vis entries:")
       hMapCur.values.filter(e => e.isVis.filter(identity).isDefined && e.winText.filterNot(_.isEmpty).isDefined).foreach(println)
-      
       println(); IconsManager.printIconCaches()
-      
    }
    
-   def handleGroupModeRequest() = { inGroupedMode = !inGroupedMode; SwitchFacePage.render() }
+   def handleGroupModeToggleReq() = { inGroupedMode = !inGroupedMode; SwitchFacePage.render() }
 
    def handleElectronHotkeyCall() = {
       //println ("..electron main reports global hotkey press!")

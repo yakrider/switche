@@ -64,6 +64,8 @@ function TEXT(text) {
    SetForegroundWindow: ['int', ['int']],
    BringWindowToTop: ['long', ['long']],
    CloseWindow  : ['long', ['long']],
+   SendMessageA : ['int', ['int','int','int','int']],
+   SendMessageW : ['long', ['long','int','long','long']],
    GetWindowTextA  : ['int', ['int',stringPtr,'int']],
    GetWindowTextW  : ['int', ['int',stringPtr,'int']],
    GetWindowTextLengthA  : ['long', ['long']],
@@ -217,13 +219,28 @@ exports.activateWindow = function activateWindow (hwnd) {
   if (lpwndpl.showCmd == 2) { // means minimized, gotta do the restore first
     user32.ShowWindow(hwnd, 9) // 9 is the SW_RESTORE cmd, required for minimized windows, but will 'restore' maximized ones
   } else {
-    user32.ShowWindowAsync(hwnd, 5) // 5 is SW_SHOW, it shows windows in cur size and position
+    user32.ShowWindow(hwnd, 5) // 5 is SW_SHOW, it shows windows in cur size and position
   }
   return user32.SetForegroundWindow(hwnd);
 }
-
 exports.hideWindow = function hideWindow (hwnd) {
   return user32.ShowWindow(hwnd,0) // 0 is for hide cmd, can be shown by show cmd
+}
+exports.minimizeWindow = function minimizeWindow (hwnd) {
+   // note that the u32 'CloseWindow' cmd actually minimizes it, to close, send it a WM_CLOSE msg
+  return user32.CloseWindow(hwnd)
+}
+exports.showWindow = function showWindow (hwnd) {
+   user32.ShowWindow(hwnd,5)
+   return user32.SetForegroundWindow(hwnd)
+}
+exports.closeWindow = function closeWindow (hwnd) {
+   // LRESULT SendMessage( HWND hWnd, UINT Msg, WPARAM wParam, LPARAM lParam );
+   // 16 is 0x0010 or WM_CLOSE, the WPARAM, LPARAM are ignored for this message
+   // this closes most, but not Windows internal windows, hence trying the W version, but was no better
+   //user32.SendMessageW(hwnd,16,0,0)
+   return user32.SendMessageA(hwnd,16,0,0)
+   //return 1 // meh
 }
 
 exports.getWindowModuleFile = function getWindowModuleFile (hwnd) {
