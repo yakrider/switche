@@ -18,13 +18,14 @@ object SwitcheState {
    var hMapPrior = LinkedHashMap[Int,WinDatEntry]();
    var inGroupedMode = true;
    var isDismissed = false;
+   var curElemId = ""
    
    def parseIntoExePathName (path:String) = ExePathName(path, path.split("""\\""").lastOption.getOrElse(""))
    def prepForNewEnumWindowsCall (callId:Int) = {
       latestTriggeredCallId = callId; cbCountForCallId = 0;
       hMapPrior = hMapCur; hMapCur = LinkedHashMap[Int,WinDatEntry]();
    }
-   def okToRenderImages() = true //false //cbCountForCallId > 1000
+   //def okToRenderImages() = true //false //cbCountForCallId > 1000
    def kickPostCbCleanup() = {cbCountForCallId += 1; val ccSnap = cbCountForCallId; js.timers.setTimeout(250){delayedTaskListCleanup(ccSnap)}}
    
    def procStreamWinQueryCallback (hwnd:Int, callId:Int):Boolean = {
@@ -89,41 +90,47 @@ object SwitcheState {
    
    def delayedTaskListCleanup (cbCountSnapshot:Int) = {
       if (cbCountSnapshot == cbCountForCallId) {
-         println (s"triggering delayed cleanup of prior call cache.. cbCount for this call was $cbCountForCallId")
+         //println (s"triggering delayed cleanup of prior call cache.. cbCount for this call was $cbCountForCallId")
          hMapPrior = hMapCur;
       }
    }
    
-   def getRenderList() = {
-      val hListComb = hMapCur.values.toSeq .++ ( hMapPrior.values.filterNot{d => hMapCur.contains(d.hwnd)}.toSeq )
-      //val renderList = hListComb .filter {d => d.isVis.getOrElse(false) && !d.winText.getOrElse("").isEmpty }
-      val renderList = hListComb .filterNot(e => ExclusionsManager.shouldExclude(e,latestTriggeredCallId))
-      //println (s"Rendered list count: ${renderList.size}")
-      renderList
+   object RenderReadyListsManager {
+      var (renderList, groupedRenderList) = calcRenderReadyLists()
+      def calcRenderReadyLists() = {
+         val hListComb = hMapCur.values.toSeq .++ ( hMapPrior.values.filterNot{d => hMapCur.contains(d.hwnd)}.toSeq )
+         val renderList = hListComb .filterNot(e => ExclusionsManager.shouldExclude(e,latestTriggeredCallId))
+         val groupedRenderList = renderList.zipWithIndex.groupBy(_._1.exePathName.map(_.fullPath)).values.map(l => l.map(_._1)->l.map(_._2).min).toSeq.sortBy(_._2).map(_._1)
+         //println((renderList.size, groupedRenderList.size))
+         (renderList,groupedRenderList)
+      }
+      def updateRenderReadyLists() = {val t = calcRenderReadyLists(); renderList = t._1; groupedRenderList = t._2}
    }
+   def updateRenderReadyLists() = RenderReadyListsManager.updateRenderReadyLists()
+   def getRenderList() = RenderReadyListsManager.renderList
+   def getGroupedRenderList() = RenderReadyListsManager.groupedRenderList
    
    def handleRefreshRequest():Unit = { //println ("refresh called!")
       latestTriggeredCallId += 1
       prepForNewEnumWindowsCall(latestTriggeredCallId)
-      js.timers.setTimeout(100) {RenderSpacer.queueSpacedRender()} // mandatory repaint per refresh, simpler this way to catch only ordering changes
+      js.timers.setTimeout(250) {RenderSpacer.queueSpacedRender()} // mandatory repaint per refresh, simpler this way to catch only ordering changes
       WinapiLocal.streamWindowsQuery (procStreamWinQueryCallback _, latestTriggeredCallId)
-      //js.timers.setTimeout(50) {delayedTaskListCleanup()} // no need anymore, now we queue it kick-the-can style on each callback
    }
+   def backgroundOnlyRefreshRequest() = { if (isDismissed) handleRefreshRequest() }
    
    def handleWindowActivationRequest(hwnd:Int):Unit = {
       // note that win rules to allow switching require the os to register our switche app processing the most recent ui input (which would've triggered this)
       // hence calling this immediately here can actually be flaky, but putting it on a small timeout seems to make it a LOT more reliable!
       // note also, that the set foreground doesnt bring back minimized windows, which requires showWindow, currently handled by js
       //WinapiLocal.activateWindow(hwnd)
-      js.timers.setTimeout(10) {WinapiLocal.activateWindow(hwnd)}
-      //js.timers.setTimeout(50) {WinapiLocal.activateWindow(hwnd)}
-      // also might as well queue up a refresh as things change, even if the app window might be going away anyway
-      js.timers.setTimeout(25) {handleSelfWindowHideRequest()}
-      js.timers.setTimeout(50) {handleRefreshRequest()}
+      js.timers.setTimeout(25) {WinapiLocal.activateWindow(hwnd)}
+      js.timers.setTimeout(50) {WinapiLocal.activateWindow(hwnd)}
+      js.timers.setTimeout(80) {handleSelfWindowHideRequest()}
    }
    def handleSelfWindowHideRequest() = {
-      isDismissed = true
+      isDismissed = true;
       hMapPrior.values.filter(ExclusionsManager.selfSelector).headOption.map(_.hwnd).map(WinapiLocal.hideWindow)
+      js.timers.setTimeout(100) {handleRefreshRequest()} // prime it for any quick next reactivations
    }
    
    def handleExclPrintRequest() = {
@@ -132,7 +139,7 @@ object SwitcheState {
       //nonVisEs.foreach(println)
       
       val emptyTextEs = hMapCur.values.filter(e => e.isVis==Some(true) && e.winText==Some(""))
-      println (s"isVis true empty title entries: (${emptyTextEs.size}) :")
+      println (s"..isVis true empty title entries: (${emptyTextEs.size}) :")
       //emptyTextEs.foreach (e => println(e.toString))
       
       println(); println (s"Printing full data incl excl flags for titled Vis entries:")
@@ -146,15 +153,14 @@ object SwitcheState {
 
    def handleElectronHotkeyCall() = {
       //println ("..electron main reports global hotkey press!")
-      if (isDismissed) { handleRefreshRequest() }
-      // TODO : this should scroll through tasklist as well
+      if (isDismissed) { isDismissed=false; SwitchePageState.triggerHoverLockTimeout(); SwitchePageState.resetFocus(); handleRefreshRequest() }
+      else { SwitchePageState.focusNextElem() }
    }
    js.Dynamic.global.updateDynamic("handleElectronHotkeyCall")(SwitcheState.handleElectronHotkeyCall _)
    
-   def handleEscPress () = {handleSelfWindowHideRequest()}
-
-   
 }
+
+
 
 object RenderSpacer {
    // so to many requestAnimationFrame interspersed are taking a lot of time, as they each are upto 100ms, so gonna bunch them up too

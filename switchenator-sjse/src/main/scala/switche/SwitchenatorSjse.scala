@@ -10,8 +10,7 @@ import scala.scalajs.js.annotation.JSImport
 object SwitchenatorSjse extends js.JSApp {
    def main(): Unit = {
       println("Hello from sjseApp..")
-      //g.console.log(g.document)
-      g.document.getElementById("scala-js-root-div").appendChild (SwitchFacePage.getShellPage())
+      dom.document.getElementById("scala-js-root-div").appendChild (SwitchFacePage.getShellPage())
       
       SwitcheState.handleRefreshRequest() // fire up first call
       
@@ -22,11 +21,9 @@ object SwitchenatorSjse extends js.JSApp {
       // .. though if really want to listen for changes, looks like can do that w SetWinEventHook, listening for EVENT_SYSTEM_FOREGROUND
       
       // k, but for now, prob still worthwhile doing like once a minute or so just to keep things somewhat fresh?
-      //js.timers.setInterval(60*1000) {SwitcheState.handleRefreshRequest()}
-      // ughh.. makes it a pita to work w ui for debug/dev etc
+      js.timers.setInterval(60*1000) {SwitcheState.backgroundOnlyRefreshRequest()}
+      // ughh.. still makes it a pita to work w ui for debug/dev etc as the bkg is activated only when 'dismissed'
       
-      //g.window.GlobalSetSwitcheObject = GlobalSetSwitcheObject
-      //g.updateDynamic("handleElectronHotkeyCall")(SwitcheState.handleElectronHotkeyCall _)
    }
 }
 

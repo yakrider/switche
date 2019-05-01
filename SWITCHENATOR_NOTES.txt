@@ -2,6 +2,16 @@
 RUNNING NOTES DUMP ON POSSIBLE WORK ON THE SWITCHENATOR PROJECT :
 
 
+04/29 .. feature thought
+   - hmm, so this is a braindump thought, and might need mulling over, but consider adding a section up top w some recents, and further down w just groups
+   - could ofc make it a separate mode for the time being.. and modes persist while app is around, so easy to see which we prefer most over time
+   - main idea being that while for larger lists we want grouped shorts, for quick changes, we often want to go back to what we were working on 
+   - but its seldom deeper than say 8 or 10, beyond which the recency is of little value anyway (other than maybe at bottom but that prob not worthwhile)
+   - would also easily take care of the quick single alt-tab/F1 like usage where we just want to go to the prior window, but awkward (though doable) w grouping mode
+   - shouldnt be difficult to impl either, just a matter of adding some things couples times to the dom etc
+   - can think more about how it should play best w search.. maybe starting search gets rid of recents block (or grouped block, or has its own sort scheme)
+
+
 04/28 + .. note on perf after getting to a mostly working state
    - so, we have a mostly usable working test setup now, lists all the windows, does activation, allows grouping by task, decent ui, fetches/loads icons too!
    - and its not too slow either, esp after the initial app startup once it gets most things cached..
@@ -31,6 +41,7 @@ RUNNING NOTES DUMP ON POSSIBLE WORK ON THE SWITCHENATOR PROJECT :
       - e.g. just to list out a few .. electron hotkey bring up, search, mouse wheel handling, kbd up/down etc handling, window close etc enchancements!
       - hmm, although come to think of it, when getting around to the search impl, could look at doing some of that perf rethinking as we have to move rows up and down.. might also be worthwhile taking a look at the dynamic search think lihaoyi had that was pretty efficient I think
       - http://www.lihaoyi.com/hands-on-scala-js/#Re-rendering
+      - lol, and just doing the scrolls and activations will prob require to have a more code-addressable dom anyway unlike our constantly regenerated stuff.. just even for things like doing tabs or mouse scroll to move to next elem etc.. so either way, we're headed that way
 
 
 04/25 + .. taking stock and immediate paths forward
@@ -59,9 +70,17 @@ RUNNING NOTES DUMP ON POSSIBLE WORK ON THE SWITCHENATOR PROJECT :
    - way way later, could revisit that thought on making an exension for chrome that could feed this tab info data.. but w TabOutiner around.. prob not worthwhile
 
    -- ui work
-   - need to start putting in at least some minimal keyboard handling.. even if just inside page for now.. for sorts, search, grouping etc
-   - gotta add in the outside hotkey handling for the elec app too, just to get the thing to show up on hotkey, and maybe hide/reappear too
+   d- need to start putting in at least some minimal keyboard handling.. even if just inside page for now.. for sorts, search, grouping etc
+      d- gotta add in the outside hotkey handling for the elec app too, just to get the thing to show up on hotkey, and maybe hide/reappear too
+      d- basic showing of elec window on global hotkey work, added that in main.js, its sufficient
+      d- added a way to share a handler from page to global and have app access it that way.. so the global hotkey can be passed along to the page too
+      d- added minimal way to hide the window directly from page by going to winapi instead of adding rpc to app to make it do that for now.. so Esc to hide works now
+      - got to work on actual kbd handling now for repeated hotkey, up/down btns, space/enter for activation etc.. (prob want to update how we do dom elems for that)
+      
    - need to get mouse scrolls working better too, as think the scroll on elems w mouse as in vswitch works better than just having to always point to stuff
+   
+   - might want to take a look at the mention somewhere on actually getting at module exe rather than just process exe.. will have to search to find again, but the hope is that maybe for chrome saved apps like Mail, TabOutliner etc, that might lead to proper icons rather than all just having chrome (anyway, no big deal)
+   
    - should revisit unicode char display.. dont seem to be working despite making calls to winapi unicode fns.. prob something w electron or html page encoding
    
    -- misc setups

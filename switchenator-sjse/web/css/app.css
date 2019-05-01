@@ -3,10 +3,9 @@
 }
 body {
    background: #404040;
+   overflow: hidden;
 }
-#scala-js-root-div {
-   /* background: #404040; */
-}
+#scala-js-root-div { }
 
 #top-ribbon {
   color: yellowgreen;
@@ -16,13 +15,16 @@ body {
 }
 #top-ribbon a { color: yellowgreen; }
 
+.groupedModeHeader {
+    color: lightgrey;
+}
 .elemBox {
    font: status-bar;
    font-size: 14px;
    line-height: 1.2;
 }
-.elemBox:hover{ background: slateblue; }
-.elemBox:active{ background: slateblue;}
+.elemBox:focus { background: slateblue; }
+/*.elemBox:active { background: slateblue;}*/
 
 .titleSpan {
   display: inline-block;
@@ -32,8 +34,9 @@ body {
   text-overflow: ellipsis;
   color: gold;
 }
-.elemBox:hover .titleSpan { color: floralwhite}
-.elemBox:active .titleSpan { color: aquamarine}
+.elemBox:focus .titleSpan { color: floralwhite}
+/*.elemBox:hover .titleSpan { color: floralwhite}*/
+/*.elemBox:active .titleSpan { color: aquamarine}*/
 
 .exeSpan {
   display: inline-block;
@@ -45,7 +48,7 @@ body {
   font-size: 13px;
   color: burlywood;
 }
-.elemBox:hover .exeSpan { color: floralwhite; }
+.elemBox:focus .exeSpan { color: floralwhite; }
 .exeSpan.dim { color: grey; }
 
 .exeIcoSpan {
