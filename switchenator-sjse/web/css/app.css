@@ -14,14 +14,25 @@ body {
   padding: 4px;
 }
 #top-ribbon a { color: yellowgreen; }
+#countSpan {}
+#searchBox {
+  background: #404040;
+  font-size: large;
+  color: yellow;
+  border: none;
+  width: 600px;
+}
+.mtxt {
+  color: yellow;
+}
 
 .groupedModeHeader {
-    color: lightgrey;
+  color: lightgrey;
 }
 .elemBox {
-   font: status-bar;
-   font-size: 14px;
-   line-height: 1.2;
+  font: status-bar;
+  font-size: 14px;
+  line-height: 1.2;
 }
 .elemBox:focus { background: slateblue; }
 /*.elemBox:active { background: slateblue;}*/

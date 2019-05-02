@@ -2,13 +2,35 @@
 RUNNING NOTES DUMP ON POSSIBLE WORK ON THE SWITCHENATOR PROJECT :
 
 
+05/01 .. quick recap before possibly letting this rest for a bit to catch up w other work
+   - fundamentally its at a usable state! .. its smooth, def an improvement over vswitch, looks good, nice mouse/kbd support.. could live as is for a long while!
+   
+   -- among possible places to tinker more on..
+   - think was noticing at some point that the very nice resync to focused place is based on ids, and so if things move up down, it moves along.. and usually thats great, but sometimes thats less desirable.. e.g. when we do quick switches to last win after working for a bit while the positions have changed, even if an update happens pretty drastically on the switche list, would prob like to stay on the second index in list to switch to on a quick alt-tab like usage.. as it stands now, it could lead to some weird place if done quickly, based on whatever stale data happened to be in there
+   - related to that, is just the question on what might be the right thing to do anyway on these quick switches after a while.. should it maybe be locked or delayed until the data comes back.. i.e. say we do quick single F1-space thing, and it has a refresh queued but not come through yet.. maybe it should be smart enough to say, oh wait, things are-a-changin.. let me wait till I get the refresh back before attempting the switch, and oh, btw, when that refresh comes in, I'll make sure to keep the focus based on index by how far down the list we've been taken, rather than moving w the id of pre-refresh focus loc   
+   - anyway, worth noting though, that its not as big an issue as it sounds here, as just waiting half a sec etc for update before switching makes this irrelevant
+   
+   - could go back to take a look at getting proper icons for things like chrome apps (hangouts, mail etc).. there's note below on where we could go revisit/search
+   
+   d- next up, ofc, would be search.. and itd be useful for sure.. 
+      d- do note that we've started using other kbd shortcuts (e.g. close, peek, up/down) etc, and those are valuable, so maybe the search should be nested after some key (e.g. f or ctrl-f)... 
+      d- alternately, could say that search is whats more valuable, and should be on immediate find-as you type, and things like close/peek/nav etc should be w ctrl key.. either is prob reasonable, and one could argue putting close etc w/o modifier could be dangerous anway, so maybe go w that
+      d- note that it'll be just a bit more involved as for best key handling (incl bksp etc) we want it to be in an input box, which will then do its own kbd handling, possibly masking/conflicting w our global ones.. should set aside for when have time to spend on it, w/o having other pressing things pending!
+   
+   - hah, next up might actually be packaging! .. basically getting to a state its easier to start/run and/or share.. maybe even w/ others.. 
+      - doesnt necessarily have to be an installable, but at least an exe rather than npm starting would be nice
+      - also if/while doing that, prob will involve another look at the nested node mechanism for current electron usage too
+      - and eventually, if get that far, would be nice to extract out the configs into text file etc.. at least for exclusions, maybe some timings/recents-count too
+   
+   
+
 04/29 .. feature thought
-   - hmm, so this is a braindump thought, and might need mulling over, but consider adding a section up top w some recents, and further down w just groups
-   - could ofc make it a separate mode for the time being.. and modes persist while app is around, so easy to see which we prefer most over time
-   - main idea being that while for larger lists we want grouped shorts, for quick changes, we often want to go back to what we were working on 
-   - but its seldom deeper than say 8 or 10, beyond which the recency is of little value anyway (other than maybe at bottom but that prob not worthwhile)
-   - would also easily take care of the quick single alt-tab/F1 like usage where we just want to go to the prior window, but awkward (though doable) w grouping mode
-   - shouldnt be difficult to impl either, just a matter of adding some things couples times to the dom etc
+   d- hmm, so this is a braindump thought, and might need mulling over, but consider adding a section up top w some recents, and further down w just groups
+   x- could ofc make it a separate mode for the time being.. and modes persist while app is around, so easy to see which we prefer most over time
+   i- main idea being that while for larger lists we want grouped shorts, for quick changes, we often want to go back to what we were working on 
+   i- but its seldom deeper than say 8 or 10, beyond which the recency is of little value anyway (other than maybe at bottom but that prob not worthwhile)
+   d- would also easily take care of the quick single alt-tab/F1 like usage where we just want to go to the prior window, but awkward (though doable) w grouping mode
+   d- shouldnt be difficult to impl either, just a matter of adding some things couples times to the dom etc
    - can think more about how it should play best w search.. maybe starting search gets rid of recents block (or grouped block, or has its own sort scheme)
 
 
@@ -65,8 +87,8 @@ RUNNING NOTES DUMP ON POSSIBLE WORK ON THE SWITCHENATOR PROJECT :
    d- the first key improvements ofc, would be sort by app mechanism.. gotta put than in earlier rather than later!
    - and soon after, want to start on a find-as-you-type search.. right in there, maybe w a box on ribbon.. would be nice
    
-   - later could think of less missed enhancements.. say considering adding a close mechanism, say via middle click, or an icon on hover, context menu etc
-   - might be too much, but could consider what it would take to do selective preview.. say when holding onto something.. would be useful for windows w tabs
+   d- later could think of less missed enhancements.. say considering adding a close mechanism, say via middle click, or an icon on hover, context menu etc
+   x/d- might be too much, but could consider what it would take to do selective preview.. say when holding onto something.. would be useful for windows w tabs
    - way way later, could revisit that thought on making an exension for chrome that could feed this tab info data.. but w TabOutiner around.. prob not worthwhile
 
    -- ui work
@@ -75,9 +97,9 @@ RUNNING NOTES DUMP ON POSSIBLE WORK ON THE SWITCHENATOR PROJECT :
       d- basic showing of elec window on global hotkey work, added that in main.js, its sufficient
       d- added a way to share a handler from page to global and have app access it that way.. so the global hotkey can be passed along to the page too
       d- added minimal way to hide the window directly from page by going to winapi instead of adding rpc to app to make it do that for now.. so Esc to hide works now
-      - got to work on actual kbd handling now for repeated hotkey, up/down btns, space/enter for activation etc.. (prob want to update how we do dom elems for that)
+      d- got to work on actual kbd handling now for repeated hotkey, up/down btns, space/enter for activation etc.. (prob want to update how we do dom elems for that)
       
-   - need to get mouse scrolls working better too, as think the scroll on elems w mouse as in vswitch works better than just having to always point to stuff
+   d- need to get mouse scrolls working better too, as think the scroll on elems w mouse as in vswitch works better than just having to always point to stuff
    
    - might want to take a look at the mention somewhere on actually getting at module exe rather than just process exe.. will have to search to find again, but the hope is that maybe for chrome saved apps like Mail, TabOutliner etc, that might lead to proper icons rather than all just having chrome (anyway, no big deal)
    

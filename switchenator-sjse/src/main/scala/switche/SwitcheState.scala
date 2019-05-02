@@ -126,6 +126,7 @@ object SwitcheState {
       js.timers.setTimeout(25) {WinapiLocal.activateWindow(hwnd)}
       js.timers.setTimeout(50) {WinapiLocal.activateWindow(hwnd)}
       isDismissed = true;
+      if (SwitchePageState.inSearchState) {SwitchePageState.exitSearchState()}
       js.timers.setTimeout(300) {getSelfWindowOpt.map(WinapiLocal.hideWindow)}
       js.timers.setTimeout(500) {handleRefreshRequest()} // prime it for any quick next reactivations
    }
@@ -165,7 +166,7 @@ object SwitcheState {
       println(); IconsManager.printIconCaches()
    }
    
-   def handleGroupModeToggleReq() = { inGroupedMode = !inGroupedMode; SwitchFacePage.render() }
+   def handleGroupModeToggleReq() = { inGroupedMode = !inGroupedMode; SwitcheFacePage.render() }
 
    def handleElectronHotkeyCall() = {
       //println ("..electron main reports global hotkey press!")
@@ -186,7 +187,7 @@ object RenderSpacer {
       val targStamp = js.Date.now + minRenderSpacing
       if ( js.Date.now >= (lastRenderTargStamp-slop)) {
          lastRenderTargStamp = js.Date.now + minRenderSpacing
-         js.timers.setTimeout (minRenderSpacing) {js.Dynamic.global.window.requestAnimationFrame({t:js.Any => SwitchFacePage.render()})}
+         js.timers.setTimeout (minRenderSpacing) {js.Dynamic.global.window.requestAnimationFrame({t:js.Any => SwitcheFacePage.render()})}
 
    } }
 }
