@@ -22,9 +22,8 @@ body {
   border: none;
   width: 600px;
 }
-.mtxt {
-  color: yellow;
-}
+.mtxt { color: yellow; }
+.elemBox:focus .mtxt { color: aquamarine; }
 
 .groupedModeHeader {
   color: lightgrey;
@@ -34,8 +33,11 @@ body {
   font-size: 14px;
   line-height: 1.2;
 }
-.elemBox:focus { background: slateblue; }
-/*.elemBox:active { background: slateblue;}*/
+.elemBox:focus {
+   background: slateblue;
+   border: none;
+   outline: none;
+}
 
 .titleSpan {
   display: inline-block;

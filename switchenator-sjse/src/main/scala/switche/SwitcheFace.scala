@@ -1,7 +1,7 @@
 package switche
 
 import org.scalajs.dom
-import org.scalajs.dom.FocusEvent
+import org.scalajs.dom.{Element,FocusEvent,EventTarget}
 import org.scalajs.dom.html.{Div, Span}
 import org.scalajs.dom.raw.{KeyboardEvent, MouseEvent, WheelEvent}
 import scalatags.JsDom.all._
@@ -19,7 +19,25 @@ object SwitcheFaceConfig {
    def clearedElem (e:dom.raw.Element) = { e.innerHTML = ""; e }
 }
 
+object DomExts {
+   @js.native trait ElementWithClosest extends js.Object {
+      def closest(selector:String): Element = js.native
+   }
+   implicit class ElementExtender (val elem:Element) extends AnyVal {
+      def closest(selector:String):Option[Element] = Option(elem.asInstanceOf[ElementWithClosest].closest(selector))
+   }
+   implicit class EventTargetExtender (val target:EventTarget) extends AnyVal {
+      def closest(selector:String):Option[Element] = { target match {
+         case elem:Element => elem.closest(selector)
+         case _ => None
+   } } }
+
+}
+
 object SwitcheFacePage {
+   import SwitchePageState._
+   import SwitcheState._
+   import DomExts._
    
    def getShellPage () = {
       val topRibbon = RibbonDisplay.getTopRibbonDiv()
@@ -29,7 +47,7 @@ object SwitcheFacePage {
       page.render
    }
    //def queueRender() = g.window.requestAnimationFrame({t:js.Any => render()}) // used spaced render call instead
-   def render() = { //println("rendering")
+   def render() = { //println(s"rendering @${js.Date.now()}")
       SwitcheState.updateRenderReadyLists()
       ElemsDisplay.updateElemsDiv()
       RibbonDisplay.updateCountsSpan(SwitcheState.getRenderList.size)
@@ -38,41 +56,58 @@ object SwitcheFacePage {
       println (s"key:${e.key}, code:${e.keyCode}, ev:${evType}, ctrl:${e.ctrlKey}, modCtrl:${e.getModifierState("Control")}, modCaps:${e.getModifierState("CapsLock")}")
    }
    def setPageEventHandlers() = {
-      import SwitchePageState._
-      import SwitcheState._
-      // note that Escape/Tab only give key down/up.. all kbd actions should trigger a short hover lock to avoid mouse clashes
-      dom.document.onkeydown = (e:KeyboardEvent) => { //printKeyDebugInfo(e,"down")
-         triggerHoverLockTimeout()
-         if (e.ctrlKey) {
-            if (e.key == " ") {handleCurElemActivationReq()}
-            else if (e.key == "t") {handleGroupModeToggleReq()}
-            else if (e.key == "w") {handleCurElemCloseReq()}
-            else if (e.key == "v") {handleCurElemShowReq()}
-            else if (e.key == "r") {handleRefreshRequest()}
-            else if (e.key == "f") {activateSearchBox()}
-         }
-         else {
-            if (e.key == " ") {handleSpaceKey()} // special as we overload it for activation ONLY if search hasnt started, else use ctrl
-            else if (e.key == "F1") {focusNextElem()} // note: not really needed, registered as global hotkey, set electron to forwards it as a call
-            else if (e.key == "F2") {focusPrevElem()}
-            else if (e.key == "Tab") { e.stopPropagation(); e.preventDefault();  focusNextElem() }
-            else if (e.key == "ArrowDown") {focusNextElem()}
-            else if (e.key == "ArrowUp") {focusPrevElem()}
-            else if (e.key == "PageUp") {focusTopElem()}
-            else if (e.key == "PageDown") {focusBottomElem()}
-            else if (e.key == "Enter") {handleCurElemActivationReq()}
-            else if (e.key == "Escape") {handleEscapeKey()}
-            else if (e.key == "F5") {dom.window.location.reload()}
-            else {activateSearchBox()}
-      } }
-      //dom.document.onkeypress = (e:KeyboardEvent) => { printKeyDebugInfo(e,"press") }
-      //dom.document.onkeyup = (e:KeyboardEvent) => { }//printKeyDebugInfo(e,"up")
-      dom.document.onmousewheel = (e:WheelEvent) => {
-         triggerHoverLockTimeout()
-         if (e.deltaY > 0) { focusNextElem() } else { focusPrevElem() }
-      }
-      dom.document.oncontextmenu = (e:MouseEvent) => { triggerHoverLockTimeout(); handleCurElemCloseReq() }
+      // reminder here.. capture phase means its just going down from top level to target, after that bubble phase goes from target upwards
+      // intercepting here at the 'capture' phase allows us to use e.stopPropagation() to prevent event from ever reaching target
+      dom.document.addEventListener ("click", mouseClickHandler _)
+      dom.document.addEventListener ("contextmenu", mouseRightClickHandler _)
+      dom.document.addEventListener ("wheel", mouseWheelHandler _)
+      //dom.document.addEventListener ("mouseenter", mouseEnterHandler _, useCapture=true) // faster if done from element
+      dom.document.addEventListener ("keyup", capturePhaseKeyupHandler _, useCapture=true)
+      dom.document.addEventListener ("keydown", capturePhaseKeydownHandler _, useCapture=true)
    }
+   def mouseClickHandler (e:MouseEvent) = {
+      triggerHoverLockTimeout()
+      e.target.closest(".elemBox").foreach(_=>handleCurElemActivationReq())
+   }
+   def mouseRightClickHandler (e:MouseEvent) = {
+      triggerHoverLockTimeout()
+      e.target.closest(".elemBox").foreach(_=>handleCurElemCloseReq())
+   }
+   def mouseWheelHandler (e:WheelEvent) = {
+      triggerHoverLockTimeout()
+      if (e.deltaY > 0) { focusNextElem() } else { focusPrevElem() }
+   }
+   def mouseEnterHandler (e:MouseEvent) = {
+      e.target.closest(".elemBox").foreach{e => handleMouseEnter(e.id,e.asInstanceOf[Div])}
+   }
+   def capturePhaseKeyupHandler (e:KeyboardEvent) = { //printKeyDebugInfo(e,"down")
+      if (e.key == "Escape") {handleEscapeKeyUp()} // escape can cause app hide, we dont want that to leak outside app, hence on keyup
+   }
+   def capturePhaseKeydownHandler (e:KeyboardEvent) = { //printKeyDebugInfo(e,"down")
+      triggerHoverLockTimeout()
+      if (e.ctrlKey) {
+         if (e.key == " ") {handleCurElemActivationReq()}
+         else if (e.key == "t") {handleGroupModeToggleReq()}
+         else if (e.key == "w") {handleCurElemCloseReq()}
+         else if (e.key == "v") {handleCurElemShowReq()}
+         //else if (e.key == "r") {handleRefreshRequest()} // ctrl-r is not available for us because of the way we overload it in ahk remapping
+         else if (e.key == "f") {handleRefreshRequest()} // so instead fo ^, we'll use f for 'fresh'.. meh
+      }
+      else {
+         if (e.key == " ") {handleSpaceKeyDown()} // special as we overload it for activation ONLY if search hasnt started, else use ctrl
+         else if (e.key == "F1") {focusNextElem()} // note: not really needed, registered as global hotkey, set electron to forwards it as a call
+         else if (e.key == "F2") {focusPrevElem()}
+         else if (e.key == "Tab") { e.stopPropagation(); e.preventDefault();  focusNextElem() }
+         else if (e.key == "ArrowDown") {focusNextElem()}
+         else if (e.key == "ArrowUp") {focusPrevElem()}
+         else if (e.key == "PageUp") {focusTopElem()}
+         else if (e.key == "PageDown") {focusBottomElem()}
+         else if (e.key == "Enter") {handleCurElemActivationReq()}
+         //else if (e.key == "Escape") {handleEscapeKeyDown()} // moved to keyup as dont want its keyup leaking outside app if we use it hide app
+         else if (e.key == "F5") {dom.window.location.reload()}
+         else {activateSearchBox()}
+   } }
+   
 }
 
 object SwitchePageState {
@@ -160,7 +195,7 @@ object SwitchePageState {
       ).flatten.getOrElse(span("ico"))
       val icoSpan = span (`class`:="exeIcoSpan", ico)
       val elem = div (`class`:="elemBox", id:=idStr, tabindex:=0, exeSpan, nbsp(3), icoSpan, nbsp(), titleSpan).render
-      elem.onclick = {ev:MouseEvent => SwitcheState.handleWindowActivationReq(e.hwnd)}
+      //elem.onclick = {ev:MouseEvent => SwitcheState.handleWindowActivationReq(e.hwnd)} // moved handlers to single global js
       elem.onmouseenter = {ev:MouseEvent => handleMouseEnter(idStr,elem)}
       elem
    }
@@ -207,30 +242,13 @@ object SwitchePageState {
       }.orElse { recentsElemsMap.headOption.map {case (id, o) => (id, o.elem)} }
       .foreach {case (id,elem) => curFocusId = id; elem.focus() }
    }
-   /*
-   def focusElem (hwnd:Int, isGrpElem:Boolean=false) = {
-      val elem = dom.document.querySelector(s"#${getElemId(hwnd,isGrpElem)}").asInstanceOf[dom.raw.HTMLElement]
-      elem.focus()
-   }*/
-   
-   def handleSpaceKey() = {
-      if (!inSearchState) { handleCurElemActivationReq() }
-      else {RibbonDisplay.searchBox.focus()} // nothing, as the box auto takes care of its kbd events
-   }
-   def handleEscapeKey() = {
-      if (inSearchState) {RibbonDisplay.searchBox.focus()} // passes on to searchbox handler
-      else {SwitcheState.handleSelfWindowHideReq()}
-   }
-   def activateSearchBox () = {
-      if (!inSearchState) { inSearchState = true; }
-      RibbonDisplay.searchBox.focus()
-   }
-   def exitSearchState() = {
-      inSearchState = false; RibbonDisplay.searchBox.value = ""; ElemsDisplay.updateElemsDiv()
-   }
+   def activateSearchBox () = { RibbonDisplay.searchBox.focus() }
+   def exitSearchState() = { inSearchState = false; RibbonDisplay.searchBox.value = ""; ElemsDisplay.updateElemsDiv() }
+   def handleSpaceKeyDown() = { if (inSearchState) {RibbonDisplay.searchBox.focus()} else {handleCurElemActivationReq()} }
+   def handleEscapeKeyUp() = { if (!inSearchState) {SwitcheState.handleSelfWindowHideReq()} }
    def handleSearchBoxKeyUp(e:KeyboardEvent) = {
-      if (e.key == "Escape") { e.stopPropagation(); e.preventDefault(); exitSearchState() }
-      ElemsDisplay.updateElemsDiv() // gotta update on every keyup
+      if (e.key == "Escape") {exitSearchState()}
+      else { inSearchState = true; ElemsDisplay.updateElemsDiv() }
    }
    
 }
@@ -242,8 +260,10 @@ object ElemsDisplay {
    
    def updateElemsDivRecentsMode = {
       SwitchePageState.rebuildRecentsElems()
-      val elemsDivList = div(SwitchePageState.recentsElemsMap.values.map(_.elem).toSeq).render
-      clearedElem(elemsDiv) .appendChild (elemsDivList)
+      val recentElemsHeader = div (`class`:="groupedModeHeader", "Recents:")
+      val recentElemsDivList = div (SwitchePageState.recentsElemsMap.values.map(_.elem).toSeq).render
+      val elemsDivBlock = div (recentElemsHeader, recentElemsDivList)
+      clearedElem(elemsDiv) .appendChild (elemsDivBlock.render)
    }
    def updateElemsDivGroupedMode = {
       SwitchePageState.rebuildGroupedElems()

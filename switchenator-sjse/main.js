@@ -23,7 +23,7 @@ var mainWindow;
 // Create the browser window.
 function createWindow() {
 
-    var frameVal = (argv[0]==='dev') ? true : false
+    var frameVal = (argv[0]==='dev' || argv[0]==='dev-server') ? true : false
 
     mainWindow = new BrowserWindow({
         icon: `web/favicon.png`,
@@ -37,6 +37,7 @@ function createWindow() {
         autoHideMenuBar: true,
         webgl: true,
         skipTaskbar: true,
+        backgroundThrottling: false
     });
 
     // Disable the default menu bar.
@@ -51,6 +52,7 @@ function createWindow() {
        mainWindow.loadURL(`file://${__dirname}/web/index-dev.html`);
     } else if (argv[0] === 'dev-server') {
        mainWindow.setSize(1850,1400);
+       mainWindow.frame = true;
        mainWindow.webContents.openDevTools();
        //mainWindow.loadURL(`file://${__dirname}/web/index-dev.html`);
        //mainWindow.loadURL('http://localhost:8080/target/scala-2.12/scalajs-bundler/main/index-dev.html');
@@ -79,7 +81,13 @@ function createWindow() {
 
     // Open URLs in the desktop browser.
     mainWindow.webContents.on('will-navigate', handleRedirect);
-    mainWindow.webContents.on('new-window', handleRedirect);    
+    mainWindow.webContents.on('new-window', handleRedirect);
+
+    mainWindow.on('focus',() => { mainWindow.webContents.executeJavaScript('window.handleElectronFocusEvent()') });
+    mainWindow.on('blur', () => { mainWindow.webContents.executeJavaScript('window.handleElectronBlurEvent()') });
+    mainWindow.on('show', () => { mainWindow.webContents.executeJavaScript('window.handleElectronShowEvent()') });
+    mainWindow.on('hide', () => { mainWindow.webContents.executeJavaScript('window.handleElectronHideEvent()') });
+
 }
 
 // This method will be called when Electron has finished

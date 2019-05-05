@@ -21,7 +21,7 @@ resolvers ++= Seq(
 
 // libraries
 libraryDependencies ++= Seq(
-  "org.scala-js" %%% "scalajs-dom" % "0.9.1",
+  "org.scala-js" %%% "scalajs-dom" % "0.9.7",
   "com.lihaoyi" %%% "scalatags" % "0.6.7"
 )
 

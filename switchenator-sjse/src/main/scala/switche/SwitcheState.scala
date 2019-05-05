@@ -17,7 +17,7 @@ object SwitcheState {
    var hMapCur = LinkedHashMap[Int,WinDatEntry]();
    var hMapPrior = LinkedHashMap[Int,WinDatEntry]();
    var inGroupedMode = true;
-   var isDismissed = false;
+   var isDismissed = false; var isAppForeground = true;
    var curElemId = ""
    
    def parseIntoExePathName (path:String) = ExePathName(path, path.split("""\\""").lastOption.getOrElse(""))
@@ -26,21 +26,21 @@ object SwitcheState {
       hMapPrior = hMapCur; hMapCur = LinkedHashMap[Int,WinDatEntry]();
    }
    //def okToRenderImages() = true //false //cbCountForCallId > 1000
-   def kickPostCbCleanup() = {cbCountForCallId += 1; val ccSnap = cbCountForCallId; js.timers.setTimeout(250){delayedTaskListCleanup(ccSnap)}}
+   def kickPostCbCleanup() = {cbCountForCallId += 1; val ccSnap = cbCountForCallId; js.timers.setTimeout(80){delayedTaskListCleanup(ccSnap)}}
    
    def procStreamWinQueryCallback (hwnd:Int, callId:Int):Boolean = {
       if (callId > latestTriggeredCallId) {
          println (s"something went screwy.. got win api callback with callId higher than latest sent! .. treating as latest!")
          prepForNewEnumWindowsCall(callId)
       }
-      cbCountForCallId += 1
+      kickPostCbCleanup()
       if (callId == latestTriggeredCallId && !hMapCur.contains(hwnd)) {
          val dat = hMapPrior .get(hwnd) .orElse (Some(WinDatEntry (hwnd))) .map { priorDat =>
             // for isVis, if prior has data, use it, else queue query
-            val isVis = priorDat .isVis .orElse { setAsnycQVisCheck(0,hwnd); None }
+            val isVis = priorDat .isVis .orElse { setAsnycQVisCheck(20,hwnd); None }
             // for winText, if prior has data, use it but queue query too, else query if isVis already true, else we'll handle in isVis cb
-            val winText = priorDat .winText .map {wt => setAsnycQWindowText(0,hwnd); wt }
-               .orElse { if (isVis.isDefined && true==isVis.get) {setAsnycQWindowText(0,hwnd)}; None }
+            val winText = priorDat .winText .map {wt => setAsnycQWindowText(20,hwnd); wt }
+               .orElse { if (isVis.isDefined && true==isVis.get) {setAsnycQWindowText(20,hwnd)}; None }
             // for exePath/ico, if not in cache, we'll query later only as needed, ditto for exclusion flag
             WinDatEntry (hwnd, isVis, winText, priorDat.exePathName, priorDat.shouldExclude)
          } .get
@@ -55,7 +55,7 @@ object SwitcheState {
    def setAsnycQModuleFile (t:Int, hwnd:Int) = js.timers.setTimeout(t) {cbProcProcId(hwnd, WinapiLocal.getWindowThreadProcessId(hwnd))}
    
    def cbProcVisCheck (hwnd:Int, isVis:Int) = {
-      kickPostCbCleanup()
+      //kickPostCbCleanup()
       // update the map data, also if we're here then it was previously unknown, so if now its true, then queue query for winText
       hMapCur .get(hwnd) .foreach { d =>
          hMapCur .put (hwnd, d.copy(isVis = Some(isVis>0), shouldExclude = Some(isVis<=0).filter(identity)))
@@ -64,18 +64,18 @@ object SwitcheState {
    } }
    
    def cbProcWindowText (hwnd:Int, winText:String) = {
-      kickPostCbCleanup()
+      //kickPostCbCleanup()
       // update the map data, also if its displayable title (non-empty), queue render, then if exePath is undefined, queue that query too
       hMapCur .get(hwnd) .foreach {d =>
          if (!winText.isEmpty) {
             if (d.winText!=Some(winText)) { RenderSpacer.queueSpacedRender() }
-            if (hMapCur.get(hwnd).map(_.exePathName.isEmpty).getOrElse(true)) { setAsnycQModuleFile(0,hwnd) }
+            if (hMapCur.get(hwnd).map(_.exePathName.isEmpty).getOrElse(true)) { setAsnycQModuleFile(20,hwnd) }
          }
          hMapCur .put (hwnd, d.copy(winText = Some(winText)))
    } }
    
    def cbProcProcId (hwnd:Int, pid:Int) = {
-      kickPostCbCleanup()
+      //kickPostCbCleanup()
       val exePath = WinapiLocal.getProcessExeFromPid(pid)
       hMapCur .get(hwnd) .foreach {d =>
          val exePathName = Some(parseIntoExePathName(exePath))
@@ -110,7 +110,7 @@ object SwitcheState {
    def getRenderList() = RenderReadyListsManager.renderList
    def getGroupedRenderList() = RenderReadyListsManager.groupedRenderList
    
-   def handleRefreshRequest():Unit = { //println ("refresh called!")
+   def handleRefreshRequest():Unit = { //println (s"refresh called! @${js.Date.now()}")
       latestTriggeredCallId += 1
       prepForNewEnumWindowsCall(latestTriggeredCallId)
       js.timers.setTimeout(250) {RenderSpacer.queueSpacedRender()} // mandatory repaint per refresh, simpler this way to catch only ordering changes
@@ -125,10 +125,10 @@ object SwitcheState {
       //WinapiLocal.activateWindow(hwnd)
       js.timers.setTimeout(25) {WinapiLocal.activateWindow(hwnd)}
       js.timers.setTimeout(50) {WinapiLocal.activateWindow(hwnd)}
-      isDismissed = true;
+      js.timers.setTimeout(80) {handleRefreshRequest()} // prime it for any quick next reactivations
+      //js.timers.setTimeout(180) {SwitcheFacePage.render()}
       if (SwitchePageState.inSearchState) {SwitchePageState.exitSearchState()}
-      js.timers.setTimeout(300) {getSelfWindowOpt.map(WinapiLocal.hideWindow)}
-      js.timers.setTimeout(500) {handleRefreshRequest()} // prime it for any quick next reactivations
+      js.timers.setTimeout(200) {isDismissed = true; getSelfWindowOpt.map(WinapiLocal.hideWindow)}
    }
    def getSelfWindowOpt() = {
       hMapPrior.values.filter(ExclusionsManager.selfSelector).headOption.map(_.hwnd)
@@ -136,9 +136,8 @@ object SwitcheState {
    def handleSelfWindowHideReq() = {
       // want to make sure focus is returned to the window we were supposed to have active
       js.timers.setTimeout(50) {SwitchePageState.recentsIdsVec.headOption.map(SwitchePageState.idToHwnd).map(WinapiLocal.activateWindow)}
-      isDismissed = true;
-      js.timers.setTimeout(100) {getSelfWindowOpt.map(WinapiLocal.hideWindow)}
-      js.timers.setTimeout(300) {handleRefreshRequest()} // prime it for any quick next reactivations
+      js.timers.setTimeout(20) {isDismissed = true; getSelfWindowOpt.map(WinapiLocal.hideWindow)}
+      js.timers.setTimeout(150) {handleRefreshRequest()} // prime it for any quick next reactivations
    }
    def handleWindowCloseReq(hwnd:Int) = {
       // we try and activate the window first so it doesnt just die in the bkg, then send close, then after some delay, a refresh to update
@@ -159,7 +158,7 @@ object SwitcheState {
       //println (s"Printing non-vis entries (${nonVisEs.size}) :")
       //nonVisEs.foreach(println)
       val emptyTextEs = hMapCur.values.filter(e => e.isVis==Some(true) && e.winText==Some(""))
-      println (s"..isVis true empty title entries: (${emptyTextEs.size}) :")
+      println (s"isVis true empty title entries: (${emptyTextEs.size}) :")
       //emptyTextEs.foreach (e => println(e.toString))
       println(); println (s"Printing full data incl excl flags for titled Vis entries:")
       hMapCur.values.filter(e => e.isVis.filter(identity).isDefined && e.winText.filterNot(_.isEmpty).isDefined).foreach(println)
@@ -170,10 +169,28 @@ object SwitcheState {
 
    def handleElectronHotkeyCall() = {
       //println ("..electron main reports global hotkey press!")
-      if (isDismissed) { isDismissed=false; SwitchePageState.triggerHoverLockTimeout(); SwitchePageState.resetFocus(); handleRefreshRequest() }
+      if (isDismissed || !isAppForeground) {
+         isDismissed=false; isAppForeground = true; SwitcheFacePage.render();
+         SwitchePageState.triggerHoverLockTimeout(); SwitchePageState.resetFocus();
+         handleRefreshRequest()
+      }
       else { SwitchePageState.focusNextElem() }
    }
+   def handleElectronFocusEvent() = { //println(s"app is focused! @${js.Date.now()}")
+      if (!isAppForeground) {
+         isAppForeground = true; isDismissed = false; SwitcheFacePage.render();
+         SwitchePageState.triggerHoverLockTimeout(); handleRefreshRequest();
+      }
+   }
+   def handleElectronBlurEvent() = {isAppForeground = false;}
+   def handleElectronShowEvent() = {}
+   def handleElectronHideEvent() = {}
+   
    js.Dynamic.global.updateDynamic("handleElectronHotkeyCall")(SwitcheState.handleElectronHotkeyCall _)
+   js.Dynamic.global.updateDynamic("handleElectronFocusEvent")(SwitcheState.handleElectronFocusEvent _)
+   js.Dynamic.global.updateDynamic("handleElectronBlurEvent")(SwitcheState.handleElectronBlurEvent _)
+   js.Dynamic.global.updateDynamic("handleElectronShowEvent")(SwitcheState.handleElectronShowEvent _)
+   js.Dynamic.global.updateDynamic("handleElectronHideEvent")(SwitcheState.handleElectronHideEvent _)
    
 }
 

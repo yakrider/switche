@@ -27,6 +27,7 @@ object ExclusionsManager {
          (Some("explorer.exe"), Some("Program Manager")),
          (Some("explorer.exe"), Some("SubFolderTipWindow")),
          (Some("electron.exe"), Some("Sjs-Electron-Local-JS-Test")),
+         (Some("atmgr.exe"), Some("FloatActionBar")),
          (Some("SystemSettings.exe"), Some("Settings")),
          (Some("ApplicationFrameHost.exe"), Some("Microsoft Edge"))
       )
