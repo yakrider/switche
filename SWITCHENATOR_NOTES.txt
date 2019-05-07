@@ -6,9 +6,11 @@ RUNNING NOTES DUMP ON POSSIBLE WORK ON THE SWITCHENATOR PROJECT :
    - fundamentally its at a usable state! .. its smooth, def an improvement over vswitch, looks good, nice mouse/kbd support.. could live as is for a long while!
    
    -- among possible places to tinker more on..
-   - think was noticing at some point that the very nice resync to focused place is based on ids, and so if things move up down, it moves along.. and usually thats great, but sometimes thats less desirable.. e.g. when we do quick switches to last win after working for a bit while the positions have changed, even if an update happens pretty drastically on the switche list, would prob like to stay on the second index in list to switch to on a quick alt-tab like usage.. as it stands now, it could lead to some weird place if done quickly, based on whatever stale data happened to be in there
-   - related to that, is just the question on what might be the right thing to do anyway on these quick switches after a while.. should it maybe be locked or delayed until the data comes back.. i.e. say we do quick single F1-space thing, and it has a refresh queued but not come through yet.. maybe it should be smart enough to say, oh wait, things are-a-changin.. let me wait till I get the refresh back before attempting the switch, and oh, btw, when that refresh comes in, I'll make sure to keep the focus based on index by how far down the list we've been taken, rather than moving w the id of pre-refresh focus loc   
-   - anyway, worth noting though, that its not as big an issue as it sounds here, as just waiting half a sec etc for update before switching makes this irrelevant
+   x- think was noticing at some point that the very nice resync to focused place is based on ids, and so if things move up down, it moves along.. and usually thats great, but sometimes thats less desirable.. e.g. when we do quick switches to last win after working for a bit while the positions have changed, even if an update happens pretty drastically on the switche list, would prob like to stay on the second index in list to switch to on a quick alt-tab like usage.. as it stands now, it could lead to some weird place if done quickly, based on whatever stale data happened to be in there
+   x- related to that, is just the question on what might be the right thing to do anyway on these quick switches after a while.. should it maybe be locked or delayed until the data comes back.. i.e. say we do quick single F1-space thing, and it has a refresh queued but not come through yet.. maybe it should be smart enough to say, oh wait, things are-a-changin.. let me wait till I get the refresh back before attempting the switch, and oh, btw, when that refresh comes in, I'll make sure to keep the focus based on index by how far down the list we've been taken, rather than moving w the id of pre-refresh focus loc   
+   x- anyway, worth noting though, that its not as big an issue as it sounds here, as just waiting half a sec etc for update before switching makes this irrelevant
+   
+   d-^-- note that a bunch of these above are now mostly irrelevant or not worth the trouble now that we have a fgnd listener making things fast
    
    - could go back to take a look at getting proper icons for things like chrome apps (hangouts, mail etc).. there's note below on where we could go revisit/search
    
@@ -31,7 +33,7 @@ RUNNING NOTES DUMP ON POSSIBLE WORK ON THE SWITCHENATOR PROJECT :
    i- but its seldom deeper than say 8 or 10, beyond which the recency is of little value anyway (other than maybe at bottom but that prob not worthwhile)
    d- would also easily take care of the quick single alt-tab/F1 like usage where we just want to go to the prior window, but awkward (though doable) w grouping mode
    d- shouldnt be difficult to impl either, just a matter of adding some things couples times to the dom etc
-   - can think more about how it should play best w search.. maybe starting search gets rid of recents block (or grouped block, or has its own sort scheme)
+   d- can think more about how it should play best w search.. maybe starting search gets rid of recents block (or grouped block, or has its own sort scheme)
 
 
 04/28 + .. note on perf after getting to a mostly working state
@@ -64,6 +66,32 @@ RUNNING NOTES DUMP ON POSSIBLE WORK ON THE SWITCHENATOR PROJECT :
       - hmm, although come to think of it, when getting around to the search impl, could look at doing some of that perf rethinking as we have to move rows up and down.. might also be worthwhile taking a look at the dynamic search think lihaoyi had that was pretty efficient I think
       - http://www.lihaoyi.com/hands-on-scala-js/#Re-rendering
       - lol, and just doing the scrolls and activations will prob require to have a more code-addressable dom anyway unlike our constantly regenerated stuff.. just even for things like doing tabs or mouse scroll to move to next elem etc.. so either way, we're headed that way
+      
+   -- work-map on going fully to small updates rather than render calls on quick changes
+      - for updates to titles, exe/icons etc, is straightforward.. just regen the elem, replace the one in map w it, replace the node in dom w the new one
+      - for initial stream of windows as they come along, bit more involved..
+         - currently renderable list is generated enmasse, by taking curList and appending from prior list as necessary, old stuff is only removed on timeout
+            - to be responsive to closed stuff, maybe also means should either go back to kicking cb timeout only for win calls not for icons, or separate them out
+            - actually maybe even means we should kick cb call only for EnumWindows call, not even for titles, exe etc
+         - can update WinDat entry, if is renderable, can compare entry w prior, if change, can render that div
+         - main q is how to handle updates that make things out of order..
+            - note first, that we have.. a cur WinDatEntry list (partiall filled), a prior full dat list, a combined render list, an elem divs list, and actual dom
+            - again, for data updates in existing order, should be easy.. check cur dats, ensure in same order, find elem div, update it (dom will reflect change)
+            - if new item appears, we already check prior etc and create a cache-mixed entry in cur list, prob easiest to update that entry in elems list, then trigger rebuild of dom? .. prob faster ways to do it later, but ok for a start.. avoids doing insertions/removals on dom, though honestly, this is the most common change, as happens everytime something moves up/down list.. so afterwards should see if need more perf improvement
+            - hmm, though could also just remove that item (if any) from dom, and hook up new item there (insertBefore, removeChild etc)
+            - otoh, if doing a rebuild dom (but w/o rebuilding dat list etc), could queue that for refresh, not sure if worthwhile
+            - for inserts for ordering etc, will have to do separately for recents, grouped, search!
+            - actual queries wont be that bad though, have ready list, just gotta search there, find next/prev there, then call dom w remove/insertBefore
+            
+   d--05/07+ -> huh, seriously considering if it makes sense to go ahead w the above, or just try and get a win event listener hooked in!
+      d- afterall, even w the improvements w the in-line updates possible from above, still will be the case that the ui refresh will happen AFTER the hotkey is pressed etc.. so there's really only limited improvement this can have, while the background listener would make things pretty much be ALWAYS updated!
+      d- further, we already have native hooks to a bunch of other stuff, this might not really be all that different anyway
+      x- plus, we could then get rid of the background 30s full call which is just as wasteful anyway, maybe even more so than listening to foreground wnd
+      
+      d-- ughh, looked straightforward at first, but ended up losing a bunch of time for not seeing this one essential limitation in the docs for the SetWinEventHook api call : 'The client thread that calls SetWinEventHook must have a message loop in order to receive events.' .. and that looks to be a freaking unending wait on 'GetMessageA' w/o which the hook callbacks dont happen! .. unbelievable!
+      - so looks like, if we want to do so, either we figure out worker threads in node and try ipc back to main thread, or maybe even consider some c impl! goddamit
+      - fk, looked like using worker_threads would work out nicely, even got a minimal sample working in pure node w the --experimental-worker flag, but that doesnt seem to work w electron, and trying to upgrade node to higher version than LTS to not have to use the flag makes all kinds of shit not work w node-gyp
+      d-- hah, had to use npm 'cluster' package, but it now works!.. not even all that hacky.. just a thread set out in main that sets up a listener for the events and calls out to elec app w the new fgnd hwnd upon change.. nice! .. think might leave the direct sjs api code there too for this commit
 
 
 04/25 + .. taking stock and immediate paths forward
@@ -85,7 +113,7 @@ RUNNING NOTES DUMP ON POSSIBLE WORK ON THE SWITCHENATOR PROJECT :
    -- new functionality over vswitch
    d- think we're already actually faster than vswitch given all the caching, esp for anything after first invocation.. its awesome!
    d- the first key improvements ofc, would be sort by app mechanism.. gotta put than in earlier rather than later!
-   - and soon after, want to start on a find-as-you-type search.. right in there, maybe w a box on ribbon.. would be nice
+   d- and soon after, want to start on a find-as-you-type search.. right in there, maybe w a box on ribbon.. would be nice
    
    d- later could think of less missed enhancements.. say considering adding a close mechanism, say via middle click, or an icon on hover, context menu etc
    x/d- might be too much, but could consider what it would take to do selective preview.. say when holding onto something.. would be useful for windows w tabs

@@ -28,7 +28,7 @@ object SwitcheState {
    //def okToRenderImages() = true //false //cbCountForCallId > 1000
    def kickPostCbCleanup() = {cbCountForCallId += 1; val ccSnap = cbCountForCallId; js.timers.setTimeout(80){delayedTaskListCleanup(ccSnap)}}
    
-   def procStreamWinQueryCallback (hwnd:Int, callId:Int):Boolean = {
+   def cbStreamWinQueryCallback (hwnd:Int, callId:Int):Boolean = {
       if (callId > latestTriggeredCallId) {
          println (s"something went screwy.. got win api callback with callId higher than latest sent! .. treating as latest!")
          prepForNewEnumWindowsCall(callId)
@@ -50,12 +50,29 @@ object SwitcheState {
       return (callId <= latestTriggeredCallId) // cancel further callbacks on this callId if its no longer the latest call
    }
    
+   def handleWindowsFgndHwndReport(hwnd:Int):Unit = { //println(s"fgnd report: $hwnd")
+      if (hMapCur != hMapPrior) return; // if in middle of updating full report, can ignore indiv fgnd change updates
+      // do note that this will update all new/changed fgnd windows, but cant clear dead windows etc, so gotta keep refresh handy for those
+      val dat = hMapCur .get(hwnd) .orElse (Some(WinDatEntry (hwnd))) .map { curDat =>
+         val isVis = curDat .isVis .orElse { setAsnycQVisCheck(20,hwnd); None }
+         val winText = curDat .winText .map {wt => setAsnycQWindowText(20,hwnd); wt }
+            .orElse { if (isVis.isDefined && true==isVis.get) {setAsnycQWindowText(20,hwnd)}; None }
+         WinDatEntry (hwnd, isVis, winText, curDat.exePathName, curDat.shouldExclude)
+      } .get
+      if (Some(true)!=dat.shouldExclude) { // just reducing work a little where its pointless
+         val hMapUpdated = LinkedHashMap[Int, WinDatEntry]();
+         hMapUpdated.put(hwnd, dat);
+         hMapCur.filterKeys(_ != hwnd).foreach {case (k, v) => hMapUpdated.put(k, v)}
+         hMapCur = hMapUpdated; hMapPrior = hMapCur;
+         RenderSpacer.queueSpacedRender()
+      }
+   }
+   
    def setAsnycQVisCheck (t:Int, hwnd:Int) = js.timers.setTimeout(t) {cbProcVisCheck(hwnd, WinapiLocal.checkWindowVisible(hwnd))}
    def setAsnycQWindowText (t:Int, hwnd:Int) = js.timers.setTimeout(t) {cbProcWindowText(hwnd, WinapiLocal.getWindowText(hwnd))}
    def setAsnycQModuleFile (t:Int, hwnd:Int) = js.timers.setTimeout(t) {cbProcProcId(hwnd, WinapiLocal.getWindowThreadProcessId(hwnd))}
    
    def cbProcVisCheck (hwnd:Int, isVis:Int) = {
-      //kickPostCbCleanup()
       // update the map data, also if we're here then it was previously unknown, so if now its true, then queue query for winText
       hMapCur .get(hwnd) .foreach { d =>
          hMapCur .put (hwnd, d.copy(isVis = Some(isVis>0), shouldExclude = Some(isVis<=0).filter(identity)))
@@ -64,7 +81,6 @@ object SwitcheState {
    } }
    
    def cbProcWindowText (hwnd:Int, winText:String) = {
-      //kickPostCbCleanup()
       // update the map data, also if its displayable title (non-empty), queue render, then if exePath is undefined, queue that query too
       hMapCur .get(hwnd) .foreach {d =>
          if (!winText.isEmpty) {
@@ -75,7 +91,6 @@ object SwitcheState {
    } }
    
    def cbProcProcId (hwnd:Int, pid:Int) = {
-      //kickPostCbCleanup()
       val exePath = WinapiLocal.getProcessExeFromPid(pid)
       hMapCur .get(hwnd) .foreach {d =>
          val exePathName = Some(parseIntoExePathName(exePath))
@@ -86,6 +101,17 @@ object SwitcheState {
             exePathName.map(_.fullPath).foreach(IconsManager.processFoundIconPath)
             RenderSpacer.queueSpacedRender()
       } }
+   }
+   
+   def cbFgndWindowChangeListener (hook:Int, event:Int, hwnd:Int, idObj:Long, idChild:Long, idThread:Int, evTime:Int ):Unit = {
+      //HWINEVENTHOOK SetWinEventHook (DWORD eventMin, DWORD eventMax, HMODULE hmodWinEventProc, WINEVENTPROC pfnWinEventProc, DWORD idProcess, DWORD idThread, DWORD dwFlags );
+      //WINEVENTPROC void Wineventproc( HWINEVENTHOOK hWinEventHook, DWORD event, HWND hwnd, LONG idObject, LONG idChild, DWORD idEventThread, DWORD dwmsEventTime )
+      // EVENT_SYSTEM_FOREGROUND 0x0003
+      println (s"..Foreground window change listener: new fgnd window ${hwnd}")
+      handleWindowsFgndHwndReport(hwnd)
+      // ughh, this win fn callback ^^ seems to require the thread to be waiting on GetMessageA to get this callback.. cant do from here!
+      // as workaround, ended up doing a npm 'cluster' based thread in main that sits around listening for this and calls us w new hwnd upon fgnd change!
+      // .. note that could use 'worker_threads', but elect doesnt seem to take the old node's experimental flag, nor did node-gyp play well w updated node.. oh well
    }
    
    def delayedTaskListCleanup (cbCountSnapshot:Int) = {
@@ -114,9 +140,12 @@ object SwitcheState {
       latestTriggeredCallId += 1
       prepForNewEnumWindowsCall(latestTriggeredCallId)
       js.timers.setTimeout(250) {RenderSpacer.queueSpacedRender()} // mandatory repaint per refresh, simpler this way to catch only ordering changes
-      WinapiLocal.streamWindowsQuery (procStreamWinQueryCallback _, latestTriggeredCallId)
+      WinapiLocal.streamWindowsQuery (cbStreamWinQueryCallback _, latestTriggeredCallId)
    }
-   def backgroundOnlyRefreshReq() = { if (isDismissed) handleRefreshRequest() }
+   def backgroundOnlyRefreshReq() = {
+      // the fgnd window listener handles most change, but this is useful periodically to clean up on closed windows etc!
+      if (isDismissed) handleRefreshRequest()
+   }
    
    def handleWindowActivationReq(hwnd:Int):Unit = {
       // note that win rules to allow switching require the os to register our switche app processing the most recent ui input (which would've triggered this)
@@ -125,10 +154,9 @@ object SwitcheState {
       //WinapiLocal.activateWindow(hwnd)
       js.timers.setTimeout(25) {WinapiLocal.activateWindow(hwnd)}
       js.timers.setTimeout(50) {WinapiLocal.activateWindow(hwnd)}
-      js.timers.setTimeout(80) {handleRefreshRequest()} // prime it for any quick next reactivations
-      //js.timers.setTimeout(180) {SwitcheFacePage.render()}
       if (SwitchePageState.inSearchState) {SwitchePageState.exitSearchState()}
       js.timers.setTimeout(200) {isDismissed = true; getSelfWindowOpt.map(WinapiLocal.hideWindow)}
+      js.timers.setTimeout(150) {handleRefreshRequest()}
    }
    def getSelfWindowOpt() = {
       hMapPrior.values.filter(ExclusionsManager.selfSelector).headOption.map(_.hwnd)
@@ -137,15 +165,18 @@ object SwitcheState {
       // want to make sure focus is returned to the window we were supposed to have active
       js.timers.setTimeout(50) {SwitchePageState.recentsIdsVec.headOption.map(SwitchePageState.idToHwnd).map(WinapiLocal.activateWindow)}
       js.timers.setTimeout(20) {isDismissed = true; getSelfWindowOpt.map(WinapiLocal.hideWindow)}
-      js.timers.setTimeout(150) {handleRefreshRequest()} // prime it for any quick next reactivations
+      js.timers.setTimeout(250) {handleRefreshRequest()} // useful to clean up on closed windows etc although the fgnd listener does update the rest
    }
    def handleWindowCloseReq(hwnd:Int) = {
       // we try and activate the window first so it doesnt just die in the bkg, then send close, then after some delay, a refresh to update
       js.timers.setTimeout(30) {WinapiLocal.activateWindow(hwnd)}
       js.timers.setTimeout(50) {WinapiLocal.activateWindow(hwnd)}
-      js.timers.setTimeout(100) {WinapiLocal.closeWindow(hwnd)} // this can take a while, if the window even agrees to close!
-      js.timers.setTimeout(500) {handleRefreshRequest()}
-      js.timers.setTimeout(1000) {handleRefreshRequest()}
+      js.timers.setTimeout(80) {WinapiLocal.closeWindow(hwnd)} // sadly, this can take a while, if the window even agrees to close!
+      js.timers.setTimeout(120) {WinapiLocal.closeWindow(hwnd)}
+      js.timers.setTimeout(250) {handleRefreshRequest()}
+      js.timers.setTimeout(400) {handleRefreshRequest()} // and it can take even longer for it to get picked up from win calls, esp for some os windows
+      js.timers.setTimeout(600) {handleRefreshRequest()}
+      // making this ^ call and elsewhere to clear out closed windows, but maybe could get rid of these if could setup a window destroyed listener
    }
    def handleWindowShowReq(hwnd:Int) = { // useful for inspection/closing.. brings that window to top, then brings ourselves back
       js.timers.setTimeout(30) {WinapiLocal.activateWindow(hwnd)}
@@ -167,8 +198,7 @@ object SwitcheState {
    
    def handleGroupModeToggleReq() = { inGroupedMode = !inGroupedMode; SwitcheFacePage.render() }
 
-   def handleElectronHotkeyCall() = {
-      //println ("..electron main reports global hotkey press!")
+   def handleElectronHotkeyCall() = { //println ("..electron global hotkey press reported!")
       if (isDismissed || !isAppForeground) {
          isDismissed=false; isAppForeground = true; SwitcheFacePage.render();
          SwitchePageState.triggerHoverLockTimeout(); SwitchePageState.resetFocus();
@@ -178,20 +208,25 @@ object SwitcheState {
    }
    def handleElectronFocusEvent() = { //println(s"app is focused! @${js.Date.now()}")
       if (!isAppForeground) {
-         isAppForeground = true; isDismissed = false; SwitcheFacePage.render();
-         SwitchePageState.triggerHoverLockTimeout(); handleRefreshRequest();
+         isAppForeground = true; isDismissed = false;
+         SwitcheFacePage.render(); SwitchePageState.triggerHoverLockTimeout();
+         handleRefreshRequest(); // even w the fgnd hwnd listener, this is useful to clear out closed windows
       }
    }
    def handleElectronBlurEvent() = {isAppForeground = false;}
    def handleElectronShowEvent() = {}
    def handleElectronHideEvent() = {}
    
-   js.Dynamic.global.updateDynamic("handleElectronHotkeyCall")(SwitcheState.handleElectronHotkeyCall _)
-   js.Dynamic.global.updateDynamic("handleElectronFocusEvent")(SwitcheState.handleElectronFocusEvent _)
-   js.Dynamic.global.updateDynamic("handleElectronBlurEvent")(SwitcheState.handleElectronBlurEvent _)
-   js.Dynamic.global.updateDynamic("handleElectronShowEvent")(SwitcheState.handleElectronShowEvent _)
-   js.Dynamic.global.updateDynamic("handleElectronHideEvent")(SwitcheState.handleElectronHideEvent _)
-   
+   def init() {
+      js.Dynamic.global.updateDynamic("handleElectronHotkeyCall")(SwitcheState.handleElectronHotkeyCall _)
+      js.Dynamic.global.updateDynamic("handleElectronFocusEvent")(SwitcheState.handleElectronFocusEvent _)
+      js.Dynamic.global.updateDynamic("handleElectronBlurEvent")(SwitcheState.handleElectronBlurEvent _)
+      js.Dynamic.global.updateDynamic("handleElectronShowEvent")(SwitcheState.handleElectronShowEvent _)
+      js.Dynamic.global.updateDynamic("handleElectronHideEvent")(SwitcheState.handleElectronHideEvent _)
+      //WinapiLocal.hookFgndWindowChangeListener (cbFgndWindowChangeListener _)
+      js.Dynamic.global.updateDynamic("handleWindowsFgndHwndReport")(SwitcheState.handleWindowsFgndHwndReport _)
+   }
+   init()
 }
 
 

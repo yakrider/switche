@@ -1,6 +1,34 @@
 const electron = require('electron');
 const path = require('path');
 
+const cluster = require("cluster")
+
+if (!cluster.isMaster) {
+   const ffi = require("ffi")
+   const ref = require("ref")
+    
+   //HWINEVENTHOOK SetWinEventHook (DWORD eventMin, DWORD eventMax, HMODULE hmodWinEventProc, WINEVENTPROC pfnWinEventProc, DWORD idProcess, DWORD idThread, DWORD dwFlags );
+   const user32 = ffi.Library("user32", {
+   SetWinEventHook: ["int", ["int", "int", "pointer", "pointer", "int", "int", "int"]],
+      GetMessageA: ["bool", ['pointer', "int", "uint", "uint"]]
+   })
+   //WINEVENTPROC void Wineventproc( HWINEVENTHOOK hWinEventHook, DWORD event, HWND hwnd, LONG idObject, LONG idChild, DWORD idEventThread, DWORD dwmsEventTime )
+   const pfnWinEventProc = ffi.Callback("void", ["pointer", "int", 'pointer', "long", "long", "int", "int"],
+      function (hWinEventHook, event, hwnd, idObject, idChild, idEventThread, dwmsEventTime) {
+         process.send(ref.address(hwnd))
+      }
+   )
+   // set the actual event hook
+   user32.SetWinEventHook(3, 3, null, pfnWinEventProc, 0, 0, 0 )
+    
+   // winapi requires the thread to be waiting on getMessage to get win-event-hook callbacks!
+   function getMessage() { return user32.GetMessageA (ref.alloc(ref.refType(ref.types.void)), null, 0, 0) }
+   while (0 != getMessage()) {}
+}
+// since worker above will be on a forever loop, the code below doesnt need to be on an 'else' block
+
+var worker = cluster.fork()
+//worker.on('message', function(msg) {console.log('got msg from worker: ', msg)})
 
 
 // get the index of the first command line argument
@@ -112,28 +140,6 @@ function hotkeyHandler() {
     mainWindow.show()
 }
 
-function tests() {
-    quickTest();
-    inclTest();
-    // note that while the elec main in sjs runs, that outputs to the window... so gotta create that to test from sjs
-    //createWindow();    
-    //app.quit();
-}
-
-
-function quickTest() {
-    console.log("direct js hello");
-    //app.quit();
-}
-
-function inclTest() {
-    var wapiTest = require('./win-helper');
-    console.log(wapiTest.hello());  
-
-    //wapiTest.printVisibleWindows();
-
-    //app.quit();  
-}
   
 // Quit when all windows are closed.
 app.on('window-all-closed', () => {
@@ -153,4 +159,8 @@ app.on('activate', function () {
     }
 });
 
+
+// setup to send window activation calls from worker thread setup above to webapp
+//worker.on('message', function(msg) {console.log('got msg from worker: ', msg)})
+worker.on('message', function(hwnd) { mainWindow.webContents.executeJavaScript(`window.handleWindowsFgndHwndReport(${hwnd})`) })
 

@@ -13,15 +13,8 @@ object SwitchenatorSjse extends js.JSApp {
       
       SwitcheState.handleRefreshRequest() // fire up first call
       
-      // hmm how about keeping this updated say once a sec..
-      //js.timers.setInterval(1000) {SwitcheState.handleRefreshRequest()}
-      // ugh, ^ not worthwhile.. messes up scroll logic etc too, should just keep to doing when window is recalled back or gets focus etc
-      // .. another angle, could do similar in a bkg task, but just query foreground window, and update only when that changes
-      // .. though if really want to listen for changes, looks like can do that w SetWinEventHook, listening for EVENT_SYSTEM_FOREGROUND
-      
-      // k, but for now, prob still worthwhile doing like once a minute or so just to keep things somewhat fresh?
+      // the fgnd window listener handles most change, but this is useful periodically to clean up on closed windows etc
       js.timers.setInterval(30*1000) {SwitcheState.backgroundOnlyRefreshReq()}
-      // ughh.. still makes it a pita to work w ui for debug/dev etc as the bkg is activated only when 'dismissed'
       
    }
 }
@@ -44,6 +37,9 @@ object WinapiLocal extends js.Object {
    def getWindowProcessId (hwnd:Int):Int = js.native
    def getProcessExe (hand:Int):String = js.native
    def getProcessExeFromHwnd (hwnd:Int):String = js.native
+   //HWINEVENTHOOK SetWinEventHook (DWORD eventMin, DWORD eventMax, HMODULE hmodWinEventProc, WINEVENTPROC pfnWinEventProc, DWORD idProcess, DWORD idThread, DWORD dwFlags );
+   //WINEVENTPROC void Wineventproc( HWINEVENTHOOK hWinEventHook, DWORD event, HWND hwnd, LONG idObject, LONG idChild, DWORD idEventThread, DWORD dwmsEventTime )
+   def hookFgndWindowChangeListener (cb:js.Function7[Int,Int,Int,Long,Long,Int,Int,Unit]):Unit = js.native
 }
 
 

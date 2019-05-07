@@ -57,7 +57,7 @@ function TEXT(text) {
  var user32 = new ffi.Library('user32.dll', {
    // BOOL EnumWindows( WNDENUMPROC lpEnumFunc, LPARAM lParam );
    // BOOL CALLBACK EnumWindowsProc( _In_ HWND   hwnd, _In_ LPARAM lParam );
-   EnumWindows : ['int', [voidPtr, 'int32']],
+   EnumWindows : ['int', ['pointer', 'int32']],
    FindWindowW : ['int', ['string', 'string']],
    ShowWindow : ['int', ['int', 'int']],
    ShowWindowAsync : ['int', ['int', 'int']],
@@ -75,7 +75,10 @@ function TEXT(text) {
    GetWindowModuleFileNameW : ['int', ['int',stringPtr,'int']],
    GetWindowThreadProcessId : ['int', ['int', lpdwordPtr]],
    //BOOL GetWindowPlacement( HWND hWnd, WINDOWPLACEMENT *lpwndpl );
-   GetWindowPlacement : ['int', ['int',lpwndpl_t_ptr]]
+   GetWindowPlacement : ['int', ['int',lpwndpl_t_ptr]],
+   //HWINEVENTHOOK SetWinEventHook (DWORD eventMin, DWORD eventMax, HMODULE hmodWinEventProc, WINEVENTPROC pfnWinEventProc, DWORD idProcess, DWORD idThread, DWORD dwFlags );
+   //WINEVENTPROC void Wineventproc( HWINEVENTHOOK hWinEventHook, DWORD event, HWND hwnd, LONG idObject, LONG idChild, DWORD idEventThread, DWORD dwmsEventTime )
+   SetWinEventHook : ['int',['int','int','pointer','pointer','int','int','int']]
  });
  // note on EnumWindows usage.. check the ms docs, but from usage below, looks like it repeatedly calls the callback w new found
  // windows, until either the callback returns false, or it has nothing more to send.. also looks like it only gives 'top-level' windows
@@ -186,6 +189,19 @@ exports.streamWindowsQuery = function streamWindowsQuery (callback, callId) {
   // no return, will repeatedly call callback w new windows found, incl non-visible ones
   // in theory returns 0/1 code, but chrome console says returns 'undefined'
   user32.EnumWindows (ffi.Callback ('int', ['long', 'int32'], callback), callId);
+}
+
+var defaultFgndChangeCallback = function(hook,event,hwnd,idObj,idChild,idThread,evTime) {
+   console.log('win hook called!')
+   //console.log('fgnd changed w hwnd', hwnd)
+};
+exports.hookFgndWindowChangeListener = function hookFgndWindowChangeListener (fgndChangeHandler) {
+  //HWINEVENTHOOK SetWinEventHook (DWORD eventMin, DWORD eventMax, HMODULE hmodWinEventProc, WINEVENTPROC pfnWinEventProc, DWORD idProcess, DWORD idThread, DWORD dwFlags );
+  //WINEVENTPROC void Wineventproc( HWINEVENTHOOK hWinEventHook, DWORD event, HWND hwnd, LONG idObject, LONG idChild, DWORD idEventThread, DWORD dwmsEventTime )  
+  // EVENT_SYSTEM_FOREGROUND 0x0003
+  //user32.SetWinEventHook (3, 3, null, ffi.Callback ('void', ['int','int','int','long','long','int','int'], fgndChangeHandler), 0, 0, 0)
+  var hook = user32.SetWinEventHook (3, 32, null, ffi.Callback ('void', ['pointer','int','pointer','long','long','int','int'], defaultFgndChangeCallback), 0, 0, 2)
+  console.log(hook)
 }
 
 exports.checkWindowVisible = function checkWindowVisible (hwnd) {
