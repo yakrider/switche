@@ -4,30 +4,39 @@ const path = require('path');
 const cluster = require("cluster")
 
 if (!cluster.isMaster) {
-   const ffi = require("ffi")
-   const ref = require("ref")
-    
-   //HWINEVENTHOOK SetWinEventHook (DWORD eventMin, DWORD eventMax, HMODULE hmodWinEventProc, WINEVENTPROC pfnWinEventProc, DWORD idProcess, DWORD idThread, DWORD dwFlags );
-   const user32 = ffi.Library("user32", {
-   SetWinEventHook: ["int", ["int", "int", "pointer", "pointer", "int", "int", "int"]],
-      GetMessageA: ["bool", ['pointer', "int", "uint", "uint"]]
-   })
-   //WINEVENTPROC void Wineventproc( HWINEVENTHOOK hWinEventHook, DWORD event, HWND hwnd, LONG idObject, LONG idChild, DWORD idEventThread, DWORD dwmsEventTime )
-   const pfnWinEventProc = ffi.Callback("void", ["pointer", "int", 'pointer', "long", "long", "int", "int"],
-      function (hWinEventHook, event, hwnd, idObject, idChild, idEventThread, dwmsEventTime) {
-         process.send(ref.address(hwnd))
-      }
-   )
-   // set the actual event hook
-   user32.SetWinEventHook(3, 3, null, pfnWinEventProc, 0, 0, 0 )
-    
+    const ffi = require("ffi")
+    const ref = require("ref")
+
+    //HWINEVENTHOOK SetWinEventHook (DWORD eventMin, DWORD eventMax, HMODULE hmodWinEventProc, WINEVENTPROC pfnWinEventProc, DWORD idProcess, DWORD idThread, DWORD dwFlags );
+    const user32 = ffi.Library("user32", {
+    SetWinEventHook: ["int", ["int", "int", "pointer", "pointer", "int", "int", "int"]],
+        GetMessageA: ["bool", ['pointer', "int", "uint", "uint"]]
+    })
+    //WINEVENTPROC void Wineventproc( HWINEVENTHOOK hWinEventHook, DWORD event, HWND hwnd, LONG idObject, LONG idChild, DWORD idEventThread, DWORD dwmsEventTime )
+    const pfnWinEventProc_fgnd = ffi.Callback("void", ["pointer", "int", 'pointer', "long", "long", "int", "int"],
+        function (hWinEventHook, event, hwnd, idObject, idChild, idEventThread, dwmsEventTime) { process.send(ref.address(hwnd)) }
+    )
+    const pfnWinEventProc_objKill = ffi.Callback("void", ["pointer", "int", 'pointer', "long", "long", "int", "int"],
+        function (hWinEventHook, event, hwnd, idObject, idChild, idEventThread, dwmsEventTime) { 
+            if (idObject==0) { process.send(ref.address(hwnd)) } // 0 obj-id is for window.. others can be for parts of it like caret etc
+        }
+    )
+
+    if (process.env.task=='foreground-window') { //console.log('foreground-window worker reporting!..')
+        user32.SetWinEventHook(3, 3, null, pfnWinEventProc_fgnd, 0, 0, 0 )
+    } else if (process.env.task=='object-destroyed') { //console.log('obj-destroyed worker reporting!..')
+        user32.SetWinEventHook(32769, 32769, null, pfnWinEventProc_objKill, 0, 0, 0 )
+    }
+   
    // winapi requires the thread to be waiting on getMessage to get win-event-hook callbacks!
    function getMessage() { return user32.GetMessageA (ref.alloc(ref.refType(ref.types.void)), null, 0, 0) }
    while (0 != getMessage()) {}
 }
 // since worker above will be on a forever loop, the code below doesnt need to be on an 'else' block
 
-var worker = cluster.fork()
+var foregroundWindowWorker = cluster.fork ({task:'foreground-window'})
+var objDestroyedWorker = cluster.fork ({task:'object-destroyed'})
+
 //worker.on('message', function(msg) {console.log('got msg from worker: ', msg)})
 
 
@@ -162,5 +171,6 @@ app.on('activate', function () {
 
 // setup to send window activation calls from worker thread setup above to webapp
 //worker.on('message', function(msg) {console.log('got msg from worker: ', msg)})
-worker.on('message', function(hwnd) { mainWindow.webContents.executeJavaScript(`window.handleWindowsFgndHwndReport(${hwnd})`) })
+foregroundWindowWorker.on('message', function(hwnd) { mainWindow.webContents.executeJavaScript(`window.handleWindowsFgndHwndReport(${hwnd})`) })
+objDestroyedWorker.on('message', function(hwnd) { mainWindow.webContents.executeJavaScript(`window.handleWindowsObjDestroyedReport(${hwnd})`) })
 

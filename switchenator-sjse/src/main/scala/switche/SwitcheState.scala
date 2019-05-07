@@ -50,7 +50,7 @@ object SwitcheState {
       return (callId <= latestTriggeredCallId) // cancel further callbacks on this callId if its no longer the latest call
    }
    
-   def handleWindowsFgndHwndReport(hwnd:Int):Unit = { //println(s"fgnd report: $hwnd")
+   def handleWindowsFgndHwndReport (hwnd:Int):Unit = { //println(s"fgnd report: $hwnd")
       if (hMapCur != hMapPrior) return; // if in middle of updating full report, can ignore indiv fgnd change updates
       // do note that this will update all new/changed fgnd windows, but cant clear dead windows etc, so gotta keep refresh handy for those
       val dat = hMapCur .get(hwnd) .orElse (Some(WinDatEntry (hwnd))) .map { curDat =>
@@ -59,12 +59,19 @@ object SwitcheState {
             .orElse { if (isVis.isDefined && true==isVis.get) {setAsnycQWindowText(20,hwnd)}; None }
          WinDatEntry (hwnd, isVis, winText, curDat.exePathName, curDat.shouldExclude)
       } .get
-      if (Some(true)!=dat.shouldExclude) { // just reducing work a little where its pointless
+      if (!dat.shouldExclude.getOrElse(false)) { // just reducing work a little where its pointless
          val hMapUpdated = LinkedHashMap[Int, WinDatEntry]();
          hMapUpdated.put(hwnd, dat);
          hMapCur.filterKeys(_ != hwnd).foreach {case (k, v) => hMapUpdated.put(k, v)}
          hMapCur = hMapUpdated; hMapPrior = hMapCur;
          RenderSpacer.queueSpacedRender()
+      }
+   }
+   def handleWindowsObjDestroyedReport (hwnd:Int):Unit = {
+      if (hMapCur != hMapPrior) return; // ignore if in middle of updating full report
+      if (hMapCur.contains(hwnd)) {
+         if (!hMapCur.get(hwnd).map(_.shouldExclude).flatten.getOrElse(false)) {RenderSpacer.queueSpacedRender()}
+         hMapCur.remove(hwnd); hMapPrior.remove(hwnd)
       }
    }
    
@@ -143,8 +150,8 @@ object SwitcheState {
       WinapiLocal.streamWindowsQuery (cbStreamWinQueryCallback _, latestTriggeredCallId)
    }
    def backgroundOnlyRefreshReq() = {
-      // the fgnd window listener handles most change, but this is useful periodically to clean up on closed windows etc!
-      if (isDismissed) handleRefreshRequest()
+      // the windows fgnd/close listeners should handle most change, but this is useful periodically for some clean sweeps?
+      //if (isDismissed) handleRefreshRequest()
    }
    
    def handleWindowActivationReq(hwnd:Int):Unit = {
@@ -155,8 +162,8 @@ object SwitcheState {
       js.timers.setTimeout(25) {WinapiLocal.activateWindow(hwnd)}
       js.timers.setTimeout(50) {WinapiLocal.activateWindow(hwnd)}
       if (SwitchePageState.inSearchState) {SwitchePageState.exitSearchState()}
-      js.timers.setTimeout(200) {isDismissed = true; getSelfWindowOpt.map(WinapiLocal.hideWindow)}
-      js.timers.setTimeout(150) {handleRefreshRequest()}
+      js.timers.setTimeout(80) {isDismissed = true; getSelfWindowOpt.map(WinapiLocal.hideWindow)}
+      //js.timers.setTimeout(150) {handleRefreshRequest()}
    }
    def getSelfWindowOpt() = {
       hMapPrior.values.filter(ExclusionsManager.selfSelector).headOption.map(_.hwnd)
@@ -165,7 +172,7 @@ object SwitcheState {
       // want to make sure focus is returned to the window we were supposed to have active
       js.timers.setTimeout(50) {SwitchePageState.recentsIdsVec.headOption.map(SwitchePageState.idToHwnd).map(WinapiLocal.activateWindow)}
       js.timers.setTimeout(20) {isDismissed = true; getSelfWindowOpt.map(WinapiLocal.hideWindow)}
-      js.timers.setTimeout(250) {handleRefreshRequest()} // useful to clean up on closed windows etc although the fgnd listener does update the rest
+      //js.timers.setTimeout(250) {handleRefreshRequest()} // useful to clean up on closed windows etc although the fgnd listener does update the rest
    }
    def handleWindowCloseReq(hwnd:Int) = {
       // we try and activate the window first so it doesnt just die in the bkg, then send close, then after some delay, a refresh to update
@@ -173,15 +180,15 @@ object SwitcheState {
       js.timers.setTimeout(50) {WinapiLocal.activateWindow(hwnd)}
       js.timers.setTimeout(80) {WinapiLocal.closeWindow(hwnd)} // sadly, this can take a while, if the window even agrees to close!
       js.timers.setTimeout(120) {WinapiLocal.closeWindow(hwnd)}
-      js.timers.setTimeout(250) {handleRefreshRequest()}
-      js.timers.setTimeout(400) {handleRefreshRequest()} // and it can take even longer for it to get picked up from win calls, esp for some os windows
-      js.timers.setTimeout(600) {handleRefreshRequest()}
+      //js.timers.setTimeout(250) {handleRefreshRequest()}
+      //js.timers.setTimeout(400) {handleRefreshRequest()} // and it can take even longer for it to get picked up from win calls, esp for some os windows
+      //js.timers.setTimeout(600) {handleRefreshRequest()}
       // making this ^ call and elsewhere to clear out closed windows, but maybe could get rid of these if could setup a window destroyed listener
    }
    def handleWindowShowReq(hwnd:Int) = { // useful for inspection/closing.. brings that window to top, then brings ourselves back
       js.timers.setTimeout(30) {WinapiLocal.activateWindow(hwnd)}
       js.timers.setTimeout(50) {WinapiLocal.activateWindow(hwnd)}
-      js.timers.setTimeout(1000) {getSelfWindowOpt.map(WinapiLocal.activateWindow)}
+      js.timers.setTimeout(800) {getSelfWindowOpt.map(WinapiLocal.activateWindow)}
    }
    
    def handleExclPrintReq() = {
@@ -200,17 +207,17 @@ object SwitcheState {
 
    def handleElectronHotkeyCall() = { //println ("..electron global hotkey press reported!")
       if (isDismissed || !isAppForeground) {
-         isDismissed=false; isAppForeground = true; SwitcheFacePage.render();
+         isDismissed=false; isAppForeground = true; //SwitcheFacePage.render();
          SwitchePageState.triggerHoverLockTimeout(); SwitchePageState.resetFocus();
-         handleRefreshRequest()
+         //handleRefreshRequest()
       }
       else { SwitchePageState.focusNextElem() }
    }
    def handleElectronFocusEvent() = { //println(s"app is focused! @${js.Date.now()}")
       if (!isAppForeground) {
-         isAppForeground = true; isDismissed = false;
-         SwitcheFacePage.render(); SwitchePageState.triggerHoverLockTimeout();
-         handleRefreshRequest(); // even w the fgnd hwnd listener, this is useful to clear out closed windows
+         isDismissed=false; isAppForeground = true; //SwitcheFacePage.render();
+         SwitchePageState.triggerHoverLockTimeout();
+         //handleRefreshRequest()
       }
    }
    def handleElectronBlurEvent() = {isAppForeground = false;}
@@ -225,6 +232,7 @@ object SwitcheState {
       js.Dynamic.global.updateDynamic("handleElectronHideEvent")(SwitcheState.handleElectronHideEvent _)
       //WinapiLocal.hookFgndWindowChangeListener (cbFgndWindowChangeListener _)
       js.Dynamic.global.updateDynamic("handleWindowsFgndHwndReport")(SwitcheState.handleWindowsFgndHwndReport _)
+      js.Dynamic.global.updateDynamic("handleWindowsObjDestroyedReport")(SwitcheState.handleWindowsObjDestroyedReport _)
    }
    init()
 }
