@@ -6,8 +6,9 @@ if (cluster.isMaster) {
     var fgndWorker = cluster.fork({task:'fgnd'})
     var killWorker = cluster.fork({task:'kill'})
 
-    fgndWorker.on('message', function(msg) {console.log('fgnd worker: ', msg)})
-    killWorker.on('message', function(msg) {console.log('kill worker: ', msg)})
+    fgndWorker.on('message', function(msg) {console.log('fgnd worker: ', msg)});
+    //killWorker.on('message', function(msg) {console.log('kill worker: ', msg)})
+    killWorker.on('message', function(msg) {console.log('kill worker: msg-type:',msg.type,' hwnd:',msg.hwnd)});
 
 
 } else {
@@ -25,16 +26,22 @@ if (cluster.isMaster) {
     const pfnWinEventProc = ffi.Callback("void", ["pointer", "int", 'pointer', "long", "long", "int", "int"],
         function (hWinEventHook, event, hwnd, idObject, idChild, idEventThread, dwmsEventTime) {
             //process.send(ref.address(hwnd))
-            console.log('fgnd hook :: hwnd:',ref.address(hwnd))
+            console.log('fgnd hook :: hwnd:',ref.address(hwnd),' id:',idObject,' idChild:',idChild);
         }
     )
     // set the actual event hook
-    //user32.SetWinEventHook(3, 3, null, pfnWinEventProc, 0, 0, 0 )
+    //user32.SetWinEventHook(0x0003, 0x0003, null, pfnWinEventProc, 0, 0, 0 )
     
     const pfnWinEventProc2 = ffi.Callback("void", ["pointer", "int", 'pointer', "long", "long", "int", "int"],
         function (hWinEventHook, event, hwnd, idObject, idChild, idEventThread, dwmsEventTime) {
             //process.send(ref.address(hwnd))
-            console.log('destroy hook :: hwnd:',ref.address(hwnd),' id:',idObject,' idChild:',idChild);
+            if (event===0x8001 & idObject===0) {
+               //console.log('destroy hook :: hwnd:',ref.address(hwnd),' id:',idObject,' idChild:',idChild);
+               process.send({type:'kill', hwnd:ref.address(hwnd)});
+            } else if (event===0x800C && idObject===0) {
+                //console.log('title hook :: hwnd:',ref.address(hwnd),' id:',idObject,' idChild:',idChild);
+                process.send({type:'title', hwnd:ref.address(hwnd)});
+            }
         }
     )
     // set the actual event hook
@@ -43,7 +50,7 @@ if (cluster.isMaster) {
     if (process.env.task=='fgnd') { console.log('fgnd worker reporting!..')
         user32.SetWinEventHook(3, 3, null, pfnWinEventProc, 0, 0, 0 )
     } else if (process.env.task=='kill') { console.log('kill worker reporting!..')
-        user32.SetWinEventHook(32769, 32769, null, pfnWinEventProc2, 0, 0, 0 )
+        user32.SetWinEventHook(0x8001, 0x800C, null, pfnWinEventProc2, 0, 0, 0 )
     }
 
     

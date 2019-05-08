@@ -17,7 +17,7 @@ object SwitcheState {
    var hMapCur = LinkedHashMap[Int,WinDatEntry]();
    var hMapPrior = LinkedHashMap[Int,WinDatEntry]();
    var inGroupedMode = true;
-   var isDismissed = false; var isAppForeground = true;
+   var isDismissed = false; //var isAppForeground = true;
    var curElemId = ""
    
    def parseIntoExePathName (path:String) = ExePathName(path, path.split("""\\""").lastOption.getOrElse(""))
@@ -37,10 +37,10 @@ object SwitcheState {
       if (callId == latestTriggeredCallId && !hMapCur.contains(hwnd)) {
          val dat = hMapPrior .get(hwnd) .orElse (Some(WinDatEntry (hwnd))) .map { priorDat =>
             // for isVis, if prior has data, use it, else queue query
-            val isVis = priorDat .isVis .orElse { setAsnycQVisCheck(20,hwnd); None }
+            val isVis = priorDat .isVis .orElse { setAsyncQVisCheck(20,hwnd); None }
             // for winText, if prior has data, use it but queue query too, else query if isVis already true, else we'll handle in isVis cb
-            val winText = priorDat .winText .map {wt => setAsnycQWindowText(20,hwnd); wt }
-               .orElse { if (isVis.isDefined && true==isVis.get) {setAsnycQWindowText(20,hwnd)}; None }
+            val winText = priorDat .winText .map {wt => setAsyncQWindowText(20,hwnd); wt }
+               .orElse { if (isVis.isDefined && true==isVis.get) {setAsyncQWindowText(20,hwnd)}; None }
             // for exePath/ico, if not in cache, we'll query later only as needed, ditto for exclusion flag
             WinDatEntry (hwnd, isVis, winText, priorDat.exePathName, priorDat.shouldExclude)
          } .get
@@ -54,9 +54,9 @@ object SwitcheState {
       if (hMapCur != hMapPrior) return; // if in middle of updating full report, can ignore indiv fgnd change updates
       // do note that this will update all new/changed fgnd windows, but cant clear dead windows etc, so gotta keep refresh handy for those
       val dat = hMapCur .get(hwnd) .orElse (Some(WinDatEntry (hwnd))) .map { curDat =>
-         val isVis = curDat .isVis .orElse { setAsnycQVisCheck(20,hwnd); None }
-         val winText = curDat .winText .map {wt => setAsnycQWindowText(20,hwnd); wt }
-            .orElse { if (isVis.isDefined && true==isVis.get) {setAsnycQWindowText(20,hwnd)}; None }
+         val isVis = curDat .isVis .orElse { setAsyncQVisCheck(20,hwnd); None }
+         val winText = curDat .winText .map {wt => setAsyncQWindowText(20,hwnd); wt }
+            .orElse { if (isVis.isDefined && true==isVis.get) {setAsyncQWindowText(20,hwnd)}; None }
          WinDatEntry (hwnd, isVis, winText, curDat.exePathName, curDat.shouldExclude)
       } .get
       if (!dat.shouldExclude.getOrElse(false)) { // just reducing work a little where its pointless
@@ -70,20 +70,31 @@ object SwitcheState {
    def handleWindowsObjDestroyedReport (hwnd:Int):Unit = {
       if (hMapCur != hMapPrior) return; // ignore if in middle of updating full report
       if (hMapCur.contains(hwnd)) {
-         if (!hMapCur.get(hwnd).map(_.shouldExclude).flatten.getOrElse(false)) {RenderSpacer.queueSpacedRender()}
+         if (hMapCur.get(hwnd).map(_.shouldExclude.map(_.unary_!).getOrElse(false)).getOrElse(false)) {RenderSpacer.queueSpacedRender()}
          hMapCur.remove(hwnd); hMapPrior.remove(hwnd)
       }
    }
+   def handleWindowsTitleChangedReport (hwnd:Int):Unit = {
+      if (hMapCur != hMapPrior) return; // ignore if in middle of updating full report
+      if (hMapCur.get(hwnd).map(_.shouldExclude.map(_.unary_!).getOrElse(false)).getOrElse(false)) {
+         val winText = WinapiLocal.getWindowText(hwnd)
+         val dat = hMapCur.get(hwnd).get // has been prechecked to be there
+         if (!winText.isEmpty && dat.winText!=Some(winText)) {
+            val newDat = dat.copy(winText = Some(winText))
+            hMapCur.put (hwnd, newDat);
+            SwitchePageState.handleTitleUpdate (hwnd, newDat)
+      } }
+   }
    
-   def setAsnycQVisCheck (t:Int, hwnd:Int) = js.timers.setTimeout(t) {cbProcVisCheck(hwnd, WinapiLocal.checkWindowVisible(hwnd))}
-   def setAsnycQWindowText (t:Int, hwnd:Int) = js.timers.setTimeout(t) {cbProcWindowText(hwnd, WinapiLocal.getWindowText(hwnd))}
-   def setAsnycQModuleFile (t:Int, hwnd:Int) = js.timers.setTimeout(t) {cbProcProcId(hwnd, WinapiLocal.getWindowThreadProcessId(hwnd))}
+   def setAsyncQVisCheck (t:Int, hwnd:Int) = js.timers.setTimeout(t) {cbProcVisCheck(hwnd, WinapiLocal.checkWindowVisible(hwnd))}
+   def setAsyncQWindowText (t:Int, hwnd:Int) = js.timers.setTimeout(t) {cbProcWindowText(hwnd, WinapiLocal.getWindowText(hwnd))}
+   def setAsyncQModuleFile (t:Int, hwnd:Int) = js.timers.setTimeout(t) {cbProcProcId(hwnd, WinapiLocal.getWindowThreadProcessId(hwnd))}
    
    def cbProcVisCheck (hwnd:Int, isVis:Int) = {
       // update the map data, also if we're here then it was previously unknown, so if now its true, then queue query for winText
       hMapCur .get(hwnd) .foreach { d =>
          hMapCur .put (hwnd, d.copy(isVis = Some(isVis>0), shouldExclude = Some(isVis<=0).filter(identity)))
-         if (isVis>0) {setAsnycQWindowText(0,hwnd)}
+         if (isVis>0) {setAsyncQWindowText(0,hwnd)}
          //ElemsDisplay.queueRender() // no point ordering a render here as anything vis here always triggers a title query
    } }
    
@@ -92,7 +103,7 @@ object SwitcheState {
       hMapCur .get(hwnd) .foreach {d =>
          if (!winText.isEmpty) {
             if (d.winText!=Some(winText)) { RenderSpacer.queueSpacedRender() }
-            if (hMapCur.get(hwnd).map(_.exePathName.isEmpty).getOrElse(true)) { setAsnycQModuleFile(20,hwnd) }
+            if (hMapCur.get(hwnd).map(_.exePathName.isEmpty).getOrElse(true)) { setAsyncQModuleFile(20,hwnd) }
          }
          hMapCur .put (hwnd, d.copy(winText = Some(winText)))
    } }
@@ -114,7 +125,7 @@ object SwitcheState {
       //HWINEVENTHOOK SetWinEventHook (DWORD eventMin, DWORD eventMax, HMODULE hmodWinEventProc, WINEVENTPROC pfnWinEventProc, DWORD idProcess, DWORD idThread, DWORD dwFlags );
       //WINEVENTPROC void Wineventproc( HWINEVENTHOOK hWinEventHook, DWORD event, HWND hwnd, LONG idObject, LONG idChild, DWORD idEventThread, DWORD dwmsEventTime )
       // EVENT_SYSTEM_FOREGROUND 0x0003
-      println (s"..Foreground window change listener: new fgnd window ${hwnd}")
+      println (s"...Foreground window change listener: new fgnd window ${hwnd}")
       handleWindowsFgndHwndReport(hwnd)
       // ughh, this win fn callback ^^ seems to require the thread to be waiting on GetMessageA to get this callback.. cant do from here!
       // as workaround, ended up doing a npm 'cluster' based thread in main that sits around listening for this and calls us w new hwnd upon fgnd change!
@@ -188,7 +199,7 @@ object SwitcheState {
    def handleWindowShowReq(hwnd:Int) = { // useful for inspection/closing.. brings that window to top, then brings ourselves back
       js.timers.setTimeout(30) {WinapiLocal.activateWindow(hwnd)}
       js.timers.setTimeout(50) {WinapiLocal.activateWindow(hwnd)}
-      js.timers.setTimeout(800) {getSelfWindowOpt.map(WinapiLocal.activateWindow)}
+      js.timers.setTimeout(1000) {getSelfWindowOpt.map(WinapiLocal.activateWindow)}
    }
    
    def handleExclPrintReq() = {
@@ -206,26 +217,33 @@ object SwitcheState {
    def handleGroupModeToggleReq() = { inGroupedMode = !inGroupedMode; SwitcheFacePage.render() }
 
    def handleElectronHotkeyCall() = { //println ("..electron global hotkey press reported!")
-      if (isDismissed || !isAppForeground) {
-         isDismissed=false; isAppForeground = true; //SwitcheFacePage.render();
-         SwitchePageState.triggerHoverLockTimeout(); SwitchePageState.resetFocus();
-         //handleRefreshRequest()
-      }
+      SwitchePageState.triggerHoverLockTimeout()
+      if (isDismissed) { isDismissed=false; SwitchePageState.resetFocus(); }
       else { SwitchePageState.focusNextElem() }
    }
-   def handleElectronFocusEvent() = { //println(s"app is focused! @${js.Date.now()}")
-      if (!isAppForeground) {
-         isDismissed=false; isAppForeground = true; //SwitcheFacePage.render();
-         SwitchePageState.triggerHoverLockTimeout();
-         //handleRefreshRequest()
-      }
+   def handleElectronHotkeyGlobalScrollDownCall() = {
+      SwitchePageState.triggerHoverLockTimeout()
+      if (isDismissed) { isDismissed=false; SwitchePageState.focusTopElem() }
+      else { SwitchePageState.focusNextElem() }
    }
-   def handleElectronBlurEvent() = {isAppForeground = false;}
+   def handleElectronHotkeyGlobalScrollUpCall() = {
+      SwitchePageState.triggerHoverLockTimeout()
+      if (isDismissed) { isDismissed=false; SwitchePageState.focusBottomElem() }
+      else { SwitchePageState.focusPrevElem() }
+   }
+   def handleElectronHotkeyGlobalScrollEndCall() = {
+      if (!isDismissed) { SwitchePageState.handleCurElemActivationReq() }
+   }
+   def handleElectronFocusEvent() = {}
+   def handleElectronBlurEvent() = {}
    def handleElectronShowEvent() = {}
    def handleElectronHideEvent() = {}
    
    def init() {
       js.Dynamic.global.updateDynamic("handleElectronHotkeyCall")(SwitcheState.handleElectronHotkeyCall _)
+      js.Dynamic.global.updateDynamic("handleElectronHotkeyGlobalScrollDownCall")(SwitcheState.handleElectronHotkeyGlobalScrollDownCall _)
+      js.Dynamic.global.updateDynamic("handleElectronHotkeyGlobalScrollUpCall")(SwitcheState.handleElectronHotkeyGlobalScrollUpCall _)
+      js.Dynamic.global.updateDynamic("handleElectronHotkeyGlobalScrollEndCall")(SwitcheState.handleElectronHotkeyGlobalScrollEndCall _)
       js.Dynamic.global.updateDynamic("handleElectronFocusEvent")(SwitcheState.handleElectronFocusEvent _)
       js.Dynamic.global.updateDynamic("handleElectronBlurEvent")(SwitcheState.handleElectronBlurEvent _)
       js.Dynamic.global.updateDynamic("handleElectronShowEvent")(SwitcheState.handleElectronShowEvent _)
@@ -233,6 +251,7 @@ object SwitcheState {
       //WinapiLocal.hookFgndWindowChangeListener (cbFgndWindowChangeListener _)
       js.Dynamic.global.updateDynamic("handleWindowsFgndHwndReport")(SwitcheState.handleWindowsFgndHwndReport _)
       js.Dynamic.global.updateDynamic("handleWindowsObjDestroyedReport")(SwitcheState.handleWindowsObjDestroyedReport _)
+      js.Dynamic.global.updateDynamic("handleWindowsTitleChangedReport")(SwitcheState.handleWindowsTitleChangedReport _)
    }
    init()
 }

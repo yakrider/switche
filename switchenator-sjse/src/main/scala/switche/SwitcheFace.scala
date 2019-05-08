@@ -59,7 +59,9 @@ object SwitcheFacePage {
       // reminder here.. capture phase means its just going down from top level to target, after that bubble phase goes from target upwards
       // intercepting here at the 'capture' phase allows us to use e.stopPropagation() to prevent event from ever reaching target
       dom.document.addEventListener ("click", mouseClickHandler _)
-      dom.document.addEventListener ("contextmenu", mouseRightClickHandler _)
+      dom.document.addEventListener ("contextmenu", mouseContextMenuHandler _)
+      dom.document.addEventListener ("auxclick", mouseAuxClickHandler _)
+      dom.document.addEventListener ("mouseup", mouseUpHandler _)
       dom.document.addEventListener ("wheel", mouseWheelHandler _)
       //dom.document.addEventListener ("mouseenter", mouseEnterHandler _, useCapture=true) // faster if done from element
       dom.document.addEventListener ("keyup", capturePhaseKeyupHandler _, useCapture=true)
@@ -69,9 +71,35 @@ object SwitcheFacePage {
       triggerHoverLockTimeout()
       e.target.closest(".elemBox").foreach(_=>handleCurElemActivationReq())
    }
+   def mouseAuxClickHandler (e:MouseEvent) = { //println (s"got auxclick, btn:${e.button}")
+      if (e.button == 1) {
+         // disabling this as auxclick only seems to be triggered when pane doesnt have scrollable content, else the OS seems to make that into the
+         // funky round scroll icon w no auxclick registered, and no easy way around it other than way fiddling w mouse drivers etc
+         // instead gonna use mouse-up which seems to reliably be generated.. note that mouse-down also only seems to be generated when NOT in that
+         // scroll-circle mode.. sucky part is that regardless, the mouse pointer icon will change if so, and nothing to be done about it.. oh well
+         //mouseMiddleClickHandler(e)
+      } else if (e.button == 2) {
+         mouseRightClickHandler(e)
+      } else {
+         e.preventDefault(); e.stopPropagation() // ignore any other buttons
+      }
+   }
+   def mouseMiddleClickHandler (e:MouseEvent) = { //println("got middle click!")
+      triggerHoverLockTimeout(); e.preventDefault(); e.stopPropagation()
+      e.target.closest(".elemBox").foreach(_=>handleCurElemCloseReq())
+   }
    def mouseRightClickHandler (e:MouseEvent) = {
+      // eventually could consider supporting more native right-click+wheel global combo here
+      // but for now, we're using ahk to send separate hotkeys for right-mouse + wheel-down and enc scroll, so can use this for closing windows
       triggerHoverLockTimeout()
       e.target.closest(".elemBox").foreach(_=>handleCurElemCloseReq())
+   }
+   def mouseContextMenuHandler (e:MouseEvent) = { //println (s"got context menu click, btn:${e.button}")
+      // this fires separately from the auxclick 2 report on right-click
+      //e.preventDefault(); e.stopPropagation()
+   }
+   def mouseUpHandler (e:MouseEvent) = {
+      if (e.button == 1) {mouseMiddleClickHandler(e)}
    }
    def mouseWheelHandler (e:WheelEvent) = {
       triggerHoverLockTimeout()
@@ -85,7 +113,8 @@ object SwitcheFacePage {
    }
    def capturePhaseKeydownHandler (e:KeyboardEvent) = { //printKeyDebugInfo(e,"down")
       triggerHoverLockTimeout()
-      if (e.ctrlKey) {
+      if (e.altKey) {}
+      else if (e.ctrlKey) {
          if (e.key == " ") {handleCurElemActivationReq()}
          else if (e.key == "t") {handleGroupModeToggleReq()}
          else if (e.key == "w") {handleCurElemCloseReq()}
@@ -105,7 +134,7 @@ object SwitcheFacePage {
          else if (e.key == "Enter") {handleCurElemActivationReq()}
          //else if (e.key == "Escape") {handleEscapeKeyDown()} // moved to keyup as dont want its keyup leaking outside app if we use it hide app
          else if (e.key == "F5") {dom.window.location.reload()}
-         else {activateSearchBox()}
+         else { activateSearchBox(); } //printKeyDebugInfo(e,"down") }
    } }
    
 }
@@ -249,6 +278,18 @@ object SwitchePageState {
    def handleSearchBoxKeyUp(e:KeyboardEvent) = {
       if (e.key == "Escape") {exitSearchState()}
       else { inSearchState = true; ElemsDisplay.updateElemsDiv() }
+   }
+   def replaceTitleInnerSpan (elem:Div, newSpan:Span) = {
+      clearedElem (elem.getElementsByClassName("titleSpan").apply(0)) .appendChild (newSpan)
+   }
+   def handleTitleUpdate(hwnd:Int, dat:WinDatEntry) = {
+      if (!inSearchState) {
+         recentsElemsMap.get(s"${hwnd}").map(_.elem).foreach{elem => replaceTitleInnerSpan (elem, span((dat.winText.getOrElse("title..")):String).render)}
+         groupedElemsMap.get(s"${hwnd}_g").map(_.elem).foreach{elem => replaceTitleInnerSpan(elem, span((dat.winText.getOrElse("title..")):String).render)}
+      } else {
+         val sRes = SearchHelper.checkSearchExeTitle (dat.exePathName.map(_.name).getOrElse(""), dat.winText.getOrElse(""), RibbonDisplay.searchBox.value.trim)
+         searchElemsMap.get(s"${hwnd}_s").map(_.elem).foreach{elem => replaceTitleInnerSpan(elem,sRes.titleSpan)}
+      }
    }
    
 }

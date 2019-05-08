@@ -2,6 +2,49 @@
 RUNNING NOTES DUMP ON POSSIBLE WORK ON THE SWITCHENATOR PROJECT :
 
 
+
+05/07 .. note re right-click + wheel-scroll combo to bring up and use the app
+   - so this is a weird place to put this note, but wanted to have use of that combo for one handed use, like we could do in old vswitch (before w10 made that start causing unrecoverable hangups).. but looked like there wasnt an easy way of setting such a hook, esp not w/o interfering w normal wheel/mouse operation
+   - was trying out w ahk, and looked like a relatively small addition to the key scripts could allow for something like that in conjunction w updates to code here
+   - so ended up defining some special global hotkeys for switche that match up w those triggered by ahk and make it work nicely that way
+   - as an extra nice bonus, note that this will work w the mouse pointer anywhere on screen while regular scrolling on tasks w wheel would only work while the mouse pointer was in the switche window!
+   - copying here for future reference if need be, the portions of ahk script that supports that usecase :
+   
+      ; somewhat roundabout way for allowing mouse-btn+wheel combos for task switching
+      ; note cant have F2 for global hotkey for task-switch unlike F1, so using alt-ctrl-F2
+      ; then subsequently, doing similar for F1 too just coz wheel makes extensive calls, and sometimes some apps still respond to F1
+      ; NOTE that after adding RButton combos w WheelDown/Up, the separate simple RButton entry below was required to keep default action working when not in combo!
+      RButton & WheelDown::
+         SendInput ^!{F1}
+         SetTimer, TaskSwitchRButtonChecker, -50
+      return
+      RButton & WheelUp::
+         SendInput ^!{F2}
+         SetTimer, TaskSwitchRButtonChecker, -50
+      return
+      RButton::SendInput {RButton}
+
+      TaskSwitchRButtonChecker:
+         GetKeyState, rb,RButton,P
+         if (rb="D") {
+            SetTimer, TaskSwitchRButtonChecker, -50
+         } else {
+            SendInput ^!{F3}
+            SetTimer, TaskSwitchRButtonChecker, Off
+         }
+      return
+   
+   
+05/07 .. only somewhat related.. but noting here since this seemed great, and wasnt obvious to find.. 
+   - the following piece of code when executed in console, will start printing out ALL events.. can modify to filter a bit more on desired ones
+   
+      Object.keys(window).forEach(key => { if (/^on/.test(key)) { window.addEventListener(key.slice(2), event => { console.log(event); }); } });         
+      
+   - noting here that the value of that is for instance for the headache w the auxclick / middle-click 
+   - basically, when viewpane has more content that fits so as to make scrolling feasible, even when scrollbar is disabled, the OS seems to be extra-smart and give the multi-dir-scroll circle at mouse pointer instead of sending auxclick to the window .. meaning basically if relying on auxclick for middle-click handling for other stuff in app, wont work when content goes past window bottom.. real pain in the ass.. 
+   - oh well for the time being dealing with it by listening to mouseup and parsing for button but its still not great as its not really a click, and the pointer shape change done by the OS isnt exactly avoidable
+   
+
 05/01 .. quick recap before possibly letting this rest for a bit to catch up w other work
    - fundamentally its at a usable state! .. its smooth, def an improvement over vswitch, looks good, nice mouse/kbd support.. could live as is for a long while!
    
@@ -92,6 +135,11 @@ RUNNING NOTES DUMP ON POSSIBLE WORK ON THE SWITCHENATOR PROJECT :
       - so looks like, if we want to do so, either we figure out worker threads in node and try ipc back to main thread, or maybe even consider some c impl! goddamit
       - fk, looked like using worker_threads would work out nicely, even got a minimal sample working in pure node w the --experimental-worker flag, but that doesnt seem to work w electron, and trying to upgrade node to higher version than LTS to not have to use the flag makes all kinds of shit not work w node-gyp
       d-- hah, had to use npm 'cluster' package, but it now works!.. not even all that hacky.. just a thread set out in main that sets up a listener for the events and calls out to elec app w the new fgnd hwnd upon change.. nice! .. think might leave the direct sjs api code there too for this commit
+      
+      d- lol, there's always the follow-up long tail on things w promising starts.. so after the fgnd window change listener, it only makes sense to add something to listen to window close events.. even if that need be on separate thread/loop if otherwise have to filter through too many events
+      d- and if doing that, might as well do the same for title change events!
+      d- hmm, and at least for title change events, could really just do surgical updates to title span, and might actually be worthwhile to do so, as there could be quite frequent title changes for things like winamp, pages that make dynamic titles, chrome tab changes etc
+      x- and much later, if wanted to, could also do surgical removal for window close events, but that seems less worthwhile as that should be a rare event anyway
 
 
 04/25 + .. taking stock and immediate paths forward
