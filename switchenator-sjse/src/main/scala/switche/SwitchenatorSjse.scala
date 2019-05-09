@@ -13,7 +13,7 @@ object SwitchenatorSjse extends js.JSApp {
       
       SwitcheState.handleRefreshRequest() // fire up first call
       
-      // the fgnd window listener handles most change, but this is useful periodically to clean up on closed windows etc
+      // the fgnd/close/title change listeners should in theory cover everything, but might be useful to periodically clean up random things that might fall through
       js.timers.setInterval(30*1000) {SwitcheState.backgroundOnlyRefreshReq()}
       
    }

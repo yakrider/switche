@@ -108,7 +108,7 @@ object SwitcheFacePage {
    def mouseEnterHandler (e:MouseEvent) = {
       e.target.closest(".elemBox").foreach{e => handleMouseEnter(e.id,e.asInstanceOf[Div])}
    }
-   def capturePhaseKeyupHandler (e:KeyboardEvent) = { //printKeyDebugInfo(e,"down")
+   def capturePhaseKeyupHandler (e:KeyboardEvent) = { //printKeyDebugInfo(e,"up")
       if (e.key == "Escape") {handleEscapeKeyUp()} // escape can cause app hide, we dont want that to leak outside app, hence on keyup
    }
    def capturePhaseKeydownHandler (e:KeyboardEvent) = { //printKeyDebugInfo(e,"down")
@@ -132,7 +132,7 @@ object SwitcheFacePage {
          else if (e.key == "PageUp") {focusTopElem()}
          else if (e.key == "PageDown") {focusBottomElem()}
          else if (e.key == "Enter") {handleCurElemActivationReq()}
-         //else if (e.key == "Escape") {handleEscapeKeyDown()} // moved to keyup as dont want its keyup leaking outside app if we use it hide app
+         else if (e.key == "Escape") {/*handleEscapeKeyDown()*/} // moved to keyup as dont want its keyup leaking outside app if we use it hide app
          else if (e.key == "F5") {dom.window.location.reload()}
          else { activateSearchBox(); } //printKeyDebugInfo(e,"down") }
    } }
@@ -274,7 +274,7 @@ object SwitchePageState {
    def activateSearchBox () = { RibbonDisplay.searchBox.focus() }
    def exitSearchState() = { inSearchState = false; RibbonDisplay.searchBox.value = ""; ElemsDisplay.updateElemsDiv() }
    def handleSpaceKeyDown() = { if (inSearchState) {RibbonDisplay.searchBox.focus()} else {handleCurElemActivationReq()} }
-   def handleEscapeKeyUp() = { if (!inSearchState) {SwitcheState.handleSelfWindowHideReq()} }
+   def handleEscapeKeyUp() = { if (!inSearchState) {SwitcheState.handleSelfWindowHideReq()} else {exitSearchState()} }
    def handleSearchBoxKeyUp(e:KeyboardEvent) = {
       if (e.key == "Escape") {exitSearchState()}
       else { inSearchState = true; ElemsDisplay.updateElemsDiv() }

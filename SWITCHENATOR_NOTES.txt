@@ -2,6 +2,50 @@
 RUNNING NOTES DUMP ON POSSIBLE WORK ON THE SWITCHENATOR PROJECT :
 
 
+   --- temp stickies --- 
+
+
+05/08 .. ughh additional niggles   
+
+   -- the thing seems to be excluding a bunch of stuff that shouldnt be excluded..
+      - the first explorer startups titled 'This PC' etc.. should take a look, its getting annoying
+         - huh, although a wrinkle.. upon a reload, a 'This PC' tab started showing up.. so presumably was getting set to exclusion upon startup process?
+      - some native windows looking utilities, eg. ShellMenuView.. prob a bunch of others too
+      
+      d- even ProcessExplorer..
+         - huh, seems to be an interesting thing here too.. if reload while procexp window is open, it will show up (sans icon), and afterwards will pretty much never go away despite window close etc.. otoh, if reloaded once while its in tray, will never pick it up despite refreshes etc
+         - so basically looks like it too might get some exclusion set, and maybe partly its to do w som sort of show/hide thing w things that go into tray.. so maybe once it gets registered as inviz window, maybe it never gets waked back up
+         -- now nice part about it not showing up, prob could just add logic on fgnd listener to update that.. shouldnt even be all that costly really
+         d- for it staying up though, not sure, maybe have to listen to win hide events? ughh
+      
+      d- ughh, and minimized things, when unminimized from taskbar.. dont kick off a fgnd event to listen to!!
+         - i mean how shitty is that.. freaking gonna have to put some dumb show/hide listener for it
+         - goddamn, this is even worse.. looks like minimize/restore sends 0x8004 which is an identical z-order-change cmd.. wtf.. means will have to refresh when hear that, as cant even know if things are coming to foreground.. how could they not have sent a fkn fgnd event then??!!
+         - seriously though, maybe can just ignore these and see how it still pans out, maybe really dont care about ordering like this ya know.. its not like the minimized windows are off the list, its just the ordering that doesnt update until other activity.. oh well, could just let it be!
+         d- ok, looks like there's also 0x0016 and 0x0017 for minimize start/end... but even then doesnt feel worth the extra ev catching.. oh well
+      
+      d- at least for show/hide like for proc-exp, the 0x8002 and 0x8003 seem to fire reliably, so could use those, plus the 8002 for show also gives 0x003, the fgnd event, and we're already querying viz state on that, so we might not bother passing that event up, but the hide should be taken care of
+      d- and for hide, could just really treat it as obj destroyed and see how that works.. maybe there's more pain to come from doing that, but fk it we can see how it goes.. alternately, could try and do a refresh on 'hide' events if needed to avoid other pain
+         d- except freaking had to make an exclusion for self window as 'destroying' it on self hide report was making it not destroyable afterwards, as on coming back up, it would be excluded by our filter and not added back into list!.. goddamn, so stopped taking it out on hearing its own hide report ugh!
+            
+      
+   d- there also seems to be some shite going on where on maybe say eclipse restarts etc where the window title is lost etc, things get updated into the list w exclusion set to true, and they pretty much never seem to get updated back again, so the thing never appears on the list afterwards.. ughh
+      x- and not even refresh will fix it.. would have to do a reload to get those to show back again
+      x- could consider never settting things to excluded via updates if they have ever once been non-excluded
+      x- could also consider doing very periodic rebuilds.. say like once every hr or so, to get everything cleared up.. though feels very hacky
+      d- think these might have gotten fixed after doing more strict use of cache by requerying things like viz/title on listener triggers
+      
+   d- on top, note that for mostly the very same windows, the F1 key doesnt actually seem to work either.. it just opens up help shit
+      d- could consider overlaying that w ahk scripting to send something like our ^!{F1} key being used for global right-btn-scroll combos
+   
+   d- not really a big fan of not being able to scroll w/o having the pointer on the box
+      d- could consider setting up ahk so that when the window is in focus, we'd send the global hotkeys we use for right-mouse-scroll workaround rather than wheel events.. could be a nice usability addition
+      
+   - also worth noting that we dont have any closing/end mechanism currently.. when running in dev and closing window, app continues to complain in the background.. eventually could consider doing some exit combo and/or try icon etc
+   
+   - another niggle, partly noted way earlier, some apps like procexp etc continue to not get the right exe paths and therefore no icons either
+   
+
 
 05/07 .. note re right-click + wheel-scroll combo to bring up and use the app
    - so this is a weird place to put this note, but wanted to have use of that combo for one handed use, like we could do in old vswitch (before w10 made that start causing unrecoverable hangups).. but looked like there wasnt an easy way of setting such a hook, esp not w/o interfering w normal wheel/mouse operation

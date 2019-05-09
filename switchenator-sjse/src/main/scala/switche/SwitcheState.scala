@@ -16,17 +16,34 @@ object SwitcheState {
    var latestTriggeredCallId = 0; var cbCountForCallId = 0;
    var hMapCur = LinkedHashMap[Int,WinDatEntry]();
    var hMapPrior = LinkedHashMap[Int,WinDatEntry]();
-   var inGroupedMode = true;
-   var isDismissed = false; //var isAppForeground = true;
+   var inGroupedMode = true; var isDismissed = false;
    var curElemId = ""
    
-   def parseIntoExePathName (path:String) = ExePathName(path, path.split("""\\""").lastOption.getOrElse(""))
    def prepForNewEnumWindowsCall (callId:Int) = {
       latestTriggeredCallId = callId; cbCountForCallId = 0;
       hMapPrior = hMapCur; hMapCur = LinkedHashMap[Int,WinDatEntry]();
    }
-   //def okToRenderImages() = true //false //cbCountForCallId > 1000
-   def kickPostCbCleanup() = {cbCountForCallId += 1; val ccSnap = cbCountForCallId; js.timers.setTimeout(80){delayedTaskListCleanup(ccSnap)}}
+   def kickPostCbCleanup() = {
+      cbCountForCallId += 1; val ccSnap = cbCountForCallId;
+      js.timers.setTimeout(80) {delayedTaskListCleanup(ccSnap)}
+   }
+   def delayedTaskListCleanup (cbCountSnapshot:Int) = {
+      if (cbCountSnapshot == cbCountForCallId) { //println (s"delayed prior cache cleanup.. cbCount: $cbCountForCallId")
+         hMapPrior = hMapCur;
+   } }
+   def getExePathName(hwnd:Int) = {
+      val pid = WinapiLocal.getWindowThreadProcessId(hwnd)
+      val exePath = WinapiLocal.getProcessExeFromPid(pid)
+      Some (ExePathName(exePath, exePath.split("""\\""").lastOption.getOrElse("")))
+   }
+   def getUpdatedDat (dat:WinDatEntry, isListenedUpdate:Boolean=false) = {
+      val isVis = Some (WinapiLocal.checkWindowVisible(dat.hwnd)).map(_>0)
+      val winText = isVis.filter(identity).map(_ => WinapiLocal.getWindowText(dat.hwnd)).orElse(dat.winText)
+      val exePathName = winText.filterNot(_.isEmpty).map(_ => dat.exePathName).flatten.orElse(getExePathName(dat.hwnd))
+      val preExclDat = WinDatEntry (dat.hwnd, isVis, winText, exePathName, None)
+      val shouldExclFlag = Some ( ExclusionsManager.shouldExclude (preExclDat, if(isListenedUpdate){-1} else{latestTriggeredCallId}) )
+      preExclDat.copy (shouldExclude = shouldExclFlag)
+   }
    
    def cbStreamWinQueryCallback (hwnd:Int, callId:Int):Boolean = {
       if (callId > latestTriggeredCallId) {
@@ -35,90 +52,47 @@ object SwitcheState {
       }
       kickPostCbCleanup()
       if (callId == latestTriggeredCallId && !hMapCur.contains(hwnd)) {
-         val dat = hMapPrior .get(hwnd) .orElse (Some(WinDatEntry (hwnd))) .map { priorDat =>
-            // for isVis, if prior has data, use it, else queue query
-            val isVis = priorDat .isVis .orElse { setAsyncQVisCheck(20,hwnd); None }
-            // for winText, if prior has data, use it but queue query too, else query if isVis already true, else we'll handle in isVis cb
-            val winText = priorDat .winText .map {wt => setAsyncQWindowText(20,hwnd); wt }
-               .orElse { if (isVis.isDefined && true==isVis.get) {setAsyncQWindowText(20,hwnd)}; None }
-            // for exePath/ico, if not in cache, we'll query later only as needed, ditto for exclusion flag
-            WinDatEntry (hwnd, isVis, winText, priorDat.exePathName, priorDat.shouldExclude)
-         } .get
+         val dat = hMapPrior .get(hwnd) .orElse (Some(WinDatEntry (hwnd))) .map(getUpdatedDat(_)) .get
          hMapCur .put (hwnd, dat)
+         if (!dat.shouldExclude.getOrElse(false)) {
+            dat.exePathName.map(_.fullPath).foreach(IconsManager.processFoundIconPath)
+            RenderSpacer.queueSpacedRender()
+         }
       }
-      //ElemsDisplay.queueRender() // no point queueing render here as any worthwhile update will trigger queries and callbacks w new info
       return (callId <= latestTriggeredCallId) // cancel further callbacks on this callId if its no longer the latest call
    }
-   
    def handleWindowsFgndHwndReport (hwnd:Int):Unit = { //println(s"fgnd report: $hwnd")
-      if (hMapCur != hMapPrior) return; // if in middle of updating full report, can ignore indiv fgnd change updates
-      // do note that this will update all new/changed fgnd windows, but cant clear dead windows etc, so gotta keep refresh handy for those
-      val dat = hMapCur .get(hwnd) .orElse (Some(WinDatEntry (hwnd))) .map { curDat =>
-         val isVis = curDat .isVis .orElse { setAsyncQVisCheck(20,hwnd); None }
-         val winText = curDat .winText .map {wt => setAsyncQWindowText(20,hwnd); wt }
-            .orElse { if (isVis.isDefined && true==isVis.get) {setAsyncQWindowText(20,hwnd)}; None }
-         WinDatEntry (hwnd, isVis, winText, curDat.exePathName, curDat.shouldExclude)
-      } .get
-      if (!dat.shouldExclude.getOrElse(false)) { // just reducing work a little where its pointless
+      val dat = hMapCur .get(hwnd) .orElse (hMapPrior.get(hwnd)) .orElse (Some(WinDatEntry (hwnd))) .map(getUpdatedDat(_,true)) .get
+      if (!dat.shouldExclude.contains(true)) {
          val hMapUpdated = LinkedHashMap[Int, WinDatEntry]();
-         hMapUpdated.put(hwnd, dat);
-         hMapCur.filterKeys(_ != hwnd).foreach {case (k, v) => hMapUpdated.put(k, v)}
-         hMapCur = hMapUpdated; hMapPrior = hMapCur;
-         RenderSpacer.queueSpacedRender()
+         hMapUpdated.put(hwnd, dat); hMapCur.filterKeys(_ != hwnd).foreach {case (k, v) => hMapUpdated.put(k, v)}
+         if (hMapCur == hMapPrior) {hMapPrior = hMapUpdated} // only update prior map if not in middle of full query
+         hMapCur = hMapUpdated
+         dat.exePathName.map(_.fullPath).foreach(IconsManager.processFoundIconPath)
+         RenderSpacer.queueSpacedRender() // no point being more surgical, as for grouped stuff, everything would have to be reordered anyway
       }
    }
    def handleWindowsObjDestroyedReport (hwnd:Int):Unit = {
-      if (hMapCur != hMapPrior) return; // ignore if in middle of updating full report
-      if (hMapCur.contains(hwnd)) {
-         if (hMapCur.get(hwnd).map(_.shouldExclude.map(_.unary_!).getOrElse(false)).getOrElse(false)) {RenderSpacer.queueSpacedRender()}
-         hMapCur.remove(hwnd); hMapPrior.remove(hwnd)
-      }
+      // note that we've made reports of windows being hidden (go to tray etc) come here too
+      if (!hMapCur.contains(hwnd)) return;
+      if (ExclusionsManager.selfSelector(hMapCur(hwnd))) return;
+      // TODO: potentially could make more surgical to remove the entry.. but meh, its rare enough
+      if (!hMapCur(hwnd).shouldExclude.contains(true)) { RenderSpacer.queueSpacedRender() }
+      hMapCur.remove(hwnd); hMapPrior.remove(hwnd)
    }
    def handleWindowsTitleChangedReport (hwnd:Int):Unit = {
-      if (hMapCur != hMapPrior) return; // ignore if in middle of updating full report
-      if (hMapCur.get(hwnd).map(_.shouldExclude.map(_.unary_!).getOrElse(false)).getOrElse(false)) {
-         val winText = WinapiLocal.getWindowText(hwnd)
-         val dat = hMapCur.get(hwnd).get // has been prechecked to be there
-         if (!winText.isEmpty && dat.winText!=Some(winText)) {
-            val newDat = dat.copy(winText = Some(winText))
-            hMapCur.put (hwnd, newDat);
-            SwitchePageState.handleTitleUpdate (hwnd, newDat)
-      } }
-   }
-   
-   def setAsyncQVisCheck (t:Int, hwnd:Int) = js.timers.setTimeout(t) {cbProcVisCheck(hwnd, WinapiLocal.checkWindowVisible(hwnd))}
-   def setAsyncQWindowText (t:Int, hwnd:Int) = js.timers.setTimeout(t) {cbProcWindowText(hwnd, WinapiLocal.getWindowText(hwnd))}
-   def setAsyncQModuleFile (t:Int, hwnd:Int) = js.timers.setTimeout(t) {cbProcProcId(hwnd, WinapiLocal.getWindowThreadProcessId(hwnd))}
-   
-   def cbProcVisCheck (hwnd:Int, isVis:Int) = {
-      // update the map data, also if we're here then it was previously unknown, so if now its true, then queue query for winText
-      hMapCur .get(hwnd) .foreach { d =>
-         hMapCur .put (hwnd, d.copy(isVis = Some(isVis>0), shouldExclude = Some(isVis<=0).filter(identity)))
-         if (isVis>0) {setAsyncQWindowText(0,hwnd)}
-         //ElemsDisplay.queueRender() // no point ordering a render here as anything vis here always triggers a title query
-   } }
-   
-   def cbProcWindowText (hwnd:Int, winText:String) = {
-      // update the map data, also if its displayable title (non-empty), queue render, then if exePath is undefined, queue that query too
-      hMapCur .get(hwnd) .foreach {d =>
-         if (!winText.isEmpty) {
-            if (d.winText!=Some(winText)) { RenderSpacer.queueSpacedRender() }
-            if (hMapCur.get(hwnd).map(_.exePathName.isEmpty).getOrElse(true)) { setAsyncQModuleFile(20,hwnd) }
-         }
-         hMapCur .put (hwnd, d.copy(winText = Some(winText)))
-   } }
-   
-   def cbProcProcId (hwnd:Int, pid:Int) = {
-      val exePath = WinapiLocal.getProcessExeFromPid(pid)
-      hMapCur .get(hwnd) .foreach {d =>
-         val exePathName = Some(parseIntoExePathName(exePath))
-         val exeUpdatedEntry = d.copy(exePathName = exePathName)
-         val updatedShouldExclFlag = ExclusionsManager.shouldExclude(exeUpdatedEntry,latestTriggeredCallId)
-         hMapCur .put (hwnd, exeUpdatedEntry.copy(shouldExclude = Some(updatedShouldExclFlag)))
-         if (updatedShouldExclFlag!=true) {
-            exePathName.map(_.fullPath).foreach(IconsManager.processFoundIconPath)
-            RenderSpacer.queueSpacedRender()
-      } }
+      if (!hMapCur.contains(hwnd)) return;
+      val winText = WinapiLocal.getWindowText(hwnd)
+      val dat = hMapCur(hwnd)
+      var updatedDat = dat.copy(winText = Some(winText))
+      if ( !dat.isVis.contains(false) && dat.winText.map(_.isEmpty).getOrElse(true) && !winText.isEmpty ) {
+         // ^ if wasnt already non-viz, and if text was empty/undefined before but not now, recalc excl flag
+         updatedDat = updatedDat.copy(shouldExclude = Some(ExclusionsManager.shouldExclude(updatedDat)))
+      }
+      if (updatedDat!=dat) {
+         hMapCur.put(hwnd,updatedDat)
+         if (!updatedDat.shouldExclude.contains(true)) { SwitchePageState.handleTitleUpdate (hwnd,updatedDat) }
+      }
    }
    
    def cbFgndWindowChangeListener (hook:Int, event:Int, hwnd:Int, idObj:Long, idChild:Long, idThread:Int, evTime:Int ):Unit = {
@@ -132,20 +106,12 @@ object SwitcheState {
       // .. note that could use 'worker_threads', but elect doesnt seem to take the old node's experimental flag, nor did node-gyp play well w updated node.. oh well
    }
    
-   def delayedTaskListCleanup (cbCountSnapshot:Int) = {
-      if (cbCountSnapshot == cbCountForCallId) {
-         //println (s"triggering delayed cleanup of prior call cache.. cbCount for this call was $cbCountForCallId")
-         hMapPrior = hMapCur;
-      }
-   }
-   
    object RenderReadyListsManager {
       var (renderList, groupedRenderList) = calcRenderReadyLists()
       def calcRenderReadyLists() = {
          val hListComb = hMapCur.values.toSeq .++ ( hMapPrior.values.filterNot{d => hMapCur.contains(d.hwnd)}.toSeq )
          val renderList = hListComb .filterNot(e => ExclusionsManager.shouldExclude(e,latestTriggeredCallId))
          val groupedRenderList = renderList.zipWithIndex.groupBy(_._1.exePathName.map(_.fullPath)).values.map(l => l.map(_._1)->l.map(_._2).min).toSeq.sortBy(_._2).map(_._1)
-         //println((renderList.size, groupedRenderList.size))
          (renderList,groupedRenderList)
       }
       def updateRenderReadyLists() = {val t = calcRenderReadyLists(); renderList = t._1; groupedRenderList = t._2}
@@ -161,8 +127,8 @@ object SwitcheState {
       WinapiLocal.streamWindowsQuery (cbStreamWinQueryCallback _, latestTriggeredCallId)
    }
    def backgroundOnlyRefreshReq() = {
-      // the windows fgnd/close listeners should handle most change, but this is useful periodically for some clean sweeps?
-      //if (isDismissed) handleRefreshRequest()
+      // the windows event listeners should handle most change, but this is useful periodically for some clean sweeps?
+      if (isDismissed) handleRefreshRequest()
    }
    
    def handleWindowActivationReq(hwnd:Int):Unit = {
@@ -203,15 +169,15 @@ object SwitcheState {
    }
    
    def handleExclPrintReq() = {
-      //val nonVisEs = hMapCur.values.filter(!_.isVis.getOrElse(false))
-      //println (s"Printing non-vis entries (${nonVisEs.size}) :")
-      //nonVisEs.foreach(println)
+      val nonVisEs = hMapCur.values.filter(!_.isVis.getOrElse(false))
+      println (s"Printing non-vis entries (${nonVisEs.size}) :")
+      nonVisEs.foreach(println); println()
       val emptyTextEs = hMapCur.values.filter(e => e.isVis==Some(true) && e.winText==Some(""))
       println (s"isVis true empty title entries: (${emptyTextEs.size}) :")
-      //emptyTextEs.foreach (e => println(e.toString))
-      println(); println (s"Printing full data incl excl flags for titled Vis entries:")
-      hMapCur.values.filter(e => e.isVis.filter(identity).isDefined && e.winText.filterNot(_.isEmpty).isDefined).foreach(println)
-      println(); IconsManager.printIconCaches()
+      emptyTextEs.foreach (e => println(e.toString)); println();
+      println (s"Printing full data incl excl flags for titled Vis entries:")
+      hMapCur.values.filter(e => e.isVis.filter(identity).isDefined && e.winText.filterNot(_.isEmpty).isDefined).foreach(println); println();
+      //IconsManager.printIconCaches(); println()
    }
    
    def handleGroupModeToggleReq() = { inGroupedMode = !inGroupedMode; SwitcheFacePage.render() }
@@ -221,11 +187,7 @@ object SwitcheState {
       if (isDismissed) { isDismissed=false; SwitchePageState.resetFocus(); }
       else { SwitchePageState.focusNextElem() }
    }
-   def handleElectronHotkeyGlobalScrollDownCall() = {
-      SwitchePageState.triggerHoverLockTimeout()
-      if (isDismissed) { isDismissed=false; SwitchePageState.focusTopElem() }
-      else { SwitchePageState.focusNextElem() }
-   }
+   def handleElectronHotkeyGlobalScrollDownCall() = { handleElectronHotkeyCall }
    def handleElectronHotkeyGlobalScrollUpCall() = {
       SwitchePageState.triggerHoverLockTimeout()
       if (isDismissed) { isDismissed=false; SwitchePageState.focusBottomElem() }

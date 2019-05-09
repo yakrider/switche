@@ -45,17 +45,18 @@ object ExclusionsManager {
       var curCallId = -1; var alreadySeen = false;
       def exclWinampDup (e:WinDatEntry, callId:Int): Boolean = { //println("winamp checked!")
          var shouldExclude = false
+         if (callId < 0) {return false} // exclusions for listener based updates
          if (curCallId != callId) { curCallId = callId; alreadySeen = false } // reset upon new callId
          if (e.exePathName.map(_.name).map(_=="winamp.exe").getOrElse(false)) { shouldExclude = alreadySeen; alreadySeen = true } // update if see winamp
          shouldExclude
       }
    }
-   def shouldExclude (e:WinDatEntry, callId:Int) = {
+   def shouldExclude (e:WinDatEntry, callId:Int = -1) = {
       // if value already calculated, use that, else check other excluders in a short-circuiting manner
       e.shouldExclude.getOrElse ( RulesExcluder.shouldExclude(e) || WinampDupExcluder.exclWinampDup(e,callId) )
    }
-   def selfSelector (e:WinDatEntry) = {
-      e.winText.map(_=="Sjs-Electron-Local-JS-Test").getOrElse(false) && e.exePathName.map(_.name=="electron.exe").getOrElse(false)
+   def selfSelector (e:WinDatEntry):Boolean = {
+      e.exePathName.map(_.name).contains("electron.exe") && e.winText.contains("Sjs-Electron-Local-JS-Test")
    }
    
 }

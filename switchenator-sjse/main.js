@@ -14,22 +14,34 @@ if (!cluster.isMaster) {
    })
    //WINEVENTPROC void Wineventproc( HWINEVENTHOOK hWinEventHook, DWORD event, HWND hwnd, LONG idObject, LONG idChild, DWORD idEventThread, DWORD dwmsEventTime )
    const pfnWinEventProc_fgnd = ffi.Callback("void", ["pointer", "int", 'pointer', "long", "long", "int", "int"],
-      function (hWinEventHook, event, hwnd, idObject, idChild, idEventThread, dwmsEventTime) { process.send(ref.address(hwnd)) }
+      function (hWinEventHook, event, hwnd, idObject, idChild, idEventThread, dwmsEventTime) { 
+        if (idObject===0) {
+           if (event===0x0003) {
+              process.send({type:'Fgnd', hwnd:ref.address(hwnd)});
+           } else if (event===0x0017) {
+              process.send({type:'MinimizeEnd', hwnd:ref.address(hwnd)});
+           }
+        }        
+      }
    )
    const pfnWinEventProc_objKill = ffi.Callback("void", ["pointer", "int", 'pointer', "long", "long", "int", "int"],
       function (hWinEventHook, event, hwnd, idObject, idChild, idEventThread, dwmsEventTime) {
         // obj-id 0x0000 is for window.. others can be for parts of it like caret etc, 0x8001 is obj-destroyed event, 0x800C is obj-name-changed
-        if (event===0x8001 & idObject===0) {
-            process.send({type:'ObjDestroyed', hwnd:ref.address(hwnd)});
-        } else if (event===0x800C && idObject===0) {
-            process.send({type:'TitleChanged', hwnd:ref.address(hwnd)});
+        if (idObject===0) {
+           if (event===0x8001) {
+              process.send({type:'ObjDestroyed', hwnd:ref.address(hwnd)});
+           } else if (event===0x8003) {
+              process.send({type:'ObjHidden', hwnd:ref.address(hwnd)});
+           } else if (event===0x800C) {
+              process.send({type:'TitleChanged', hwnd:ref.address(hwnd)});
+           }
         }
       }
    )
-   if (process.env.task=='foreground-window') { //console.log('foreground-window worker reporting!..')
-      user32.SetWinEventHook(3, 3, null, pfnWinEventProc_fgnd, 0, 0, 0 )
-   } else if (process.env.task=='object-destroyed') { //console.log('obj-destroyed worker reporting!..')
-      user32.SetWinEventHook(0x8001, 0x800C, null, pfnWinEventProc_objKill, 0, 0, 0 )
+   if (process.env.task=='sys-events') {
+      user32.SetWinEventHook (0x0003, 0x0017, null, pfnWinEventProc_fgnd, 0, 0, 0 )
+   } else if (process.env.task=='obj-events') {
+      user32.SetWinEventHook (0x8001, 0x800C, null, pfnWinEventProc_objKill, 0, 0, 0 )
    }
    // winapi requires the thread to be waiting on getMessage to get win-event-hook callbacks!
    function getMessage() { return user32.GetMessageA (ref.alloc(ref.refType(ref.types.void)), null, 0, 0) }
@@ -37,8 +49,8 @@ if (!cluster.isMaster) {
 }
 // since worker above will be on a forever loop, the code below doesnt need to be on an 'else' block
 
-var foregroundWindowWorker = cluster.fork ({task:'foreground-window'})
-var objDestroyedWorker = cluster.fork ({task:'object-destroyed'})
+var sysEventsWorker = cluster.fork ({task:'sys-events'})
+var objEventsWorker = cluster.fork ({task:'obj-events'})
 
 //worker.on('message', function(msg) {console.log('got msg from worker: ', msg)})
 
@@ -185,10 +197,14 @@ app.on('activate', function () {
 
 // setup to send window activation calls from worker thread setup above to webapp
 //worker.on('message', function(msg) {console.log('got msg from worker: ', msg)})
-foregroundWindowWorker.on('message', function(hwnd) { mainWindow.webContents.executeJavaScript(`window.handleWindowsFgndHwndReport(${hwnd})`) })
+sysEventsWorker.on('message', function(msg) {
+   if (msg.type=='Fgnd' || msg.type=='MinimizeEnd') {
+      mainWindow.webContents.executeJavaScript(`window.handleWindowsFgndHwndReport(${msg.hwnd})`)
+   }
+})
 //objDestroyedWorker.on('message', function(hwnd) { mainWindow.webContents.executeJavaScript(`window.handleWindowsObjDestroyedReport(${hwnd})`) })
-objDestroyedWorker.on('message', function(msg) {
-   if (msg.type=='ObjDestroyed') {
+objEventsWorker.on('message', function(msg) {
+   if (msg.type=='ObjDestroyed' || msg.type=='ObjHidden') {
       mainWindow.webContents.executeJavaScript(`window.handleWindowsObjDestroyedReport(${msg.hwnd})`) 
    } else if (msg.type=='TitleChanged') {
       mainWindow.webContents.executeJavaScript(`window.handleWindowsTitleChangedReport(${msg.hwnd})`) 
