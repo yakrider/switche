@@ -1,6 +1,7 @@
 package switche
 
-import scala.collection.mutable.{HashMap,LinkedHashMap}
+import scala.collection.mutable
+import scala.collection.mutable.{HashMap, LinkedHashMap}
 import scala.scalajs.js
 
 
@@ -107,14 +108,25 @@ object SwitcheState {
    }
    
    object RenderReadyListsManager {
-      var (renderList, groupedRenderList) = calcRenderReadyLists()
-      def calcRenderReadyLists() = {
-         val hListComb = hMapCur.values.toSeq .++ ( hMapPrior.values.filterNot{d => hMapCur.contains(d.hwnd)}.toSeq )
-         val renderList = hListComb .filterNot(e => ExclusionsManager.shouldExclude(e,latestTriggeredCallId))
-         //val groupedRenderList = renderList.zipWithIndex.groupBy(_._1.exePathName.map(_.fullPath)).values
-         //    .map(l => l.map(_._1)->l.map(_._2).min).toSeq.sortBy(_._2).map(_._1)
-         // this ^ bunches groups while keeping ordering of highest in list member, but causes groups to move around, so just doing a simpler one below
-         val groupedRenderList = renderList.groupBy(_.exePathName.map(_.fullPath)).toSeq.sortBy(_._1).map(_._2)
+      case class GroupSortingEntry (seenCount:Int, meanPercIdx:Double)
+      val grpSortingMap = mutable.HashMap[String,GroupSortingEntry]()
+      var (renderList:Seq[WinDatEntry], groupedRenderList:Seq[Seq[WinDatEntry]]) = calcRenderReadyLists()
+
+      def registerEntry (exePath:String, idx:Int, listSize:Int) = {
+         val percIdx = idx.toDouble./(listSize)
+         grpSortingMap.get(exePath).orElse(Some(GroupSortingEntry(0,0.0))) .foreach { case(ge) =>
+            grpSortingMap.put (exePath, GroupSortingEntry (ge.seenCount+1, ge.meanPercIdx.*(ge.seenCount).+(percIdx)./(ge.seenCount+1)) )
+      } }
+      private def calcRenderReadyLists() = {
+         val renderList = hMapCur.values.toSeq .++ ( hMapPrior.values.filterNot{d => hMapCur.contains(d.hwnd)}.toSeq )
+            .filterNot(e => ExclusionsManager.shouldExclude(e,latestTriggeredCallId))
+         // v1: this bunches groups while keeping ordering of highest in list member, but causes groups to move around
+         //val groupedRenderList = renderList.zipWithIndex.groupBy(_._1.exePathName.map(_.fullPath)).values .map(l => l.map(_._1)->l.map(_._2).min).toSeq.sortBy(_._2).map(_._1)
+         // v2: this orders by exePath only, but at least wont cause groups jumping around all the time
+         //val groupedRenderList = renderList.groupBy(_.exePathName.map(_.fullPath)).toSeq.sortBy(_._1).map(_._2)
+         // v3: this will build a pretty stable but responsive ordering for groups by tracking recents index percentile averages
+         renderList .zipWithIndex .foreach { case(d,i) => d.exePathName.map(_.fullPath).foreach {p => registerEntry(p,i,renderList.size)} }
+         val groupedRenderList = renderList.groupBy(_.exePathName.map(_.fullPath)).toSeq .sortBy{case(po,l) => (po.map(grpSortingMap.get).flatten.map(_.meanPercIdx), po)}.map(_._2)
          (renderList,groupedRenderList)
       }
       def updateRenderReadyLists() = {val t = calcRenderReadyLists(); renderList = t._1; groupedRenderList = t._2}
@@ -172,15 +184,17 @@ object SwitcheState {
    }
    
    def handleExclPrintReq() = {
-      val nonVisEs = hMapCur.values.filter(!_.isVis.getOrElse(false))
-      println (s"Printing non-vis entries (${nonVisEs.size}) :")
-      nonVisEs.foreach(println); println()
-      val emptyTextEs = hMapCur.values.filter(e => e.isVis==Some(true) && e.winText==Some(""))
-      println (s"isVis true empty title entries: (${emptyTextEs.size}) :")
-      emptyTextEs.foreach (e => println(e.toString)); println();
+      //val nonVisEs = hMapCur.values.filter(!_.isVis.getOrElse(false))
+      //println (s"Printing non-vis entries (${nonVisEs.size}) :")
+      //nonVisEs.foreach(println); println()
+      //val emptyTextEs = hMapCur.values.filter(e => e.isVis==Some(true) && e.winText==Some(""))
+      //println (s"isVis true empty title entries: (${emptyTextEs.size}) :")
+      //emptyTextEs.foreach (e => println(e.toString)); println();
       println (s"Printing full data incl excl flags for titled Vis entries:")
       hMapCur.values.filter(e => e.isVis.filter(identity).isDefined && e.winText.filterNot(_.isEmpty).isDefined).foreach(println); println();
       //IconsManager.printIconCaches(); println()
+      println (s"Printing Group Sorting Entries:")
+      RenderReadyListsManager.grpSortingMap.toSeq.sortBy(_._2.meanPercIdx).foreach(println); println();
    }
    
    def handleGroupModeToggleReq() = { inGroupedMode = !inGroupedMode; SwitcheFacePage.render() }
