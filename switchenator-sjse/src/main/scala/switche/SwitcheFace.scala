@@ -129,6 +129,8 @@ object SwitcheFacePage {
          else if (e.key == "Tab") { e.stopPropagation(); e.preventDefault();  focusNextElem() }
          else if (e.key == "ArrowDown") {focusNextElem()}
          else if (e.key == "ArrowUp") {focusPrevElem()}
+         else if (e.key == "ArrowRight") {focusNextGroup()}
+         else if (e.key == "ArrowLeft") {focusPrevGroup()}
          else if (e.key == "PageUp") {focusTopElem()}
          else if (e.key == "PageDown") {focusBottomElem()}
          else if (e.key == "Enter") {handleCurElemActivationReq()}
@@ -142,13 +144,14 @@ object SwitcheFacePage {
 object SwitchePageState {
    import SwitcheFaceConfig._
    // doing recents and grouped elems separately as they literally are different divs (w/ diff styles etc)
-   case class OrderedElemsEntry (y:Int, elem:Div)
+   case class OrderedElemsEntry (y:Int, elem:Div, yg:Int=(-1))
    var recentsElemsMap: mutable.LinkedHashMap[String,OrderedElemsEntry] = _
    var groupedElemsMap: mutable.LinkedHashMap[String,OrderedElemsEntry] = _
    var searchElemsMap: mutable.LinkedHashMap[String,OrderedElemsEntry] = _
    var recentsIdsVec: Vector[String] = _
    var groupedIdsVec: Vector[String] = _
    var searchIdsVec: Vector[String] = _
+   var groupsHeadsIdsVec: mutable.ArrayBuffer[String] = _
    var curFocusId:String = ""; //var curFocusVecIdx:Int = _; // the idx is to be able to check after we rebuild if we can maintain id?
    var isHoverLocked:Boolean = false; var lastActionStamp:Double = 0 //js .Date.now()
    var inSearchState:Boolean = false;
@@ -189,6 +192,34 @@ object SwitchePageState {
          } else {
             if (!isGrpd) { recentsIdsVec .lift(idx-1) .map(focusElemIdRecents)  .orElse (groupedIdsVec.lastOption.map(focusElemIdGrouped)) }
             else { groupedIdsVec .lift(idx-1) .map(focusElemIdGrouped) .orElse (recentsIdsVec.lastOption.map(focusElemIdRecents)) }
+         }
+   } }
+   def focusNextGroup() = {
+      groupedElemsMap .get(curFocusId) .map(e => (true,e)) .orElse {
+         recentsElemsMap.get(curFocusId).map(e => (false,e))
+      } .orElse { searchElemsMap.get(curFocusId).map(e => (false,e))
+      } .foreach {case (isGrpd, e) =>
+         if (SwitchePageState.inSearchState) {
+            searchIdsVec .lift(e.y+1) .orElse (searchIdsVec.headOption) .map(focusElemIdSearch)
+         } else if (!SwitcheState.inGroupedMode) {
+            recentsIdsVec .lift(e.y+1) .orElse (recentsIdsVec.headOption) .map(focusElemIdRecents)
+         } else { // i.e. in grp mode
+            if (!isGrpd) { groupedIdsVec.headOption.map(focusElemIdGrouped) }
+            else { groupsHeadsIdsVec .lift(e.yg+1) .map(focusElemIdGrouped) .orElse (recentsIdsVec.headOption.map(focusElemIdRecents)) }
+         }
+   } }
+   def focusPrevGroup() = {
+      groupedElemsMap .get(curFocusId) .map(e => (true,e)) .orElse {
+         recentsElemsMap.get(curFocusId).map(e => (false,e))
+      } .orElse { searchElemsMap.get(curFocusId).map(e => (true,e))
+      } .foreach { case (isGrpd, e) =>
+         if (SwitchePageState.inSearchState) {
+            searchIdsVec .lift(e.y-1) .orElse (searchIdsVec.lastOption) .map(focusElemIdSearch)
+         } else if (!SwitcheState.inGroupedMode) {
+            recentsIdsVec .lift(e.y-1) .orElse (recentsIdsVec.lastOption) .map(focusElemIdRecents)
+         } else { // i.e. in grp mode
+            if (!isGrpd) { groupsHeadsIdsVec.lastOption.map(focusElemIdGrouped) }
+            else { groupsHeadsIdsVec .lift(e.yg-1) .map(focusElemIdGrouped) .orElse (recentsIdsVec.headOption.map(focusElemIdRecents)) }
          }
    } }
    def focusTopElem() = {
@@ -239,10 +270,15 @@ object SwitchePageState {
    def rebuildGroupedElems() = {
       rebuildRecentsElems() // for the topfreqs portion
       groupedElemsMap = mutable.LinkedHashMap()
-      def getIdElem(d:WinDatEntry, isExeDim:Boolean) = {val id = getElemId(d.hwnd,true); (id,makeElemBox(id,d,isExeDim))}
-      SwitcheState.getGroupedRenderList .map { ll =>
-         Seq ( ll.take(1).map(d => getIdElem(d,false)), ll.tail.map(d => getIdElem(d,true)) ).flatten
-      }.flatten .zipWithIndex .foreach {case ((id,e),i) => groupedElemsMap.put (id, OrderedElemsEntry(i,e)) }
+      groupsHeadsIdsVec = mutable.ArrayBuffer()
+      case class PartOrderedElem (id:String, d:Div, grpIdx:Int)
+      def getIdElemH(d:WinDatEntry,isExeDim:Boolean,grpIdx:Int) = {
+         val id = getElemId(d.hwnd,true); PartOrderedElem (id, makeElemBox(id,d,isExeDim), grpIdx)
+      }
+      SwitcheState.getGroupedRenderList .zipWithIndex .map {case (ll,gi) =>
+         Seq ( ll.take(1).map(d => getIdElemH(d,false,gi)), ll.tail.map(d => getIdElemH(d,true,gi)) ).flatten
+      } .map { ll => ll.headOption.map(_.id).foreach(groupsHeadsIdsVec.+=(_)); ll } .flatten .zipWithIndex
+      .foreach {case (e,i) => groupedElemsMap.put (e.id, OrderedElemsEntry(i,e.d,e.grpIdx)) }
       groupedIdsVec = groupedElemsMap.keys.toVector
    }
    def rebuildSearchElems() : Unit = {

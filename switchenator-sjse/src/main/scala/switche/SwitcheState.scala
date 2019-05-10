@@ -111,7 +111,10 @@ object SwitcheState {
       def calcRenderReadyLists() = {
          val hListComb = hMapCur.values.toSeq .++ ( hMapPrior.values.filterNot{d => hMapCur.contains(d.hwnd)}.toSeq )
          val renderList = hListComb .filterNot(e => ExclusionsManager.shouldExclude(e,latestTriggeredCallId))
-         val groupedRenderList = renderList.zipWithIndex.groupBy(_._1.exePathName.map(_.fullPath)).values.map(l => l.map(_._1)->l.map(_._2).min).toSeq.sortBy(_._2).map(_._1)
+         //val groupedRenderList = renderList.zipWithIndex.groupBy(_._1.exePathName.map(_.fullPath)).values
+         //    .map(l => l.map(_._1)->l.map(_._2).min).toSeq.sortBy(_._2).map(_._1)
+         // this ^ bunches groups while keeping ordering of highest in list member, but causes groups to move around, so just doing a simpler one below
+         val groupedRenderList = renderList.groupBy(_.exePathName.map(_.fullPath)).toSeq.sortBy(_._1).map(_._2)
          (renderList,groupedRenderList)
       }
       def updateRenderReadyLists() = {val t = calcRenderReadyLists(); renderList = t._1; groupedRenderList = t._2}
