@@ -8,9 +8,13 @@ RUNNING NOTES DUMP ON POSSIBLE WORK ON THE SWITCHENATOR PROJECT :
 05/08 .. ughh additional niggles   
 
    -- the thing seems to be excluding a bunch of stuff that shouldnt be excluded..
-      - the first explorer startups titled 'This PC' etc.. should take a look, its getting annoying
+      d- the first explorer startups titled 'This PC' etc.. should take a look, its getting annoying
          - huh, although a wrinkle.. upon a reload, a 'This PC' tab started showing up.. so presumably was getting set to exclusion upon startup process?
-      - some native windows looking utilities, eg. ShellMenuView.. prob a bunch of others too
+         d- also, after the updates w title etc listeners, it shows up on refresh too, just not w/o a refresh.. interesting indeed
+            d- presumably means when it starts up, it is inVis or w empty title etc, but somehow we're not catching when it comes back to normalcy
+            d- yeah that was it, starting to listen/treat 'show' events as fgnd events fixes, that though saw an occasional phantom window, hopefully wont be common
+      d- some native windows looking utilities, eg. ShellMenuView.. prob a bunch of others too
+         d- and the above fix for 'show' events makes these start showing too, though these still arent closable from there.. oh well
       
       d- even ProcessExplorer..
          - huh, seems to be an interesting thing here too.. if reload while procexp window is open, it will show up (sans icon), and afterwards will pretty much never go away despite window close etc.. otoh, if reloaded once while its in tray, will never pick it up despite refreshes etc
@@ -44,7 +48,8 @@ RUNNING NOTES DUMP ON POSSIBLE WORK ON THE SWITCHENATOR PROJECT :
    - also worth noting that we dont have any closing/end mechanism currently.. when running in dev and closing window, app continues to complain in the background.. eventually could consider doing some exit combo and/or try icon etc
    
    - another niggle, partly noted way earlier, some apps like procexp etc continue to not get the right exe paths and therefore no icons either
-   
+      - well, tried out w QueryFullProcessImageNameA for getting proc name, and that works too, and gives back paths like C:\ etc instead of \Device\ etc, so that can be used to simplify the code a bit for IconExtractor
+      - but looks like the reason things like procexp werent getting paths was because getting proc handle from pid fails upstream of exe path query!
 
 
 05/07 .. note re right-click + wheel-scroll combo to bring up and use the app

@@ -30,6 +30,8 @@ if (!cluster.isMaster) {
         if (idObject===0) {
            if (event===0x8001) {
               process.send({type:'ObjDestroyed', hwnd:ref.address(hwnd)});
+           } else if (event===0x8002) {
+              process.send({type:'ObjShown', hwnd:ref.address(hwnd)});
            } else if (event===0x8003) {
               process.send({type:'ObjHidden', hwnd:ref.address(hwnd)});
            } else if (event===0x800C) {
@@ -206,6 +208,8 @@ sysEventsWorker.on('message', function(msg) {
 objEventsWorker.on('message', function(msg) {
    if (msg.type=='ObjDestroyed' || msg.type=='ObjHidden') {
       mainWindow.webContents.executeJavaScript(`window.handleWindowsObjDestroyedReport(${msg.hwnd})`) 
+   } else if (msg.type=='ObjShown') {
+      mainWindow.webContents.executeJavaScript(`window.handleWindowsObjShownReport(${msg.hwnd})`)
    } else if (msg.type=='TitleChanged') {
       mainWindow.webContents.executeJavaScript(`window.handleWindowsTitleChangedReport(${msg.hwnd})`) 
    }

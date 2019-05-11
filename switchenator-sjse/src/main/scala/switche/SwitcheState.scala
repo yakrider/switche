@@ -8,7 +8,7 @@ import scala.scalajs.js
 case class ExePathName (fullPath:String, name:String)
 case class WinDatEntry (
    hwnd:Int, isVis:Option[Boolean]=None, winText:Option[String]=None,
-   exePathName:Option[ExePathName]=None, shouldExclude:Option[Boolean]=None
+   exePathName:Option[ExePathName]=None, shouldExclude:Option[Boolean]=None, everFgnd:Option[Boolean]=None
 )
 
 
@@ -40,7 +40,7 @@ object SwitcheState {
    def getUpdatedDat (dat:WinDatEntry, isListenedUpdate:Boolean=false) = {
       val isVis = Some (WinapiLocal.checkWindowVisible(dat.hwnd)).map(_>0)
       val winText = isVis.filter(identity).map(_ => WinapiLocal.getWindowText(dat.hwnd)).orElse(dat.winText)
-      val exePathName = winText.filterNot(_.isEmpty).map(_ => dat.exePathName).flatten.orElse(getExePathName(dat.hwnd))
+      val exePathName = winText.filterNot(_.isEmpty).map(_ => dat.exePathName.orElse(getExePathName(dat.hwnd))).flatten
       val preExclDat = WinDatEntry (dat.hwnd, isVis, winText, exePathName, None)
       val shouldExclFlag = Some ( ExclusionsManager.shouldExclude (preExclDat, if(isListenedUpdate){-1} else{latestTriggeredCallId}) )
       preExclDat.copy (shouldExclude = shouldExclFlag)
@@ -63,35 +63,41 @@ object SwitcheState {
       return (callId <= latestTriggeredCallId) // cancel further callbacks on this callId if its no longer the latest call
    }
    def handleWindowsFgndHwndReport (hwnd:Int):Unit = { //println(s"fgnd report: $hwnd")
-      val dat = hMapCur .get(hwnd) .orElse (hMapPrior.get(hwnd)) .orElse (Some(WinDatEntry (hwnd))) .map(getUpdatedDat(_,true)) .get
+      val dat = hMapCur .get(hwnd) .orElse (hMapPrior.get(hwnd)) .orElse (Some(WinDatEntry (hwnd))) .map(getUpdatedDat(_,true)) .get .copy(everFgnd = Some(true))
+      val hMapUpdated = LinkedHashMap[Int, WinDatEntry]();
+      hMapUpdated.put(hwnd, dat); hMapCur.filterKeys(_ != hwnd).foreach {case (k, v) => hMapUpdated.put(k, v)}
+      // if not in middle of query, can resync priorMap, else can just add it there and either it will update in place or append, nbd
+      if (hMapCur == hMapPrior) {hMapPrior = hMapUpdated} else {hMapPrior.put(hwnd,dat)}
+      hMapCur = hMapUpdated
       if (!dat.shouldExclude.contains(true)) {
-         val hMapUpdated = LinkedHashMap[Int, WinDatEntry]();
-         hMapUpdated.put(hwnd, dat); hMapCur.filterKeys(_ != hwnd).foreach {case (k, v) => hMapUpdated.put(k, v)}
-         if (hMapCur == hMapPrior) {hMapPrior = hMapUpdated} // only update prior map if not in middle of full query
-         hMapCur = hMapUpdated
          dat.exePathName.map(_.fullPath).foreach(IconsManager.processFoundIconPath)
-         RenderSpacer.queueSpacedRender() // no point being more surgical, as for grouped stuff, everything would have to be reordered anyway
+         RenderSpacer.queueSpacedRender() // no point being more surgical, as for grouped stuff, everything might have to be reordered anyway
+      }
+   }
+   def handleWindowsObjShownReport (hwnd:Int):Unit = { //println(s"fgnd report: $hwnd")
+      if ( !hMapCur.contains(hwnd) || hMapCur(hwnd).isVis.contains(true) || !hMapCur(hwnd).everFgnd.contains(true) ) return;
+      var dat = getUpdatedDat(hMapCur(hwnd),true)
+      hMapCur.put(hwnd,dat); hMapPrior.put(hwnd,dat)
+      if (!dat.shouldExclude.contains(true)) {
+         dat.exePathName.map(_.fullPath).foreach(IconsManager.processFoundIconPath)
+         RenderSpacer.queueSpacedRender() // no point being more surgical, as for grouped stuff, everything might have to be reordered anyway
       }
    }
    def handleWindowsObjDestroyedReport (hwnd:Int):Unit = {
       // note that we've made reports of windows being hidden (go to tray etc) come here too
-      if (!hMapCur.contains(hwnd)) return;
+      if (!hMapCur.contains(hwnd) || !hMapCur(hwnd).isVis.contains(true)) return;
       if (ExclusionsManager.selfSelector(hMapCur(hwnd))) return;
-      // TODO: potentially could make more surgical to remove the entry.. but meh, its rare enough
       if (!hMapCur(hwnd).shouldExclude.contains(true)) { RenderSpacer.queueSpacedRender() }
       hMapCur.remove(hwnd); hMapPrior.remove(hwnd)
    }
    def handleWindowsTitleChangedReport (hwnd:Int):Unit = {
-      if (!hMapCur.contains(hwnd)) return;
+      if (!hMapCur.contains(hwnd) || !hMapCur(hwnd).isVis.contains(true)) return;
       val winText = WinapiLocal.getWindowText(hwnd)
       val dat = hMapCur(hwnd)
       var updatedDat = dat.copy(winText = Some(winText))
-      if ( !dat.isVis.contains(false) && dat.winText.map(_.isEmpty).getOrElse(true) && !winText.isEmpty ) {
-         // ^ if wasnt already non-viz, and if text was empty/undefined before but not now, recalc excl flag
-         updatedDat = updatedDat.copy(shouldExclude = Some(ExclusionsManager.shouldExclude(updatedDat)))
-      }
+      updatedDat = updatedDat.copy(shouldExclude = Some(ExclusionsManager.shouldExclude(updatedDat)))
       if (updatedDat!=dat) {
-         hMapCur.put(hwnd,updatedDat)
+         hMapCur.put(hwnd,updatedDat); hMapPrior.put(hwnd,updatedDat)
          if (!updatedDat.shouldExclude.contains(true)) { SwitchePageState.handleTitleUpdate (hwnd,updatedDat) }
       }
    }
@@ -184,12 +190,12 @@ object SwitcheState {
    }
    
    def handleExclPrintReq() = {
-      //val nonVisEs = hMapCur.values.filter(!_.isVis.getOrElse(false))
-      //println (s"Printing non-vis entries (${nonVisEs.size}) :")
-      //nonVisEs.foreach(println); println()
-      //val emptyTextEs = hMapCur.values.filter(e => e.isVis==Some(true) && e.winText==Some(""))
-      //println (s"isVis true empty title entries: (${emptyTextEs.size}) :")
-      //emptyTextEs.foreach (e => println(e.toString)); println();
+      val nonVisEs = hMapCur.values.filter(!_.isVis.getOrElse(false))
+      println (s"Printing non-vis entries (${nonVisEs.size}) :")
+      nonVisEs.foreach(println); println()
+      val emptyTextEs = hMapCur.values.filter(e => e.isVis==Some(true) && e.winText==Some(""))
+      println (s"isVis true empty title entries: (${emptyTextEs.size}) :")
+      emptyTextEs.foreach (e => println(e.toString)); println();
       println (s"Printing full data incl excl flags for titled Vis entries:")
       hMapCur.values.filter(e => e.isVis.filter(identity).isDefined && e.winText.filterNot(_.isEmpty).isDefined).foreach(println); println();
       //IconsManager.printIconCaches(); println()
@@ -230,6 +236,7 @@ object SwitcheState {
       //WinapiLocal.hookFgndWindowChangeListener (cbFgndWindowChangeListener _)
       js.Dynamic.global.updateDynamic("handleWindowsFgndHwndReport")(SwitcheState.handleWindowsFgndHwndReport _)
       js.Dynamic.global.updateDynamic("handleWindowsObjDestroyedReport")(SwitcheState.handleWindowsObjDestroyedReport _)
+      js.Dynamic.global.updateDynamic("handleWindowsObjShownReport")(SwitcheState.handleWindowsObjShownReport _)
       js.Dynamic.global.updateDynamic("handleWindowsTitleChangedReport")(SwitcheState.handleWindowsTitleChangedReport _)
    }
    init()

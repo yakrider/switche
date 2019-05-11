@@ -60,7 +60,7 @@ if (cluster.isMaster) {
         function (hWinEventHook, event, hwnd, idObject, idChild, idEventThread, dwmsEventTime) {
             //console.log('destroy hook :: event:',event,' hwnd:',ref.address(hwnd),' id:',idObject,' idChild:',idChild);
             if (idObject===0) { // only track at window level
-                //console.log('destroy hook :: event:',event.toString(16),' hwnd:',ref.address(hwnd),' id:',idObject,' idChild:',idChild);
+                //console.log('x0800? hook :: event:',event.toString(16),' hwnd:',ref.address(hwnd),' id:',idObject,' idChild:',idChild);
                 if (event===0x8001) {
                 process.send({type:'kill', hwnd:ref.address(hwnd)});
                 } else if (event===0x8002) {
