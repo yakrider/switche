@@ -11,6 +11,7 @@ var ffi = require('ffi')
 var refStruct = require('ref-struct')
 
 var voidPtr = ref.refType(ref.types.void);
+var intPtr = ref.refType(ref.types.int);
 var stringPtr = ref.refType(ref.types.CString);
 var lpdwordPtr = ref.refType(ref.types.ulong);
 
@@ -90,8 +91,12 @@ function TEXT(text) {
     //HANDLE OpenProcess( DWORD dwDesiredAccess, BOOL  bInheritHandle, DWORD dwProcessId );
     OpenProcess : ['int', ['int','int','int']],
     //BOOL CloseHandle( HANDLE hObject );
-    CloseHandle : ['int', ['int']]
+    CloseHandle : ['int', ['int']],
+    //BOOL QueryFullProcessImageNameA ( HANDLE hProcess, DWORD  dwFlags, LPSTR  lpExeName, PDWORD lpdwSize );
+    QueryFullProcessImageNameA : ['int', ['int','int',stringPtr,intPtr]]
  });
+
+
 
  function findWindow (name) {
    for(i=0;i<50;i++){ //ensure accurate reading, sometimes returns 0 when window does exist .. horrible horrible crap this is!
@@ -100,7 +105,6 @@ function TEXT(text) {
    }
    return handle;
  }
-
 
 // hmm, fails to load
 /*
@@ -127,13 +131,18 @@ exports.openProcess = function openProcess (pid) {
 }
 exports.getProcessExeFromPid = function getProcessExeFromPid (pid) {
    //HANDLE OpenProcess( DWORD dwDesiredAccess, BOOL  bInheritHandle, DWORD dwProcessId );
-   // re access-bitmap arg, sending 1040.. we want 0x0400 and 0x0010 (QUERY, and VM_READ), but we're passing as decimal int
-   var handle = kernel32.OpenProcess (1040,0,pid)
+   // re access-bitmap arg, just need 0x1000 to query image name.. ms docs 'process-security-and-access-rights'
+   var handle = kernel32.OpenProcess (0x1000,0,pid)
    var buf = new Buffer(512);
    // DWORD GetProcessImageFileNameA( HANDLE hProcess, LPSTR  lpImageFileName, DWORD  nSize );
-   var copiedLen = psapi.GetProcessImageFileNameA(handle,buf,512);
+   //var copiedLen = psapi.GetProcessImageFileNameA(handle,buf,512);
+   // alternate api that gives native path names vs /device/.. etc
+   //BOOL QueryFullProcessImageNameA ( HANDLE hProcess, DWORD  dwFlags, LPSTR  lpExeName, PDWORD lpdwSize );
+   var pBufSize = ref.alloc('int')
+   pBufSize.writeInt32LE(512,0)
+   var bSuccess = kernel32.QueryFullProcessImageNameA(handle,0,buf,pBufSize);
    var name = ref.readCString(buf,0);
-   //console.log('pid:',pid,', handle:',handle,', copied len:',copiedLen,', name: ', name)
+   //console.log('pid:',pid,', handle:',handle,', name:', name)
    //BOOL CloseHandle( HANDLE hObject );
    kernel32.CloseHandle(handle);
    return name

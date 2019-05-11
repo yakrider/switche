@@ -1,13 +1,13 @@
 
 RUNNING NOTES DUMP ON POSSIBLE WORK ON THE SWITCHENATOR PROJECT :
 
-
    --- temp stickies --- 
+
 
 
 05/08 .. ughh additional niggles   
 
-   -- the thing seems to be excluding a bunch of stuff that shouldnt be excluded..
+   d-- the thing seems to be excluding a bunch of stuff that shouldnt be excluded..
       d- the first explorer startups titled 'This PC' etc.. should take a look, its getting annoying
          - huh, although a wrinkle.. upon a reload, a 'This PC' tab started showing up.. so presumably was getting set to exclusion upon startup process?
          d- also, after the updates w title etc listeners, it shows up on refresh too, just not w/o a refresh.. interesting indeed
@@ -23,9 +23,9 @@ RUNNING NOTES DUMP ON POSSIBLE WORK ON THE SWITCHENATOR PROJECT :
          d- for it staying up though, not sure, maybe have to listen to win hide events? ughh
       
       d- ughh, and minimized things, when unminimized from taskbar.. dont kick off a fgnd event to listen to!!
-         - i mean how shitty is that.. freaking gonna have to put some dumb show/hide listener for it
-         - goddamn, this is even worse.. looks like minimize/restore sends 0x8004 which is an identical z-order-change cmd.. wtf.. means will have to refresh when hear that, as cant even know if things are coming to foreground.. how could they not have sent a fkn fgnd event then??!!
-         - seriously though, maybe can just ignore these and see how it still pans out, maybe really dont care about ordering like this ya know.. its not like the minimized windows are off the list, its just the ordering that doesnt update until other activity.. oh well, could just let it be!
+         x- i mean how shitty is that.. freaking gonna have to put some dumb show/hide listener for it
+         x- goddamn, this is even worse.. looks like minimize/restore sends 0x8004 which is an identical z-order-change cmd.. wtf.. means will have to refresh when hear that, as cant even know if things are coming to foreground.. how could they not have sent a fkn fgnd event then??!!
+         x- seriously though, maybe can just ignore these and see how it still pans out, maybe really dont care about ordering like this ya know.. its not like the minimized windows are off the list, its just the ordering that doesnt update until other activity.. oh well, could just let it be!
          d- ok, looks like there's also 0x0016 and 0x0017 for minimize start/end... but even then doesnt feel worth the extra ev catching.. oh well
       
       d- at least for show/hide like for proc-exp, the 0x8002 and 0x8003 seem to fire reliably, so could use those, plus the 8002 for show also gives 0x003, the fgnd event, and we're already querying viz state on that, so we might not bother passing that event up, but the hide should be taken care of
@@ -47,9 +47,11 @@ RUNNING NOTES DUMP ON POSSIBLE WORK ON THE SWITCHENATOR PROJECT :
       
    - also worth noting that we dont have any closing/end mechanism currently.. when running in dev and closing window, app continues to complain in the background.. eventually could consider doing some exit combo and/or try icon etc
    
-   - another niggle, partly noted way earlier, some apps like procexp etc continue to not get the right exe paths and therefore no icons either
-      - well, tried out w QueryFullProcessImageNameA for getting proc name, and that works too, and gives back paths like C:\ etc instead of \Device\ etc, so that can be used to simplify the code a bit for IconExtractor
-      - but looks like the reason things like procexp werent getting paths was because getting proc handle from pid fails upstream of exe path query!
+   d- another niggle, partly noted way earlier, some apps like procexp etc continue to not get the right exe paths and therefore no icons either
+      d- well, tried out w QueryFullProcessImageNameA for getting proc name, and that works too, and gives back paths like C:\ etc instead of \Device\ etc, so that can be used to simplify the code a bit for IconExtractor
+      d- but looks like the reason things like procexp werent getting paths was because getting proc handle from pid fails upstream of exe path query!
+      d- looks like real reason was asking for too much permission, using the QueryFullProcessImageNameA fn, only need 0x1000 for limited query, and that brings back a valid process handle when queried even for things like procexp, shell-menu-view and other similar utilities, and hence the right icons.. thats nice!
+      - re icons, there's now only the lingering thing that maybe would be better if we could get the icons for chrome apps like hangouts/mail etc, but that's likely going to be a pain as we're not dealing w the icon extraction and just using that icon-extractor code.. 
 
 
 05/07 .. note re right-click + wheel-scroll combo to bring up and use the app

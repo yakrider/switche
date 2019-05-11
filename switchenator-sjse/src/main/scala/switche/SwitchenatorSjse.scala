@@ -46,6 +46,7 @@ object WinapiLocal extends js.Object {
 object IconsManager {
    import scala.collection.mutable
    import scala.scalajs.js.annotation.JSImport
+
    @js.native @JSImport ("../../../../src/main/resources/win-helper.js", JSImport.Default)
    object IconExtractor extends js.Object {
       def registerIconsCallback (cb:js.Function3[String,String,js.Object,Unit]):Unit = js.native
@@ -54,23 +55,19 @@ object IconsManager {
    }
    
    def iconsCallback (ctx:String, path:String, encIm:js.Object) = {
-      SwitcheState.kickPostCbCleanup() // sucks that it has squirreled in here, but tight accounting of this helps keep perf tight
       //println(s".. from icon-extractor for ctx:${ctx} path:($path) and base-64 image data:"); //println(encIm.toString);
-      iconsCache.put(ctx,encIm.toString) // note here the hack of passing/putting ctx as path instead of dealing better w path convs
-      RenderSpacer.queueSpacedRender() // if we just got a new icon, prob gotta queue redraw too
+      iconsCache.put(path,encIm.toString)
+      RenderSpacer.queueSpacedRender()
    }
    def init() = IconExtractor.registerIconsCallback (iconsCallback _)
    init()
-   def queueIconQuery (path:String) = IconExtractor.queueIconsQuery(path,convWinapiPath(path))
-   def testIconExt() = js.timers.setTimeout(500) {queueIconQuery("""C:\Windows\SysWOW64\explorer.exe""")}
+
+   def queueIconQuery (path:String) = IconExtractor.queueIconsQuery("",path)
+   //def testIconExt() = js.timers.setTimeout(500) {queueIconQuery("""C:\Windows\SysWOW64\explorer.exe""")}
    
    case class IconsCacheEntry (path:String, encIcon:String)
    val iconsCache = mutable.HashMap[String,String]()
    val queriedCache = mutable.HashSet[String]()
-   
-   // ughh, this is a royal pain, but stupid winapi gives paths like /Device/HarddiskVolume5\.. which the IconExtractor can't deal with.. goddamn
-   // not sure what longer term soln is, esp if sharing for others, but for now, can hardcode the manipulations necessary
-   def convWinapiPath (path:String) = path.replace("""\Device\HarddiskVolume5""","""C:""").replace("""\Device\HarddiskVolume4""","""D:\""")
    
    def processFoundIconPath (path:String) = { if (!queriedCache.contains(path)) { queriedCache.add(path); queueIconQuery(path) } }
    def getCachedIcon (path:String) = iconsCache.get(path)
