@@ -14,7 +14,7 @@ object ExclusionsManager {
       val exclTitleMatches: ExclFnType = {_.winText.map(titleMatchExclusions.contains).getOrElse(true)}
       
       val exeMatchExclusions = Set[String](
-         "SearchUI.exe", "shakenMouseEnlarger.exe", "ShellExperienceHost.exe",
+         "SearchUI.exe", "shakenMouseEnlarger.exe", "ShellExperienceHost.exe", "LockApp.exe",
          "MicrosoftEdgeCP.exe", "MicrosoftEdge.exe", // microshit seems to put all these almost-there windows while actual stuff comes under ApplicationFrameHost
          "WindowsInternal.ComposableShell.Experiences.TextInput.InputApp.exe"
       )
