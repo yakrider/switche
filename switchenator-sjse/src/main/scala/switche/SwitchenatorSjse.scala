@@ -54,27 +54,93 @@ object IconsManager {
       def queueIconsQuery (ctxStr:String,path:String):Unit = js.native
    }
    
-   def iconsCallback (ctx:String, path:String, encIm:js.Object) = {
+   // second version w js only code
+   @js.native @JSImport ("../../../../src/main/resources/win-icon-extractor.js", JSImport.Default)
+   object NodeIconExtractor extends js.Object {
+      def getIconStringFromHwndLater (hwnd:Int, ctx:String, cb:js.Function3[Int,String,String,Unit]): Unit = js.native
+      def getIconStringFromExePathLater (path:String, ctx:String, cb:js.Function3[String,String,String,Unit]): Unit = js.native
+   }
+   
+   def iconsCallback (ctx:String, exePath:String, encIm:js.Object):Unit = {
       //println(s".. from icon-extractor for ctx:${ctx} path:($path) and base-64 image data:"); //println(encIm.toString);
-      iconsCache.put(path,encIm.toString)
+      val iconString = s"data:image/png;base64,${encIm.toString}"
+      val iconCacheIdx = iconsCacheCheckMap.getOrElseUpdate(iconString,iconsCache.size)
+      if (iconCacheIdx == iconsCache.size) {iconsCache.+=(iconString)}
+      iconsExePathMap.put(exePath,iconCacheIdx)
       RenderSpacer.queueSpacedRender()
    }
    def init() = IconExtractor.registerIconsCallback (iconsCallback _)
    init()
+   
+   def iconStringFromHwndCallback (hwnd:Int, ctx:String, iconString:String):Unit = {
+      if (!iconString.isEmpty) {
+         val hwndExePathPair = HwndExePathPair(hwnd,ctx)
+         val iconCacheIdx = iconsCacheCheckMap.getOrElseUpdate(iconString,iconsCache.size)
+         if (iconCacheIdx == iconsCache.size) {iconsCache.+=(iconString)}
+         iconsHwndMap.put(hwndExePathPair,iconCacheIdx)
+         RenderSpacer.queueSpacedRender()
+      } else {
+         println (s"got empty icon-string callback for hwnd=${hwnd}, ctx=${ctx} !!")
+         if (!iconsExePathMap.contains(ctx)) { queueIconExePathQuery(ctx) }
+      }
+   }
+   def iconStringFromExePathCallback (exePath:String, ctx:String, iconString:String):Unit = {
+      val iconCacheIdx = iconsCacheCheckMap.getOrElseUpdate(iconString,iconsCache.size)
+      if (iconCacheIdx == iconsCache.size) {iconsCache.+=(iconString)}
+      iconsExePathMap.put(exePath,iconCacheIdx)
+      RenderSpacer.queueSpacedRender()
+   }
+   
+   //def queueIconExePathQuery (path:String) = { IconExtractor.queueIconsQuery ("",path) }
+   def queueIconExePathQuery (path:String) = {
+      NodeIconExtractor.getIconStringFromExePathLater(path,"",iconStringFromExePathCallback _)
+   }
+   def queueIconHwndQuery (hwnd:Int,path:String) = { // println(hwnd +", "+path);
+      NodeIconExtractor.getIconStringFromHwndLater(hwnd,path,iconStringFromHwndCallback _)
+   }
+   //def testIconExt() = js.timers.setTimeout(500) {queueIconExePathQuery("""C:\Windows\SysWOW64\explorer.exe""")}
+   
+   val iconsCache = mutable.ArrayBuffer[String]() // iconStrs stored in vector so its index can be stored by say hwnd table for efficiency
+   val iconsCacheCheckMap = mutable.HashMap[String,Int]() // actual iconStr to its location in vector to give others
+   val iconsHwndMap = mutable.HashMap[HwndExePathPair,Int]()
+   val iconsExePathMap = mutable.HashMap[String,Int]()
+   
+   def getCachedIcon (hwnd:Int, path:String) = {
+      val hwndExePathPair = HwndExePathPair(hwnd,path)
+      iconsHwndMap .get(hwndExePathPair) .orElse(iconsExePathMap.get(path)) .map(iconsCache)
+   }
+   
+   case class HwndExePathPair (hwnd:Int, exePath:String)
+   val queriedExePathCache = mutable.HashSet[String]()
+   val queriedHwndCache = mutable.HashSet[HwndExePathPair]()
+   
+   // this is yet another hack, as some windows, e.g. chrome apps, put up placeholder empty icons before they get done loading
+   // since those end up same value, we're just gonna init w those, and if things happen to have such empty icons, we can later choose to
+   // say retry on sporadic triggers like fgnd change etc (title change seems to be early enough to still not give icon)
+   // note that the data is non-exclusive.. online generators produced different data for 16x16 black transp pngs, incl this one.. ¯\_(ツ)_/¯
+   val empty16x16Image = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAAAklEQVR4AewaftIAAAAPSURBVGMYBaNgFIwCKAAABBAAAY7F3VUAAAAASUVORK5CYII="
+   iconsCache.+=(empty16x16Image); iconsCacheCheckMap.put(empty16x16Image,0)
+   
+   val whitelist = "chrome.exe,rundll32.exe,ApplicationFrameHost.exe,explorer.exe".split(",").toSet
+   def processFoundHwndExePath (hwnd:Int, path:String) = {
+      val hwndExePathPair = HwndExePathPair(hwnd,path)
+      // the following line should ideally have been used, but it seems to cause unrecoverable lockup when used on everything !!!??
+      //if (!queriedHwndCache.contains(hwndExePathPair)) { queriedHwndCache.add(hwndExePathPair); queueIconHwndQuery(hwnd,path) }
+      val pathExePart = path.split("""\\""").last
+      //if (true) {
+      if (whitelist.contains(pathExePart)) {
+         if ( !queriedHwndCache.contains(hwndExePathPair) || iconsHwndMap.get(hwndExePathPair).contains(0) ) {
+            queriedHwndCache.add(hwndExePathPair); queueIconHwndQuery(hwnd,path)
+         }
+      } else {
+         if (!queriedExePathCache.contains(path)) { queriedExePathCache.add(path); queueIconExePathQuery(path) }
+      }
+   }
 
-   def queueIconQuery (path:String) = IconExtractor.queueIconsQuery("",path)
-   //def testIconExt() = js.timers.setTimeout(500) {queueIconQuery("""C:\Windows\SysWOW64\explorer.exe""")}
-   
-   case class IconsCacheEntry (path:String, encIcon:String)
-   val iconsCache = mutable.HashMap[String,String]()
-   val queriedCache = mutable.HashSet[String]()
-   
-   def processFoundIconPath (path:String) = { if (!queriedCache.contains(path)) { queriedCache.add(path); queueIconQuery(path) } }
-   def getCachedIcon (path:String) = iconsCache.get(path)
    
    def printIconCaches() = {
-      println (s"Printing icon caches (${iconsCache.size}):");
-      iconsCache.toList.sortBy(_._1).foreach(println)
+      println (s"Printing icon caches.. (${iconsCache.size}):");
+      iconsCache.foreach(println)
    }
 
 }

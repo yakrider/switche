@@ -65,8 +65,9 @@ function TEXT(text) {
    SetForegroundWindow: ['int', ['int']],
    BringWindowToTop: ['long', ['long']],
    CloseWindow  : ['long', ['long']],
-   SendMessageA : ['int', ['int','int','int','int']],
+   SendMessageA : ['int', ['int','int','int','int']], // these can hang, so use postMessage or sendMessageTimeout, or sendMessageCallback!
    SendMessageW : ['long', ['long','int','long','long']],
+   PostMessageA : ['int', ['int','int','int','int']],
    GetWindowTextA  : ['int', ['int',stringPtr,'int']],
    GetWindowTextW  : ['int', ['int',stringPtr,'int']],
    GetWindowTextLengthA  : ['long', ['long']],
@@ -263,8 +264,9 @@ exports.closeWindow = function closeWindow (hwnd) {
    // LRESULT SendMessage( HWND hWnd, UINT Msg, WPARAM wParam, LPARAM lParam );
    // 16 is 0x0010 or WM_CLOSE, the WPARAM, LPARAM are ignored for this message
    // this closes most, but not Windows internal windows, hence trying the W version, but was no better
-   //user32.SendMessageW(hwnd,16,0,0)
-   return user32.SendMessageA(hwnd,16,0,0)
+   //return user32.SendMessageW(hwnd,16,0,0)
+   //return user32.SendMessageA(hwnd,16,0,0)
+   return user32.PostMessageA(hwnd,16,0,0)
    //return 1 // meh
 }
 

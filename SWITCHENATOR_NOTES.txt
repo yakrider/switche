@@ -4,6 +4,59 @@ RUNNING NOTES DUMP ON POSSIBLE WORK ON THE SWITCHENATOR PROJECT :
    --- temp stickies --- 
 
 
+05/26 .. updates on better icon acuisition
+   
+   -- soo, goo news first.. the js/winapi/jimp code did make it relatively straightforward to get the icon extraction going as alternate for old c-app and emitter based icon-extractor
+   - and even the initial tests on querying actual hicon from hwnds worked out pretty nicely.. and looked like we might be wrapping everything up quick.. (lol)
+   - however, the when going from single tests to running for full hwnd list, ran into a real pain w something just completely hanging the app/browser, so much so that it'd make it unreloadable, incl the developer-tools going awol.. pain in the ass to look around and fix
+   - eventually, turned out that was literally from the SendMessageA calls to the hwnds hanging.. in the first seen case, seemed to be to a minor update box/window for vs-code.. but certainly there'd be many others as well and so on
+   
+   - for short-term, made it such that we only query those for say chrome and a few others, so we still get the usability of icons for chrome which we wanted the most, and still not hang.. but ofc it cant be a permanent solution, gotta find a more robust long term answer
+   
+   - looked through, and looks like SendMessageA/W is just synchronous by default, and just not the right thing to do, there's the SendMessageTimeoutA/W and SendMessageCallbackA/W, but the callback seemed too painful, and the timeout should have been fine for our purposes, but the freaking timeout version, which got working after niggling w double pointers etc, ALSO hangs on the same hwnds! .. ridiculous.. whats the point of a timeout if it doesnt timeout!!
+   - so not sure.. will have to investigate if there's something I'm missing w its use, or else maybe try and go to the callback version.. oh well, but can wait
+   
+   - ughh, and this thing is slow.. defintely, noticeably slow for the startup anyway.. refreshes now consist of waiting staring at the empty bkg.. now the app itself is ofc very usable and snappy because of all the caching.. but we had gotten to a pretty fast startup/reload too.. kinda sad to have to lose that :(
+   
+
+05/18 .. chasing on better icon acquisition
+   -- so, esp as more and more chrome types get used, as well for the chrome apps, just getting the app icons has become and increasingly sore point
+   - but since we keep pushing it out, has gotten to a point where have to write down accumulated research before they get lost
+   
+   - basically, looks like a more realisitc icon acquisition in windows is done is various stages, only the very last being to use the exe icon
+      - a blog post on the logic :https://devblogs.microsoft.com/oldnewthing/20180301-00/?p=98135
+      - a reasonable sample for getting icon handle here: https://codeutopia.net/blog/2007/12/18/find-an-applications-icon-with-winapi/
+      - there might be other more extensive strategies to support win10/store etc app icons.. in particular for things hosted inside an ApplicationFrameHost.. some examples required looking through child windows for process, even looking through manifest of those for icons!.. does not at all feel worthwhile enough for the very small number of those that we encounter, which further might not work by just asking for window icon.. really, we mostly just want it for chrome!
+      
+   - next up, gotta figure out how to get from an hicon to a bitmap and from there to say a base64 str to throw into inline image data
+      - 
+   - hmm, electron seems to have a nativeImage object that can take a path to make it to image, and even a fns to read/convert toDataURL, which seems to give base64 data.. which would ofc be awesome!.. 
+      - at the very least, might mean can just use that instead of the icon-extractor w its c++ dependencies/code
+      -> do note that this woudl require us having electron either in npm dependencies, or combine the outer electron to the npm deps one..
+         - and if run into issues w either, not sure how worthwhile the process might be, though in general, ofc itd be good to just have one like in other projects
+      - but better ofc, woudl be to see if we can use that by just passing hicon..
+      - https://github.com/electron/electron/blob/master/atom/common/api/atom_api_native_image.cc
+      -- ughh, sadly, the api shows other than fromPath, nothing to go from hicon, and even for bitmaps, it wants a node buffer, so not clear if just extracting bitmap data from winapi and sending it will work as is, though might if ffi buffers are what it calls node buffer
+      
+      - one mechanism, and pretty painful too, seems to be via gdi32 dll.. basically create bitmap from hicon, then find ways to stream that out to data to be converted to base64 etc.. its a ridiculous pain just to get this much done.. freaking archaic mess
+         - https://stackoverflow.com/questions/1818990/save-hicon-as-a-png 
+         - https://www.autoitscript.com/forum/topic/181330-solved-save-img-read-in-mem-to-base64/
+         - https://stackoverflow.com/questions/2830622/how-can-i-create-a-base64-encoded-string-from-a-gdi-image-in-c
+         
+      - realistically, trying to do all that stuff in js via winapi calls is prob asking for too much.. painful processes, difficult to debug etc
+         - could consider trying to do so in a small win/c/NET app like the icon-extractor piece and incorporate it that way.. might mean starting w that code itself in trying to build it, then packaging it etc.. would prob be substantial pain for some marginal improvement like this
+         - if considering so, can use js comm mechanism as in icon-extractor, and add C/NET code to take hicon and extract image from there
+         - https://stackoverflow.com/questions/1818990/save-hicon-as-a-png
+         - 
+
+      d- hmm, also, found an interesting js/winapi only code for extracting base64 icon from exe files .. could be worthwhile to consider using just to replace our current extraction mechanism, and/or to modify to take hicon (or even hwnd) and use it for our purposes!
+         d- https://github.com/SkaceKamen/win-icon-extractor/blob/master/index.js
+         d--> ooh, this is pretty cool really, takes us a LONG way to where we need to be.. can ignore the rest given this really!
+         
+      - if looking for another cc alternative for npm/js use, the following is also worth noting:
+         - https://github.com/pelayomendez/exe-icon-extractor/blob/master/src/module.cc
+         
+
 
 05/08 .. ughh additional niggles   
 

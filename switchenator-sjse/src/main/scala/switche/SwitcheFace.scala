@@ -251,7 +251,7 @@ object SwitchePageState {
       val exeSpan = span (`class`:=exeSpanClass, exeInnerSpan)
       val titleSpan = span (`class`:="titleSpan", titleInnerSpan)
       val ico = e.exePathName.map(_.fullPath) .map ( path =>
-         IconsManager.getCachedIcon(path) .map (ico => img(`class`:="ico", src:=s"data:image/png;base64, $ico"))
+         IconsManager.getCachedIcon(e.hwnd,path) .map (icoStr => img(`class`:="ico", src:=icoStr))
       ).flatten.getOrElse(span("ico"))
       val icoSpan = span (`class`:="exeIcoSpan", ico)
       val elem = div (`class`:="elemBox", id:=idStr, tabindex:=0, exeSpan, nbsp(3), icoSpan, nbsp(), titleSpan).render
@@ -377,7 +377,7 @@ object RibbonDisplay {
    def getTopRibbonDiv() = {
       val reloadLink = a (href:="#", "Reload", onclick:={e:MouseEvent => g.window.location.reload()} )
       val refreshLink = a (href:="#", "Refresh", onclick:={e:MouseEvent => handleRefreshRequest()} )
-      val printExclLink = a (href:="#", "ExclPrint", onclick:={e:MouseEvent => handleExclPrintReq()} )
+      val printExclLink = a (href:="#", "DebugPrint", onclick:={e:MouseEvent => handleDebugPrintReq()} )
       val groupModeLink = a (href:="#", "ToggleGrouping", onclick:={e:MouseEvent => handleGroupModeToggleReq()} )
       div ( id:="top-ribbon", reloadLink, nbsp(4), refreshLink, nbsp(4), printExclLink, nbsp(4),
          countSpan, nbsp(4), groupModeLink, nbsp(8), searchBox

@@ -29,6 +29,7 @@ object ExclusionsManager {
          (Some("electron.exe"), Some("Sjs-Electron-Local-JS-Test")),
          (Some("atmgr.exe"), Some("FloatActionBar")),
          (Some("SystemSettings.exe"), Some("Settings")),
+         //(Some("ApplicationFrameHost.exe"), Some("Settings")),
          (Some("ApplicationFrameHost.exe"), Some("Microsoft Edge"))
       )
       val exclExeAndTitleMatches: ExclFnType = {e => exeAndTitleMatchExclusions.contains((e.exePathName.map(_.name),e.winText)) }

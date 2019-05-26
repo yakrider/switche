@@ -1,0 +1,263 @@
+var path = require('path');
+var ffi = require('ffi');
+var ref = require('ref');
+var struct = require('ref-struct');
+var fs = require('fs');
+var jimp = require('jimp');
+var bmp_js = require('bmp-js');
+
+var IntPtr = ref.refType(ref.types.int);
+var HANDLE = ref.refType(ref.types.void);
+
+var lpctstr = {
+   name: 'lpctstr',
+   indirection: 1,
+   size: ref.sizeof.pointer,
+   get: function(buffer, offset) {
+      var _buf = buffer.readPointer(offset);
+      if(_buf.isNull()) {
+         return null;
+      }
+      return _buf.readCString(0);
+   },
+   set: function(buffer, offset, value) {
+      var _buf = new Buffer(Buffer.byteLength(value, 'ucs2') + 2)
+      _buf.write(value, 'ucs2')
+      _buf[_buf.length - 2] = 0
+      _buf[_buf.length - 1] = 0
+      return buffer.writePointer(_buf, offset)
+   },
+   ffi_type: ffi.types.CString.ffi_type
+};
+
+var iconInfo = struct({
+   'fIcon': ref.types.bool,
+   'xHotspot': ref.types.ulong,
+   'yHotspot': ref.types.ulong,
+   'hbmMask': HANDLE,
+   'hbmColor': HANDLE
+});
+
+var bitmapInfoHeader = struct({
+   biSize: ref.types.ulong,
+   biWidth: ref.types.long,
+   biHeight: ref.types.long,
+   biPlanes: ref.types.ushort,
+   biBitCount: ref.types.ushort,
+   biCompression: ref.types.ulong,
+   biSizeImage: ref.types.ulong,
+   biXPelsPerMeter: ref.types.long,
+   biYPelsPerMeter: ref.types.long,
+   biClrUsed: ref.types.ulong,
+   biClrImportant: ref.types.ulong
+});
+
+var palleteColor = struct({
+   red: ref.types.uint8,
+   green: ref.types.uint8,
+   blue: ref.types.uint8,
+   void: ref.types.uint8
+});
+
+var bitmapInfo = struct({
+   bmiHeader: bitmapInfoHeader
+});
+
+// Allocate color table for 16 colors
+// The table size is dynamic, but needs to be preallocated
+// After we load the actual table size, we slice unused part off
+for (var i = 0; i < 16; i++) {
+   bitmapInfo.defineProperty('color' + i, palleteColor);
+}
+
+var shell32 = ffi.Library('shell32', {
+   // HICON ExtractAssociatedIconW (HINSTANCE hInst, LPSTR pszIconPath, WORD *piIcon );
+   //'ExtractAssociatedIconW': ['HANDLE', [IntPtr, lpctstr, IntPtr]]
+   'ExtractAssociatedIconW': ['int', [IntPtr, lpctstr, IntPtr]]
+});
+var gdi32 = ffi.Library('gdi32', {
+   'GetDIBits': [ref.types.int32, [IntPtr, IntPtr, 'uint32', 'uint32', IntPtr, ref.refType(bitmapInfo), 'uint32'] ]
+});
+var user32 = ffi.Library('user32', {
+   // BOOL GetIconInfo( HICON hIcon, PICONINFO pIconInfo );
+   //'GetIconInfo': ['bool', [IntPtr, ref.refType(iconInfo)]],
+   'GetIconInfo': ['bool', ['int', ref.refType(iconInfo)]],
+   'GetDC': [HANDLE, [IntPtr]],
+   //'DestroyIcon': ['bool', ['int']],
+   'DestroyIcon': ['bool', ['int']],
+   // LRESULT SendMessage( HWND hWnd, UINT Msg, WPARAM wParam, LPARAM lParam );
+   // typedef UINT_PTR WPARAM; // typedef LONG_PTR LPARAM; // typedef LONG_PTR LRESULT;
+   'SendMessageA': ['int', ['int','int','int','int' ]],
+   'SendMessageW': [HANDLE, [HANDLE,'uint32','long','long' ]],
+   // ULONG_PTR GetClassLongPtrW( HWND hWnd, int nIndex );
+   //'GetClassLongPtr': ['long', ['int', 'int']]
+   'GetClassLongPtrA': ['long', ['int', 'int']]
+   //'GetClassLongPtrW': ['long', [HANDLE, 'int']]
+});
+
+function loadBitmap(hbitmap, ident) {
+   var bitmap = new bitmapInfo();
+   
+   // Clear bitmap info
+   bitmap['ref.buffer'].fill(0);
+
+   // Save the bmiheader size
+   bitmap.bmiHeader.biSize = 40;
+
+   // Load bitmap details
+   var dc = user32.GetDC(null);
+   if (dc.deref() == 0) {
+      throw new Error("Failed to get screen DC.");
+   }
+   
+   if (gdi32.GetDIBits(dc, hbitmap, 0, 0, null, bitmap.ref(), 0) == 0) {
+      throw new Error("Failed to load BITMAP (" + ident + ") info.");
+   }
+
+   // Slice off the unused color table
+   var colors = bitmap.bmiHeader.biBitCount < 24 ? ((1 << bitmap.bmiHeader.biBitCount) * 4) : 0;
+   bitmap['ref.buffer'] = bitmap['ref.buffer'].slice(0, bitmap.bmiHeader.biSize + colors);
+
+   // Disable compression
+   bitmap.bmiHeader.biCompression = 0;
+
+   // Load bitmap data
+   var data = new Buffer(bitmap.bmiHeader.biSizeImage);
+   if (gdi32.GetDIBits(dc, hbitmap, 0, bitmap.bmiHeader.biHeight, data, bitmap.ref(), 0) == 0) {
+      throw new Error("Failed to load BITMAP data.");
+   }
+
+   // Prepare BMP header
+   var header = new Buffer(2 + 4 + 4 + 4);
+   
+   // BMP signature (BM)
+   header.writeUInt8(66, 0);
+   header.writeUInt8(77, 1);
+   // Size fo the BMP file, HEADER + COLOR_TABLE + DATA
+   header.writeUInt32LE(data.byteLength + 54 + colors, 2);
+   // Reserved
+   header.writeUInt32LE(0, 6);
+   // Offset of actual image data HEADER + COLOR_TABLE
+   header.writeUInt32LE(54 + colors, 10);
+
+   // Return resulting BMP file
+   return {
+      data: Buffer.concat([header, bitmap.ref(), data]),
+      depth: bitmap.bmiHeader.biBitCount
+   };
+}
+
+function getIconStringFromExePath (exePath) {
+   return new Promise ((resolve, reject) => {      
+      target = path.resolve(exePath); // make sure the path is absolute
+      var iconIndex = ref.alloc(ref.types.int32, 0);
+      var hicon = shell32.ExtractAssociatedIconW (null, exePath, iconIndex);
+      //console.log(hicon)
+      getIconStringFromHIcon(hicon) .then((iconString) => { //console.log(iconString)
+         user32.DestroyIcon(hicon); // release icon from memory
+         resolve(iconString)
+      }).catch (function(err) {
+         user32.DestroyIcon(hicon)
+         reject(err)
+      });
+   });
+}
+exports.getIconStringFromExePath = function (exePath) {return getIconStringFromExePath(exePath)}
+
+exports.getIconStringFromExePathLater = function (exePath,ctx,callback) {
+   getIconStringFromExePath(exePath).then((iconString) => {
+      callback (exePath,ctx,iconString)
+   }) .catch ( function (err) {
+      //console.error(err);
+      callback (exePath,ctx,"")
+   });
+}
+
+const GCL_HICONSM = -34; const GCL_HICON = -14;
+const ICON_SMALL = 0; const ICON_BIG = 1; const ICON_SMALL2 = 2; 
+const WM_GETICON = 0x7F;
+function getIconStringFromHwnd (hwnd) {
+   return new Promise ((resolve, reject) => {
+      var hicon = 0;
+      if (hicon == 0) { hicon = user32.SendMessageA (hwnd, WM_GETICON, ICON_SMALL2, 0) }
+      if (hicon == 0) { hicon = user32.SendMessageA (hwnd, WM_GETICON, ICON_SMALL, 0) }
+      if (hicon == 0) { hicon = user32.SendMessageA (hwnd, WM_GETICON, ICON_BIG, 0) }
+      if (hicon == 0) { hicon = user32.GetClassLongPtrA (hwnd, GCL_HICONSM) }
+      if (hicon == 0) { hicon = user32.GetClassLongPtrA (hwnd, GCL_HICON) }
+      if (hicon == 0) {
+         reject (new Error ("All methods of querying for hIcon failed for hwnd:" + hwnd))
+         //resolve ("")
+      } else {
+         resolve (getIconStringFromHIcon(hicon))
+      }
+   });
+}
+exports.getIconStringFromHwnd = function (hwnd) {return getIconStringFromHwnd(hwnd)}
+
+exports.getIconStringFromHwndLater = function (hwnd, ctx, callback) {
+   getIconStringFromHwnd(hwnd).then((iconString) => {
+      callback (hwnd,ctx,iconString)
+   }) .catch ( function (err) {
+      //console.error(err);
+      callback (hwnd,ctx,"")
+   });
+}
+
+function getIconStringFromHIcon (hicon) { //console.log(hicon);
+   return new Promise((resolve, reject) => {
+      var info = new iconInfo(); // load icon data      
+      info['ref.buffer'].fill(0); // clear info struct
+
+      if (!user32.GetIconInfo(hicon, info.ref())) {
+         return reject (new Error("Failed to load icon info from hIcon."))
+      }
+      
+      // Load icon bitmaps
+      var colored = loadBitmap(info.hbmColor, 'colored');
+      var mask = loadBitmap(info.hbmMask, 'mask');
+
+      // Load bitmaps into standardized formats
+      var colored_bmp = bmp_js.decode(colored.data);
+      var mask_bmp = bmp_js.decode(mask.data);
+
+      // Load the colored bmp
+      // Little hack has to be applied, jimp currently doesn't support 32 bit BMP
+      // Encoder uses 24 bit, so it loads fine
+      jimp.read(bmp_js.encode(colored_bmp).data, (err, colored_img) => {
+         if (err) return reject(err);
+         // Bitmap can have 32 bits per color, but ignore the aplha channel
+         var has_alpha = false;
+
+         // 32 bit BMP can have alpha encoded, so we may not need the mask
+         if (colored.depth > 24) {			
+            // Scan the original BMP image, if any pixel has > 0 alpha, the mask wont be needed
+            for (var xx = 0; xx < colored_bmp.width; xx++) {
+               for (var yy = 0; yy < colored_bmp.height; yy++) {
+                  var index = colored_img.getPixelIndex(xx, yy);
+                  if (colored_bmp.data[index + 3] != 0) {
+                     has_alpha = true;
+                     break;
+            } } }
+         }
+         // Ignore mask, if the colored icon has alpha encoded already (most does)
+         if (has_alpha) { // Little hack again, assign actual RGBA data to image
+            colored_img.bitmap = colored_bmp;
+            colored_img.getBase64(jimp.MIME_PNG, (error, base64) => {
+               if (err) return reject(err);               
+               resolve(base64);
+            });
+         } else { // Load mask and apply it
+            jimp.read(bmp_js.encode(mask_bmp).data, (err, mask_img) => {
+               if (err) return reject(err);               
+               var masked_img = colored_img.mask(mask_img.invert(), 0, 0);
+               masked_img.getBase64(jimp.MIME_PNG, (error, base64) => {
+                  if (err) return reject(err);                  
+                  resolve(base64);
+               });
+            });
+         }
+      });
+   });
+}
+exports.getIconStringFromHIcon = function (hicon) {return getIconStringFromHIcon(hicon)}
+

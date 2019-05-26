@@ -56,7 +56,7 @@ object SwitcheState {
          val dat = hMapPrior .get(hwnd) .orElse (Some(WinDatEntry (hwnd))) .map(getUpdatedDat(_)) .get
          hMapCur .put (hwnd, dat)
          if (!dat.shouldExclude.getOrElse(false)) {
-            dat.exePathName.map(_.fullPath).foreach(IconsManager.processFoundIconPath)
+            dat.exePathName.map(_.fullPath).foreach(ep => IconsManager.processFoundHwndExePath(hwnd,ep))
             RenderSpacer.queueSpacedRender()
          }
       }
@@ -70,7 +70,7 @@ object SwitcheState {
       if (hMapCur == hMapPrior) {hMapPrior = hMapUpdated} else {hMapPrior.put(hwnd,dat)}
       hMapCur = hMapUpdated
       if (!dat.shouldExclude.contains(true)) {
-         dat.exePathName.map(_.fullPath).foreach(IconsManager.processFoundIconPath)
+         dat.exePathName.map(_.fullPath).foreach(ep => IconsManager.processFoundHwndExePath(hwnd,ep))
          RenderSpacer.queueSpacedRender() // no point being more surgical, as for grouped stuff, everything might have to be reordered anyway
       }
    }
@@ -79,7 +79,7 @@ object SwitcheState {
       var dat = getUpdatedDat(hMapCur(hwnd),true)
       hMapCur.put(hwnd,dat); hMapPrior.put(hwnd,dat)
       if (!dat.shouldExclude.contains(true)) {
-         dat.exePathName.map(_.fullPath).foreach(IconsManager.processFoundIconPath)
+         dat.exePathName.map(_.fullPath).foreach(ep => IconsManager.processFoundHwndExePath(hwnd,ep))
          RenderSpacer.queueSpacedRender() // no point being more surgical, as for grouped stuff, everything might have to be reordered anyway
       }
    }
@@ -189,7 +189,7 @@ object SwitcheState {
       js.timers.setTimeout(1000) {getSelfWindowOpt.map(WinapiLocal.activateWindow)}
    }
    
-   def handleExclPrintReq() = {
+   def handleDebugPrintReq() = {
       val nonVisEs = hMapCur.values.filter(!_.isVis.getOrElse(false))
       println (s"Printing non-vis entries (${nonVisEs.size}) :")
       nonVisEs.foreach(println); println()
@@ -198,9 +198,9 @@ object SwitcheState {
       emptyTextEs.foreach (e => println(e.toString)); println();
       println (s"Printing full data incl excl flags for titled Vis entries:")
       hMapCur.values.filter(e => e.isVis.filter(identity).isDefined && e.winText.filterNot(_.isEmpty).isDefined).foreach(println); println();
-      //IconsManager.printIconCaches(); println()
       println (s"Printing Group Sorting Entries:")
       RenderReadyListsManager.grpSortingMap.toSeq.sortBy(_._2.meanPercIdx).foreach(println); println();
+      IconsManager.printIconCaches(); println()
    }
    
    def handleGroupModeToggleReq() = { inGroupedMode = !inGroupedMode; SwitcheFacePage.render() }
