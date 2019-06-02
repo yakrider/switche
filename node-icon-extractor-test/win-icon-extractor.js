@@ -96,8 +96,13 @@ var user32 = ffi.Library('user32', {
    'SendMessageTimeoutW': ['int',['int','int','int','int','int','int',PDWORD_PTR]],
    // ULONG_PTR GetClassLongPtrW( HWND hWnd, int nIndex );
    //'GetClassLongPtr': ['long', ['int', 'int']]
-   'GetClassLongPtrA': ['long', ['int', 'int']]
+   'GetClassLongPtrA': ['long', ['int', 'int']],
    //'GetClassLongPtrW': ['long', [HANDLE, 'int']]
+   //BOOL SendMessageCallbackA ( HWND hWnd, UINT Msg, WPARAM wParam, LPARAM lParam, SENDASYNCPROC lpResultCallBack, ULONG_PTR dwData );
+   //SENDASYNCPROC : void Sendasyncproc (HWND Arg1, UINT Arg2, ULONG_PTR Arg3, LRESULT Arg4)
+   'SendMessageCallbackA' : ['bool',['int','int','int','int','pointer','int']],
+   GetMessageA: ["bool", ['pointer', "int", "uint", "uint"]],
+   PeekMessageA: ["bool", ['pointer', "int", "uint", "uint", "uint"]]
 });
 
 function loadBitmap(hbitmap, ident) {
@@ -153,7 +158,7 @@ function loadBitmap(hbitmap, ident) {
 }
 
 function getIconStringFromExe (target) {
-   return new Promise ((resolve, reject) => {      
+   return new Promise ((resolve, reject) => { setTimeout(function() {
       target = path.resolve(target); // make sure the path is absolute
       var iconIndex = ref.alloc(ref.types.int32, 0);
       var hicon = shell32.ExtractAssociatedIconW (null, target, iconIndex);
@@ -165,7 +170,7 @@ function getIconStringFromExe (target) {
          user32.DestroyIcon(hicon)
          reject(err)
       });
-   });
+   }); });
 }
 exports.getIconStringFromExe = function (target) {return getIconStringFromExe(target)}
 
@@ -186,7 +191,7 @@ const WM_GETICON = 0x7F;
 const SMTO_NORMAL = 0x0000; const SMTO_ABORTIFHUNG = 0x0002;
 
 function getIconStringFromHwnd (hwnd) {
-   return new Promise ((resolve, reject) => {
+   return new Promise ((resolve, reject) => { setTimeout(function() {
       //var lpdwResult = ref.alloc(PDWORD_PTR)
       var lpdwResult = ref.alloc(ref.refType(ref.types.int))
       var hicon = 0;
@@ -207,9 +212,83 @@ function getIconStringFromHwnd (hwnd) {
       resolve (getIconStringFromHIcon(hicon))
       //resolve (getIconStringFromHIcon(ref.alloc(ref.types.int, hicon)))
       //resolve (getIconStringFromHIcon(ref.address(hicon)))
-   });
+   }); });
 }
 exports.getIconStringFromHwnd = function (hwnd) {return getIconStringFromHwnd(hwnd)}
+
+
+function defaultHwndIconStringCallback (hwnd,hicon,iconString) {
+   console.error('No callback registered for icon-extractor!')
+   console.log('icon string for ',hwnd,' is:\n',iconString)
+}
+var hwndIconStringCallback = defaultHwndIconStringCallback
+exports.registerHwndIconStringCallback = function (callback) {hwndIconStringCallback = callback}
+exports.unregisterHwndIconStringCallback = function () {hwndIconStringCallback = defaultHwndIconStringCallback}
+
+function SteppedWinSendMessageCallback (hwnd, msg, stepCtx, hicon) {
+   console.log ('got callback!')
+   console.log('hwnd:',hwnd,' arg1:',msg,' arg2:',stepCtx,' hicon:',hicon)
+   if (hicon == 0) {
+      callFnAndReQueueCapped (peekMessage, true)
+      if (stepCtx == 0) {
+         user32.SendMessageCallbackA (hwnd, WM_GETICON, ICON_SMALL2, 0, fficbSteppedWinSendMessageCallback, 1)
+      } else if (stepCtx == 1) {
+         user32.SendMessageCallbackA (hwnd, WM_GETICON, ICON_SMALL, 0, fficbSteppedWinSendMessageCallback, 2)
+      } else if (stepCtx == 2) {
+         user32.SendMessageCallbackA (hwnd, WM_GETICON, ICON_BIG, 0, fficbSteppedWinSendMessageCallback, 3)
+      } else {
+         if (hicon == 0) { hicon = user32.GetClassLongPtrA (hwnd, GCL_HICONSM) }
+         if (hicon == 0) { hicon = user32.GetClassLongPtrA (hwnd, GCL_HICON) }
+         if (hicon == 0) {
+            console.log ("All methods of querying for hIcon failed for hwnd:" + hwnd)
+            hwndIconStringCallback(hwnd,0,"") // failure is signalled up as empty iconString
+         }
+      }
+   }
+   if (hicon != 0) { // redo check as we might have updated it in above conditionals
+      getIconStringFromHIcon(hicon) .then((iconString) => { 
+         hwndIconStringCallback(hwnd,hicon,iconString)
+      }) .catch ( function (err) { 
+         console.error('error extracting icon for hwnd:'+hwnd+', hicon:'+hicon, err); 
+         hwndIconStringCallback(hwnd,0,"") // failure is signalled up as empty iconString 
+      } );
+   }
+
+}
+var fficbSteppedWinSendMessageCallback = ffi.Callback ('void', ['int','int','int','int'], SteppedWinSendMessageCallback)
+
+function queueIconStringFromHwnd (hwnd) {
+   //setTimeout (function() {console.log('queued timeout ended.')}, 5000); //set some time so things dont exit immediately
+   //callFnAndReQueue (peekMessage, 500,10)
+   //callFnAndReQueueCapped (peekMessage, true)
+   SteppedWinSendMessageCallback (hwnd,0,0,0)
+   //user32.SendMessageCallbackA (hwnd, WM_GETICON, ICON_SMALL, 0, fficbWinSendMessageCallback, 0)
+}
+exports.queueIconStringFromHwnd = function (hwnd) {return queueIconStringFromHwnd(hwnd)}
+
+// winapi requires the thread to be waiting on getMessage to get win-event-hook callbacks!
+function getMessage() { user32.GetMessageA (ref.alloc(ref.refType(ref.types.void)), null, 0, 0) }
+function peekMessage() { user32.PeekMessageA (ref.alloc(ref.refType(ref.types.void)), null, 0, 0, 0) }
+//while (0 != getMessage()) {}
+//function callFnAndReQueue (fn,reQueueDelay,maxTimes) { fn(); setTimeout ( function() {fn()}, reQueueDelay ) }
+//function callFnAndReQueue (fn,reQueueDelay,nMax) { fn(); if (nMax>0) { console.log('re-queueing'); setTimeout ( function() {callFnAndReQueue(fn,reQueueDelay,nMax-1)} ) } }
+//function callFnAndReQueue (fn,reQueueDelay,nMax) { fn(); if (nMax>0) { setTimeout ( function() {callFnAndReQueue(fn,reQueueDelay,nMax-1)} ) } }
+
+var globalReQueueCountdown = 0; var globalReQueueDelayMs = 100; var globalReQueueCountMax = 20;
+function callFnAndReQueueCapped (fn,doCapReset) { 
+   fn()
+   if (doCapReset) {globalReQueueCountdown = globalReQueueCountMax} 
+   globalReQueueCountdown--;
+   if (globalReQueueCountdown > 0) { setTimeout ( function() {callFnAndReQueueCapped(fn,false)}, globalReQueueDelayMs ) } 
+   //if (globalReQueueCountdown > 0) { console.log('re-queueing'); setTimeout ( function() {callFnAndReQueueCapped(fn,false)}, globalReQueueDelayMs ) } 
+}
+
+//callFnAndReQueue (getMessage, 10000)
+//callFnAndReQueue (peekMessage, 10,500)
+//setInterval ( getMessage, 10 )
+
+
+
 
 function getIconStringFromHIcon (hicon) { //console.log(hicon);
    return new Promise((resolve, reject) => {

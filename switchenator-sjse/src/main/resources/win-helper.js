@@ -107,16 +107,6 @@ function TEXT(text) {
    return handle;
  }
 
-// hmm, fails to load
-/*
-var oleacc = new ffi.Library('oleacc.dll' {
-  // HANDLE WINAPI GetProcessHandleFromHwnd( _In_ HWND hwnd );
-  GetProcessHandleFromHwnd : ['int', ['int']]
-});
-exports.getWindowProcessId = function getWindowProcessId (hwnd) {
-   console.log('this oleacc call has been disabled')
-   return oleacc.GetProcessHandleFromHwnd(hwnd);
-}*/
 
 exports.getWindowThreadProcessId = function getWindowThreadProcessId (hwnd) {
    //DWORD GetWindowThreadProcessId( HWND hWnd, LPDWORD lpdwProcessId );
@@ -287,14 +277,4 @@ exports.printVisibleWindows = function printVisibleWindows() {
     //app.quit()
   });
 }
-
-
-var icoExt = require('icon-extractor');
-var defaultIconsCallback = function(ctxStr,path,data) {console.error('No callback registered for icon-extractor!!')};
-var iconsCallback = defaultIconsCallback
-icoExt.emitter.on ('icon', function(data){ iconsCallback (data.Context, data.Path, data.Base64ImageData) });
-icoExt.emitter.on ('error', function(e){console.error(e)} );
-exports.registerIconsCallback = function registerIconsCallback (callback) {iconsCallback = callback}
-exports.unregisterIconsCallback = function unregisterIconsCallback() {iconsCallback = defaultIconsCallback}
-exports.queueIconsQuery = function queueIconsQuery (ctxStr,path) { icoExt.getIcon(ctxStr,path); }
 

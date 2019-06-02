@@ -24,6 +24,9 @@ if (cluster.isMaster) {
     fgndWorker.on('message', function(msg) {console.log('fgnd worker: msg-type:',msg.type,' hwnd:',msg.hwnd)});
     killWorker.on('message', function(msg) {console.log('kill worker: msg-type:',msg.type,' hwnd:',msg.hwnd)});
 
+    //worker.send({msgFromMaster: 'This is from master ' + process.pid + ' to worker ' + worker.pid + '.'});
+    setInterval ( function() { fgndWorker.send('msg from master!') }, 1000 ); // just to see if it can receive stuff while waiting on messages
+
 
 } else {
     const ffi = require("ffi")
@@ -33,9 +36,12 @@ if (cluster.isMaster) {
         //HWINEVENTHOOK SetWinEventHook (DWORD eventMin, DWORD eventMax, HMODULE hmodWinEventProc, WINEVENTPROC pfnWinEventProc, DWORD idProcess, DWORD idThread, DWORD dwFlags );
         //WINEVENTPROC void Wineventproc( HWINEVENTHOOK hWinEventHook, DWORD event, HWND hwnd, LONG idObject, LONG idChild, DWORD idEventThread, DWORD dwmsEventTime )  
         SetWinEventHook: ["int", ["int", "int", "pointer", "pointer", "int", "int", "int"]],
-        GetMessageA: ["bool", ['pointer', "int", "uint", "uint"]]
+        GetMessageA: ["bool", ['pointer', "int", "uint", "uint"]],
+        PeekMessageA: ["bool", ['pointer', "int", "uint", "uint", "uint"]]
     })
-    
+
+    var stop = false;
+
     //WINEVENTPROC void Wineventproc( HWINEVENTHOOK hWinEventHook, DWORD event, HWND hwnd, LONG idObject, LONG idChild, DWORD idEventThread, DWORD dwmsEventTime )  
     const pfnWinEventProc = ffi.Callback("void", ["pointer", "int", 'pointer', "long", "long", "int", "int"],
         function (hWinEventHook, event, hwnd, idObject, idChild, idEventThread, dwmsEventTime) {
@@ -43,6 +49,8 @@ if (cluster.isMaster) {
             if (idObject===0) { // only track at window level
                 //console.log('fgnd hook :: event:',event.toString(16),' hwnd:',ref.address(hwnd),' id:',idObject,' idChild:',idChild);
                 if (event===0x0003) {
+                    console.log('asap printout'); stop = true; console.log(stop)
+                    setTimeout(function(){console.log('delayed printout')},0)
                    process.send({type:'fgnd', hwnd:ref.address(hwnd)});
                 } else if (event===0x0016) {
                    process.send({type:'minimize', hwnd:ref.address(hwnd)});
@@ -82,10 +90,23 @@ if (cluster.isMaster) {
         user32.SetWinEventHook(0x8001, 0x800C, null, pfnWinEventProc2, 0, 0, 0 )
     }
 
+    process.on('message', function(msg) {
+        console.log('Worker ' + process.pid + ' received message from master.', msg);
+    });
     
     
     // winapi requires the thread to be waiting on getMessage to get win-event-hook callbacks!
-    function getMessage() { return user32.GetMessageA (ref.alloc(ref.refType(ref.types.void)), null, 0, 0) }
-    while (0 != getMessage()) {}
+    function getMessage() { user32.GetMessageA (ref.alloc(ref.refType(ref.types.void)), null, 0, 0) }
+    function peekMessage() { user32.PeekMessageA (ref.alloc(ref.refType(ref.types.void)), null, 0, 0, 1) } // huh, doesnt work
+    //while (0 != getMessage()) {}
+    //function checkMessageAndRequeue() { getMessage(); setTimeout ( function() {checkMessageAndRequeue,10} ) }
+    //function checkMessageAndRequeue() { peekMessage(); setTimeout ( function() {checkMessageAndRequeue,10} ) }
+    //checkMessageAndRequeue()
+    function callFnAndRequeue (fn,requeueDelay) { fn(); setTimeout ( function(){fn()}, requeueDelay ) }
+    //function callFnAndRequeue (fn,requeueDelay) { fn(); console.log(stop); if (false==stop) { console.log('requeueing'); setTimeout ( function() {fn, requeueDelay} ) } }
+    callFnAndRequeue (getMessage, 10000)
+    //callFnAndRequeue (peekMessage, 10)
+    //setInterval ( getMessage, 10 )
+
 
 }

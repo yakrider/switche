@@ -18,6 +18,9 @@ RUNNING NOTES DUMP ON POSSIBLE WORK ON THE SWITCHENATOR PROJECT :
    
    - ughh, and this thing is slow.. defintely, noticeably slow for the startup anyway.. refreshes now consist of waiting staring at the empty bkg.. now the app itself is ofc very usable and snappy because of all the caching.. but we had gotten to a pretty fast startup/reload too.. kinda sad to have to lose that :(
    
+   - anyway, much improved now w more offloading to later processing, also finally implemented callbacks to win SendMessage calls instead of asking for immediate replies, makes it such that we dont have to worry about hung windows etc, esp with a slow setTimeout check at time of request that comes back and uses fallback icon acquisition from exe if the hwnd icon didnt come around in decent time.. seems usable for sure, and other than maybe slight lag at load time, dont think really notice much slowdown at runtime compared to the ffi/c/emitter based prior icon-extractor, which now therefore has been removed.. 
+   - maybe worth noting, had to have PeekMessage calls being made to actually hear back the callbacks requested by SendMessage.. reminiscent of SetWinEventHook, but at least for here, PeekMessage works, meaning can interleave it in same thread, rather than having to use GetMessage which pretty much ties up a thread.. also worth noting, for any PeekMessage call, all ready callbacks come in as available, not like one-to-one on PeekMessage calls, makes it much more manageable and allows us to just schedule a couple PeekMessages while requests are being made and let them go quiet otherwise.. works out reasonably despite the hassle
+   
 
 05/18 .. chasing on better icon acquisition
    -- so, esp as more and more chrome types get used, as well for the chrome apps, just getting the app icons has become and increasingly sore point

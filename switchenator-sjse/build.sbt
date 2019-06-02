@@ -32,7 +32,6 @@ npmDependencies in Compile ++= Seq(
   "ffi" -> "^2.3.0",
   "ref" -> "^1.3.5",
   "ref-struct" -> "^1.1.0",
-  "icon-extractor" -> "^1.0.3",
   "bmp-js" -> "^0.0.3",
   "jimp" -> "^0.2.27"
 )
