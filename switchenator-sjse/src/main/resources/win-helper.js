@@ -229,14 +229,23 @@ exports.getWindowPlacement = function getWindowPlacement (hwnd) {
 }
 
 exports.activateWindow = function activateWindow (hwnd) {
+  console.log("called activate window for :", hwnd)
   var lpwndpl = new lpwndpl_t
   user32.GetWindowPlacement (hwnd, lpwndpl.ref())
-  //console.log ('showCmd is ', lpwndpl.showCmd)
+  console.log ('showCmd is ', lpwndpl.showCmd)
+  // SW enums are : 0:hide, 1:show, 2:showmin, 3:showmax, 4:show-no-activate, 5:show, 6:minimize, 7:show-min-no-act, 8:show-no-act, 9:restore
   if (lpwndpl.showCmd == 2) { // means minimized, gotta do the restore first
     user32.ShowWindow(hwnd, 9) // 9 is the SW_RESTORE cmd, required for minimized windows, but will 'restore' maximized ones
   } else {
-    user32.ShowWindow(hwnd, 5) // 5 is SW_SHOW, it shows windows in cur size and position
+    //user32.ShowWindowAsync(hwnd, 0)
+    user32.ShowWindowAsync(hwnd, 5)
+    //user32.ShowWindow(hwnd, 5)
+    //user32.ShowWindow(hwnd, 1)
+    //user32.ShowWindow(hwnd, 6)
+    //user32.ShowWindow(hwnd, 9)
   }
+  //console.log('did async 0/hide 5/sw_show')
+  //user32.SetForegroundWindow(hwnd);
   return user32.SetForegroundWindow(hwnd);
 }
 exports.hideWindow = function hideWindow (hwnd) {

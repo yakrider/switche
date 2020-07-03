@@ -13,13 +13,13 @@ case class WinDatEntry (
 
 
 object SwitcheState {
-   
+
    var latestTriggeredCallId = 0; var cbCountForCallId = 0;
    var hMapCur = LinkedHashMap[Int,WinDatEntry]();
    var hMapPrior = LinkedHashMap[Int,WinDatEntry]();
    var inGroupedMode = true; var isDismissed = false;
    var curElemId = ""
-   
+
    def prepForNewEnumWindowsCall (callId:Int) = {
       latestTriggeredCallId = callId; cbCountForCallId = 0;
       hMapPrior = hMapCur; hMapCur = LinkedHashMap[Int,WinDatEntry]();
@@ -45,7 +45,7 @@ object SwitcheState {
       val shouldExclFlag = Some ( ExclusionsManager.shouldExclude (preExclDat, if(isListenedUpdate){-1} else{latestTriggeredCallId}) )
       preExclDat.copy (shouldExclude = shouldExclFlag)
    }
-   
+
    def cbStreamWinQueryCallback (hwnd:Int, callId:Int):Boolean = {
       if (callId > latestTriggeredCallId) {
          println (s"something went screwy.. got win api callback with callId higher than latest sent! .. treating as latest!")
@@ -101,7 +101,7 @@ object SwitcheState {
          if (!updatedDat.shouldExclude.contains(true)) { SwitchePageState.handleTitleUpdate (hwnd,updatedDat) }
       }
    }
-   
+
    def cbFgndWindowChangeListener (hook:Int, event:Int, hwnd:Int, idObj:Long, idChild:Long, idThread:Int, evTime:Int ):Unit = {
       //HWINEVENTHOOK SetWinEventHook (DWORD eventMin, DWORD eventMax, HMODULE hmodWinEventProc, WINEVENTPROC pfnWinEventProc, DWORD idProcess, DWORD idThread, DWORD dwFlags );
       //WINEVENTPROC void Wineventproc( HWINEVENTHOOK hWinEventHook, DWORD event, HWND hwnd, LONG idObject, LONG idChild, DWORD idEventThread, DWORD dwmsEventTime )
@@ -112,7 +112,7 @@ object SwitcheState {
       // as workaround, ended up doing a npm 'cluster' based thread in main that sits around listening for this and calls us w new hwnd upon fgnd change!
       // .. note that could use 'worker_threads', but elect doesnt seem to take the old node's experimental flag, nor did node-gyp play well w updated node.. oh well
    }
-   
+
    object RenderReadyListsManager {
       case class GroupSortingEntry (seenCount:Int, meanPercIdx:Double)
       val grpSortingMap = mutable.HashMap[String,GroupSortingEntry]()
@@ -125,22 +125,22 @@ object SwitcheState {
       } }
       private def calcRenderReadyLists() = {
          val renderList = hMapCur.values.toSeq .++ ( hMapPrior.values.filterNot{d => hMapCur.contains(d.hwnd)}.toSeq )
-            .filterNot(e => ExclusionsManager.shouldExclude(e,latestTriggeredCallId))
+         val filtRenderList = ExclusionsManager.filterExclusions (renderList)
          // v1: this bunches groups while keeping ordering of highest in list member, but causes groups to move around
-         //val groupedRenderList = renderList.zipWithIndex.groupBy(_._1.exePathName.map(_.fullPath)).values .map(l => l.map(_._1)->l.map(_._2).min).toSeq.sortBy(_._2).map(_._1)
+         //val groupedRenderList = filtRenderList.zipWithIndex.groupBy(_._1.exePathName.map(_.fullPath)).values .map(l => l.map(_._1)->l.map(_._2).min).toSeq.sortBy(_._2).map(_._1)
          // v2: this orders by exePath only, but at least wont cause groups jumping around all the time
-         //val groupedRenderList = renderList.groupBy(_.exePathName.map(_.fullPath)).toSeq.sortBy(_._1).map(_._2)
+         //val groupedRenderList = filtRenderList.groupBy(_.exePathName.map(_.fullPath)).toSeq.sortBy(_._1).map(_._2)
          // v3: this will build a pretty stable but responsive ordering for groups by tracking recents index percentile averages
-         renderList .zipWithIndex .foreach { case(d,i) => d.exePathName.map(_.fullPath).foreach {p => registerEntry(p,i,renderList.size)} }
-         val groupedRenderList = renderList.groupBy(_.exePathName.map(_.fullPath)).toSeq .sortBy{case(po,l) => (po.map(grpSortingMap.get).flatten.map(_.meanPercIdx), po)}.map(_._2)
-         (renderList,groupedRenderList)
+         filtRenderList .zipWithIndex .foreach { case(d,i) => d.exePathName.map(_.fullPath).foreach {p => registerEntry(p,i,filtRenderList.size)} }
+         val groupedRenderList = filtRenderList.groupBy(_.exePathName.map(_.fullPath)).toSeq .sortBy{case(po,l) => (po.map(grpSortingMap.get).flatten.map(_.meanPercIdx), po)}.map(_._2)
+         (filtRenderList, groupedRenderList)
       }
       def updateRenderReadyLists() = {val t = calcRenderReadyLists(); renderList = t._1; groupedRenderList = t._2}
    }
    def updateRenderReadyLists() = RenderReadyListsManager.updateRenderReadyLists()
    def getRenderList() = RenderReadyListsManager.renderList
    def getGroupedRenderList() = RenderReadyListsManager.groupedRenderList
-   
+
    def handleRefreshRequest():Unit = { //println (s"refresh called! @${js.Date.now()}")
       latestTriggeredCallId += 1
       prepForNewEnumWindowsCall(latestTriggeredCallId)
@@ -151,7 +151,7 @@ object SwitcheState {
       // the windows event listeners should handle most change, but this is useful periodically for some clean sweeps?
       if (isDismissed) handleRefreshRequest()
    }
-   
+
    def handleWindowActivationReq(hwnd:Int):Unit = {
       // note that win rules to allow switching require the os to register our switche app processing the most recent ui input (which would've triggered this)
       // hence calling this immediately here can actually be flaky, but putting it on a small timeout seems to make it a LOT more reliable!
@@ -188,7 +188,7 @@ object SwitcheState {
       js.timers.setTimeout(50) {WinapiLocal.activateWindow(hwnd)}
       js.timers.setTimeout(1000) {getSelfWindowOpt.map(WinapiLocal.activateWindow)}
    }
-   
+
    def handleDebugPrintReq() = {
       val nonVisEs = hMapCur.values.filter(!_.isVis.getOrElse(false))
       println (s"Printing non-vis entries (${nonVisEs.size}) :")
@@ -202,7 +202,7 @@ object SwitcheState {
       RenderReadyListsManager.grpSortingMap.toSeq.sortBy(_._2.meanPercIdx).foreach(println); println();
       IconsManager.printIconCaches(); println()
    }
-   
+
    def handleGroupModeToggleReq() = { inGroupedMode = !inGroupedMode; SwitcheFacePage.render() }
 
    def handleElectronHotkeyCall() = { //println ("..electron global hotkey press reported!")
@@ -223,7 +223,7 @@ object SwitcheState {
    def handleElectronBlurEvent() = {}
    def handleElectronShowEvent() = {}
    def handleElectronHideEvent() = {}
-   
+
    def init() {
       js.Dynamic.global.updateDynamic("handleElectronHotkeyCall")(SwitcheState.handleElectronHotkeyCall _)
       js.Dynamic.global.updateDynamic("handleElectronHotkeyGlobalScrollDownCall")(SwitcheState.handleElectronHotkeyGlobalScrollDownCall _)
@@ -253,6 +253,5 @@ object RenderSpacer {
       if ( js.Date.now >= (lastRenderTargStamp-slop)) {
          lastRenderTargStamp = js.Date.now + minRenderSpacing
          js.timers.setTimeout (minRenderSpacing) {js.Dynamic.global.window.requestAnimationFrame({t:js.Any => SwitcheFacePage.render()})}
-
    } }
 }

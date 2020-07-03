@@ -154,9 +154,12 @@ app.on('ready', () => {
    //globalShortcut.register ('Esc', () => {mainWindow.hide()})
    // lol ^ cant do that.. lots of ppl need Esc.. gonna have to handle it from inside window, not globally
    //globalShortcut.register ('F2', () => {hotkeyReverseHandler()}) // ofc cant do this either, hence the following
-   globalShortcut.register ('Ctrl+Alt+F1', () => {hotkeyGlobalScrollDownHandler()})
-   globalShortcut.register ('Ctrl+Alt+F2', () => {hotkeyGlobalScrollUpHandler()})
-   globalShortcut.register ('Ctrl+Alt+F3', () => {hotkeyGlobalScrollEndHandler()})
+   //globalShortcut.register ('Ctrl+Alt+F1', () => {hotkeyGlobalScrollDownHandler()})
+   //globalShortcut.register ('Ctrl+Alt+F2', () => {hotkeyGlobalScrollUpHandler()})
+   //globalShortcut.register ('Ctrl+Alt+F3', () => {hotkeyGlobalScrollEndHandler()})
+   globalShortcut.register ('F21', () => {hotkeyGlobalScrollDownHandler()})
+   globalShortcut.register ('F22', () => {hotkeyGlobalScrollUpHandler()})
+   globalShortcut.register ('F23', () => {hotkeyGlobalScrollEndHandler()})
 })
 
 

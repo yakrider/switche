@@ -154,7 +154,7 @@ object SwitchePageState {
    var groupsHeadsIdsVec: mutable.ArrayBuffer[String] = _
    var curFocusId:String = ""; //var curFocusVecIdx:Int = _; // the idx is to be able to check after we rebuild if we can maintain id?
    var isHoverLocked:Boolean = false; var lastActionStamp:Double = 0 //js .Date.now()
-   var inSearchState:Boolean = false;
+   var inSearchState:Boolean = false; var spaceKeyArmed:Boolean = false;
    
    def rebuildElems() = {} // instead of full render, consider surgical updates to divs directly w/o waiting for global render etc
    
@@ -164,7 +164,7 @@ object SwitchePageState {
    
    private def focusElemIdRecents(id:String) = recentsElemsMap.get(id) .foreach {e => curFocusId = id; e.elem.focus()}
    private def focusElemIdGrouped(id:String) = groupedElemsMap.get(id) .foreach {e => curFocusId = id; e.elem.focus()}
-   private def focusElemIdSearch (id:String) = searchElemsMap.get(id) .foreach {e => curFocusId = id; e.elem.focus()}
+   private def focusElemIdSearch (id:String) = searchElemsMap.get(id) .foreach {e => curFocusId = id; e.elem.focus(); spaceKeyArmed = true;}
    def resetFocus() = { curFocusId = recentsIdsVec.head; focusNextElem()} //js.Dynamic.global.document.activeElement.blur() }
    def focusNextElem() = {
       groupedElemsMap .get(curFocusId) .map(e => (true,e.y)) .orElse {
@@ -287,7 +287,7 @@ object SwitchePageState {
       def getIdElem(d:WinDatEntry, isExeDim:Boolean, r:CheckSearchExeTitleRes) = {
          val id = s"${d.hwnd}_s"; val elem = makeElemBox(id,d,isExeDim,r.exeSpan,r.titleSpan); (id,elem)
       }
-      val x = SwitcheState.getGroupedRenderList() .map {_ .map { d =>
+      SwitcheState.getGroupedRenderList() .map {_ .map { d =>
          d -> SearchHelper.checkSearchExeTitle (d.exePathName.map(_.name).getOrElse(""), d.winText.getOrElse(""), matchStr)
       } .filter { case (d,res) => res.chkPassed }
       } .filterNot(_.isEmpty) .map { ll =>
@@ -309,11 +309,11 @@ object SwitchePageState {
    }
    def activateSearchBox () = { RibbonDisplay.searchBox.focus() }
    def exitSearchState() = { inSearchState = false; RibbonDisplay.searchBox.value = ""; ElemsDisplay.updateElemsDiv() }
-   def handleSpaceKeyDown() = { if (inSearchState) {RibbonDisplay.searchBox.focus()} else {handleCurElemActivationReq()} }
+   def handleSpaceKeyDown() = { if (inSearchState & !spaceKeyArmed) {RibbonDisplay.searchBox.focus()} else {handleCurElemActivationReq()} }
    def handleEscapeKeyUp() = { if (!inSearchState) {SwitcheState.handleSelfWindowHideReq()} else {exitSearchState()} }
    def handleSearchBoxKeyUp(e:KeyboardEvent) = {
       if (e.key == "Escape") {exitSearchState()}
-      else { inSearchState = true; ElemsDisplay.updateElemsDiv() }
+      else { inSearchState = true; ElemsDisplay.updateElemsDiv(); spaceKeyArmed = false; }
    }
    def replaceTitleInnerSpan (elem:Div, newSpan:Span) = {
       clearedElem (elem.getElementsByClassName("titleSpan").apply(0)) .appendChild (newSpan)
@@ -359,6 +359,7 @@ object ElemsDisplay {
       clearedElem(elemsDiv) .appendChild (elemsDivBlock.render)
    }
    def updateElemsDiv () = {
+      SwitcheState.updateRenderReadyLists()
       if (SwitchePageState.inSearchState) { updateElemsDivSearchState }
       else if (SwitcheState.inGroupedMode) { updateElemsDivGroupedMode }
       else { updateElemsDivRecentsMode }

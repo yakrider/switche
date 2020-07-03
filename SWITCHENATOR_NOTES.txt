@@ -4,9 +4,101 @@ RUNNING NOTES DUMP ON POSSIBLE WORK ON THE SWITCHENATOR PROJECT :
    --- temp stickies --- 
 
 
-05/26 .. updates on better icon acuisition
+
+02/20/2020 .. on sporadic recoverable cases upon pc restart where switche fails to activate windows etc
+
+   - very freaking painful.. and drives home the point just how extremely heavily I rely on this utility for my puposes
+   - but anyway, initially was noted only upon updating pc, as that was only when i'd really restart, but turns out it can also happen after regular PC restarts.. basically it comes up and its window etc seems responsive and processing win msgs etc, but it just doesnt seem to be able to activate the windows it wants.. some stupid stuff reminiscent of windows deciding it doesnt meet the criteria to mess w fg windows etc
+   - anyway, not sure what the deal is, but it seems to often be fixed in subsequent restarts
+   - if anything, maybe its less likely to happen if letting the pc sit at login screen for a bit before logging in and to not do much to interrupt the startup sequence.. not even sure how certain that is, but feels that way
+   - and think, at least one instance there was a case where only certain things like chrome werent responsive to it, and upon killing and restarting those, they started behaving again.. but def hasnt always worked and had to resort to restarts.. so who knows fkk
    
-   -- soo, goo news first.. the js/winapi/jimp code did make it relatively straightforward to get the icon extraction going as alternate for old c-app and emitter based icon-extractor
+
+02/10/2020 .. notes on minimal prep before putting it out there
+   
+   - really prob does make sense to put it out there, and seems to be working mostly ok even w the faster rings w windows update.. so wanted to start jotting notes on what all might need to be minimally/progressively addressed while/before putting it out there
+   
+   - a buildable/releasable setup is probably very important, though one could argue its not essential before just putting it out there, should prioritize it though, so can give it to non-technical ppl as well who'd have way too much pain trying to build it given the gyp build pain
+   
+   - should add some minimal help section .. maybe just a link and page up top like the reload/refresh etc .. could be sufficient .. and might consider removing the DebugPrint part too, at least in release builds
+      - esp since there's quite a few kbd shortcuts that likely wont be obvious to folk
+   
+   - prob want to have something that sits in the windows notification area .. esp since it currently can be launched multiply which dont play will with each-other .. at least having something in notif area would let people see it and try to close it out etc (might not be bad either as its standard)
+      - prob means at least some behavior has to be programmed there .. incl quitting, but prob also some minimal config etc
+      
+   - at least for windows exclusions etc, would prob need that to be configurable to be usable for ppl w all sorts of other apps that might be weird too
+      - and in theory the config could also be another link/page up-top, though can consider alternatives.. also should make that invokable from notif area icon when/if there'll be the notif icon implemented
+   
+   - on other possible configs..
+      - could consider giving at least a toggle, maybe right up top or in configs, that lets the window stay/hide when not in focus (ala vistaswitcher)
+      - and should prob think of some simple config backing .. appdata file, registry etc .. and prob consider how to release (installer/zip etc)
+      - not sure how worthwhile, and prob might wait till requests, but at least some of the key configs prob def need to configurable, starting with ofc the most essential one to invoke it .. currently hardcoded to F1 (though there's the alt ones ig)
+      
+   --> as currently is, appears the thing is eating upto 4G of RAM after running for a while .. lol thats absolute madness .. gotta get that down!!.. might just be that its sitting around using whats given w/o doing clean up.. gotta look if there's some setting etc that shouldve been set/updated
+      - though to its credit, thats just virt mem .. the working set in phys mem, though peaked upto 1G+ presumably at startup, usually seems to be around say 40M even after running for weeks
+   
+   
+
+12/05/2019 .. quick note/realization on app launch/setup
+
+   - hmm, so had always kinda been nagging that as currently used, in task windows, node hosting our electron app appeared under another node process
+      - well, just curious finally, deleted the top one, and everything seemed to work fine, so appears the top one was just there from invoking the npm start really, and node could directly be invoked for the electron app
+      - so after a bit of trying out, made another runner to directly call it, its in switche-invis-runner-v2.vbs.. the cmd is just :
+         "C:\Program Files\nodejs\\node.exe" "D:\Sandboxes\git-repos\switchenator\switchenator-sjse\node_modules\.bin\\..\electron\cli.js" "D:\Sandboxes\git-repos\switchenator\switchenator-sjse\main.js"
+         - the vbs just has some extra messy quoting to make the vbs invocation work
+
+   - note that this still leaves a node process hosting the electron process.. which one could argue isnt exactly the clean packaged app like say for slack etc
+      - so looking further down directly into the electron process cmd line and calling that directly, that too seems to work, and only has electron at root!
+      - so created a switche-invis-runner-v3.vbs and now using that for startups, the direct cmd is :
+         "D:\Sandboxes\git-repos\switchenator\switchenator-sjse\node_modules\electron\dist\electron.exe" "D:\Sandboxes\git-repos\switchenator\switchenator-sjse\main.js"
+      - the vbs again has some extra quoting
+   
+   - do note that all three invocation styles do seem to work equivalently, which is nice, means any prior concerns about actual nesting of node engines are irrelevant
+      - now, in theory, whatever the packaging others use for electron apps could be done mostly as is and could give a workable packaged exe hopefully!
+      
+   - a bit too absentminded, but noting down since ran into confusion trying to update a tiny amount.. think if not rebuilding electron etc, and just scalajs changes, just need to do 'fastOptJS::webpack' in sbt to build it (or directly sbt fastOptJS::webpack if in clean console)
+      - and if want to launch w debugger, go back to doing in switchenator dir console, 'npm run-script start-dev' .. look in package.js for the options setup
+      
+
+11/2019 .. running list for wishlist thoughts etc
+
+   - might be worthwhile to add in some coded-scrolling such that on selecting at least the very top of list, the page scrolls to the top.. 
+      - as it looks like occasionally when the list is long enough and requires scroll, when the scroll wraps over or reverse-scrolled back to the top of the list, the auto-scroll for the underlying page just scrolls enough to bring the top entry to the top of the pane, while the rest of the stuff above is still above the visible area.. kinda feels weird and pointless, as expectation would be that if it scrolls back to top, it should look like how it was when we started.. specially since we have no other way of scrolling the page anyway, so we're stuck in that ui state unless we try some search thing that cuts down the list to fit back in pane
+
+   -- allowing drag drop of groups for some mechanism of sticky reordering .. could be made to work w or using existing sticky counts based ordering too
+   
+   -- if not doing direct chrome integration via some app etc, could still consider making tab-outliner invocation a bit easier
+      - maybe a dedicated key to bring that window up if its open?
+      - although really that kind of stuff should just be done via ahk if desired
+      
+   -- have found a couple times wishing it could have fn added to actually open new apps if not open
+      - one way would be to also cache a list of ever-used apps etc, and show them in search window below everything else, and start them if activated
+      - though really, not sure if worth polluting functionality/focus w that, esp as can just do that w win startbtn, or Everything search etc
+      
+   -- would def be nice to have some persisting config implementation
+      - could do at least stuff like easier configurable exclusion etc lists
+      - would allow for more persistent ordering stats/mechanics too
+      
+   -- finally ofc, would certainly be nice to build some packaged soln now that its been mostly stable for a long time (despite wrinkles etc)
+      - would open the way to actually having other people use it too, which could be nice in its own ways
+      - plus there's always the worry that some next compilation it breaks etc because of the pain w building in win.. a solid app would feel a lot safer
+      
+   x-- getting rid of the nested node stuff... prob quite important before considering any packaging etc effort anyway
+   
+   -- could consider adding a slow background maybe per-entry randomized update of all things incl icons
+      - mostly because every now and then, the icon gets extracted a point in time where its transient and sticks around, and therefore doesnt represent what it should actually be throughout its lifetime.. e.g. for some explorer windows, chrome saved apps etc
+      - also there seem to be some occasional circumstances when spurious window entries hang around that disappear after a refresh.. could check to see if there's already some background refresh that does happen, but dont think so
+   -- alternately for above (^^), could consider adding a simple shortcut say ctrl-r etc that requires just the particular in-focus row, maybe just to get the icon and details from hwnd .. honestly not that big a deal to a full reload (F5), but keep coming to it, so might be useful for point use
+      - or maybe should also look to see if that trigger refresh button should explicitly requery icons.. should be faster than reload
+      - note that can add icon querying specifically to the click action, and not directly to the refresh call that triggers which might also be being used in automated fashion at other times/events etc
+      
+   d- re the duplicates that show up and get filtered already for winamp.. maybe should add a more generic thing for anything with ApplicationFrameHost, and if there's another entry with matching title, then to filter that out.. typical use case that seems to cover windows-store etc
+   
+
+
+05/26 .. updates on better icon aquisition
+   
+   -- soo, good news first.. the js/winapi/jimp code did make it relatively straightforward to get the icon extraction going as alternate for old c-app and emitter based icon-extractor
    - and even the initial tests on querying actual hicon from hwnds worked out pretty nicely.. and looked like we might be wrapping everything up quick.. (lol)
    - however, the when going from single tests to running for full hwnd list, ran into a real pain w something just completely hanging the app/browser, so much so that it'd make it unreloadable, incl the developer-tools going awol.. pain in the ass to look around and fix
    - eventually, turned out that was literally from the SendMessageA calls to the hwnds hanging.. in the first seen case, seemed to be to a minor update box/window for vs-code.. but certainly there'd be many others as well and so on

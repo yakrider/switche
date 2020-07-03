@@ -1,12 +1,18 @@
 import java.nio.charset.Charset
 import sbt.Keys._
 import sbt.Project.projectToRef
+import sbtcrossproject.CrossPlugin.autoImport.{crossProject, CrossType}
+
+
+scalaVersion := "2.11.8"
+scalaVersion in ThisBuild := "2.11.8"
+
 
 enablePlugins(ScalaJSPlugin)
 //scalaJSUseRhino in Global := false //using node
 
 // a special crossProject for configuring a JS/JVM/shared structure
-lazy val shared = (crossProject.crossType(CrossType.Pure) in file("switchshared")) .settings (
+lazy val shared = (crossProject(JSPlatform,JVMPlatform).crossType(CrossType.Pure) in file("switchshared")) .settings (
   scalaVersion := GlobalSettings.versions.scala,
   libraryDependencies ++= GlobalSettings.sharedDependencies.value
 )
@@ -19,6 +25,8 @@ lazy val sharedJS = shared.js.settings(name := "switchenator-sharedJS")
 
 
 // instantiate the JVM project for SBT with some additional settings
+lazy val switchback = (project in file("switchback"))  .settings( )
+/*
 lazy val switchback = (project in file("switchback"))  .settings(
     name := "switchback",
     organization := GlobalSettings.organization,
@@ -37,7 +45,7 @@ lazy val switchback = (project in file("switchback"))  .settings(
 )
 //.dependsOn(sharedJVM) // disabled until we actually have shared stuff
 .enablePlugins (JettyPlugin)
-
+*/
 
 lazy val switchface = (project in file("switchface")) .settings (
     name := "switchface",
@@ -49,12 +57,17 @@ lazy val switchface = (project in file("switchface")) .settings (
     
     libraryDependencies ++= GlobalSettings.sharedDependencies.value,
     libraryDependencies ++= GlobalSettings.scalajsDependencies.value,    
-    jsDependencies ++= GlobalSettings.jsDependencies.value,
+    jsDependencies ++= GlobalSettings.jsDependencies.value, // disabling this for 1.x builds
+
+    // ECMAScript
+    //scalaJSLinkerConfig ~= { _.withModuleKind(ModuleKind.ESModule) },
+    // CommonJS
+    scalaJSLinkerConfig ~= { _.withModuleKind(ModuleKind.CommonJSModule) },    
 
     skip in packageJSDependencies := false,   
 
     resolvers += Resolver.sonatypeRepo("public")
-    
+
 ) 
 //.dependsOn(sharedJS) // disabled until we have shared stuff
 .enablePlugins(ScalaJSPlugin)
@@ -70,25 +83,27 @@ lazy val elPackProd = taskKey[Unit]("electronPackage:elPackProd")
 addCommandAlias("goLiveServer", "; jetty:stop; switchback/compile; jetty:start; jetty:join")
 
 
+lazy val elecProjAlias = switchface // using alias so can can just update proj name here rather than in code below
+
 lazy val electronPackage = project.in(file("target/electronPackage")) settings(
    name:="electronPackage",
    version:="0.0.1",
    scalaVersion:="2.11.8",
   elPack := {
-    val appTarget = (fastOptJS in switchface in Compile).value
-    val resourceDir = (resourceDirectory in switchface in Compile).value
+    val appTarget = (fastOptJS in elecProjAlias in Compile).value
+    val resourceDir = (resourceDirectory in elecProjAlias in Compile).value
     // build the electron package in same target parent location
-    val electronPackageLoc = new File ((target in switchface in Compile).value, "electronPackage")
+    val electronPackageLoc = new File ((target in elecProjAlias in Compile).value, "electronPackage")
     makeElectronPackage (appTarget, resourceDir, electronPackageLoc)
   },
   elPackProd := {
-    val appTarget = (fullOptJS in switchface in Compile).value
-    val resourceDir = (resourceDirectory in switchface in Compile).value
+    val appTarget = (fullOptJS in elecProjAlias in Compile).value
+    val resourceDir = (resourceDirectory in elecProjAlias in Compile).value
     // build the electron package in same target parent location
-    val electronPackageLoc = new File ((target in switchface in Compile).value, "electronPackage")
+    val electronPackageLoc = new File ((target in elecProjAlias in Compile).value, "electronPackage")
     makeElectronPackage (appTarget, resourceDir, electronPackageLoc)
   }
-) dependsOn(switchface)
+) dependsOn(elecProjAlias)
 
 
 
@@ -102,6 +117,7 @@ def makeElectronPackage (appTarget:Attributed[File], resourcesLoc:File, outTarge
     val depsInName = jsInName.replace("fastopt.js", "jsdeps.js").replace("fullopt.js", "jsdeps.min.js")
     val depsOutName = depsInName.replace("jsdeps.js","deps.js").replace("jsdeps.min.js","deps.js")    
     recursiveCopy (new File(resourcesLoc, "electron"), outTargetLoc)
+    recursiveCopy (new File(resourcesLoc, "jslocal"), outTargetLoc)
     recursiveCopy (t, new File (outTargetLoc, jsOutName))
     recursiveCopy (new File (t.getParent, srcMapInName), new File (outTargetLoc, srcMapOutName))
     recursiveCopy (new File (t.getParent, depsInName), new File (outTargetLoc, depsOutName))
