@@ -5,8 +5,18 @@ RUNNING NOTES DUMP ON POSSIBLE WORK ON THE SWITCHENATOR PROJECT :
 
 
 
-02/20/2020 .. on sporadic recoverable cases upon pc restart where switche fails to activate windows etc
+03/12/2021 .. starting to jot down some nagging observations/improvements
 
+   - esp when things go slow etc, not sure why but after many weeks of pc being on etc, seems not catch all events etc .. so regardless, it becomes often enough after a while that it seems worthwhile adding some fallback periodic refresh mechanism
+      - in particular, doesnt seem to catch win minimize/alt-esc etc events .. not sure if those are actually monitored
+      - regardless, think might be worth triggering a refresh on things that would 'hide' the switche window anyway, aka mostly in background
+      
+   - also, refresh doesnt so far update icons, and sometimes icons themselves get out of sync and never update .. currently can do reload to get new stuff, but in theory could consider adding that to refresh and therefore letting it happen in background too? 
+      - alt, could consider setting up something for periodic background non-batch icon updates .. just something that slowly sweeps through things periodically and updates visible stuff icons w/o much load
+   
+
+
+02/20/2020 .. on sporadic recoverable cases upon pc restart where switche fails to activate windows etc
    - very freaking painful.. and drives home the point just how extremely heavily I rely on this utility for my puposes
    - but anyway, initially was noted only upon updating pc, as that was only when i'd really restart, but turns out it can also happen after regular PC restarts.. basically it comes up and its window etc seems responsive and processing win msgs etc, but it just doesnt seem to be able to activate the windows it wants.. some stupid stuff reminiscent of windows deciding it doesnt meet the criteria to mess w fg windows etc
    - anyway, not sure what the deal is, but it seems to often be fixed in subsequent restarts

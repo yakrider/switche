@@ -235,7 +235,7 @@ exports.activateWindow = function activateWindow (hwnd) {
   console.log ('showCmd is ', lpwndpl.showCmd)
   // SW enums are : 0:hide, 1:show, 2:showmin, 3:showmax, 4:show-no-activate, 5:show, 6:minimize, 7:show-min-no-act, 8:show-no-act, 9:restore
   if (lpwndpl.showCmd == 2) { // means minimized, gotta do the restore first
-    user32.ShowWindow(hwnd, 9) // 9 is the SW_RESTORE cmd, required for minimized windows, but will 'restore' maximized ones
+    user32.ShowWindowAsync(hwnd, 9) // 9 is the SW_RESTORE cmd, required for minimized windows, but will 'restore' maximized ones
   } else {
     //user32.ShowWindowAsync(hwnd, 0)
     user32.ShowWindowAsync(hwnd, 5)
@@ -247,6 +247,10 @@ exports.activateWindow = function activateWindow (hwnd) {
   //console.log('did async 0/hide 5/sw_show')
   //user32.SetForegroundWindow(hwnd);
   return user32.SetForegroundWindow(hwnd);
+}
+exports.minmizeWindow = function minimizeWindow (hwnd) {
+   console.log("called 'minimize window' for :", hwnd)
+   user32.ShowWindowAsync(hwnd,2)
 }
 exports.hideWindow = function hideWindow (hwnd) {
   return user32.ShowWindow(hwnd,0) // 0 is for hide cmd, can be shown by show cmd

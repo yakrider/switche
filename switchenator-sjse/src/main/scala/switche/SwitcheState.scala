@@ -73,6 +73,9 @@ object SwitcheState {
          dat.exePathName.map(_.fullPath).foreach(ep => IconsManager.processFoundHwndExePath(hwnd,ep))
          RenderSpacer.queueSpacedRender() // no point being more surgical, as for grouped stuff, everything might have to be reordered anyway
       }
+      // ugh, this sucks, but looks like alt-esc which sends cur win to z-order back has no triggered event other than the next win coming up ..
+      // so instead, we'll just try and queue a (relatively light) refresh-request on every fgnd change .. oh well
+      handleRefreshRequest()
    }
    def handleWindowsObjShownReport (hwnd:Int):Unit = { //println(s"fgnd report: $hwnd")
       if ( !hMapCur.contains(hwnd) || hMapCur(hwnd).isVis.contains(true) || !hMapCur(hwnd).everFgnd.contains(true) ) return;
@@ -163,6 +166,10 @@ object SwitcheState {
       js.timers.setTimeout(80) {isDismissed = true; getSelfWindowOpt.map(WinapiLocal.hideWindow)}
       //js.timers.setTimeout(150) {handleRefreshRequest()}
    }
+   def handleWindowMinimizeReq(hwnd:Int):Unit = {
+      js.timers.setTimeout(25) {WinapiLocal.minimizeWindow(hwnd)}
+      js.timers.setTimeout(60) {WinapiLocal.minimizeWindow(hwnd)}
+   }
    def getSelfWindowOpt() = {
       hMapPrior.values.filter(ExclusionsManager.selfSelector).headOption.map(_.hwnd)
    }
@@ -219,6 +226,9 @@ object SwitcheState {
    def handleElectronHotkeyGlobalScrollEndCall() = {
       if (!isDismissed) { SwitchePageState.handleCurElemActivationReq() }
    }
+   def handleElectronHotkeyGlobalSilentTabSwitchCall() = {
+      SwitchePageState.handleSecondRecentActivationReq()
+   }
    def handleElectronFocusEvent() = {}
    def handleElectronBlurEvent() = {}
    def handleElectronShowEvent() = {}
@@ -226,6 +236,7 @@ object SwitcheState {
 
    def init() {
       js.Dynamic.global.updateDynamic("handleElectronHotkeyCall")(SwitcheState.handleElectronHotkeyCall _)
+      js.Dynamic.global.updateDynamic("handleElectronHotkeyGlobalSilentTabSwitchCall")(SwitcheState.handleElectronHotkeyGlobalSilentTabSwitchCall _)
       js.Dynamic.global.updateDynamic("handleElectronHotkeyGlobalScrollDownCall")(SwitcheState.handleElectronHotkeyGlobalScrollDownCall _)
       js.Dynamic.global.updateDynamic("handleElectronHotkeyGlobalScrollUpCall")(SwitcheState.handleElectronHotkeyGlobalScrollUpCall _)
       js.Dynamic.global.updateDynamic("handleElectronHotkeyGlobalScrollEndCall")(SwitcheState.handleElectronHotkeyGlobalScrollEndCall _)
@@ -248,7 +259,7 @@ object RenderSpacer {
    // so to many requestAnimationFrame interspersed are taking a lot of time, as they each are upto 100ms, so gonna bunch them up too
    val minRenderSpacing = 50; val slop = 4; // in ms, slop is there just to catch jitter, delays etc, might not be needed
    var lastRenderTargStamp = 0d // js.Date.now()
-   def queueSpacedRender () = {
+   def queueSpacedRender():Unit = {
       val targStamp = js.Date.now + minRenderSpacing
       if ( js.Date.now >= (lastRenderTargStamp-slop)) {
          lastRenderTargStamp = js.Date.now + minRenderSpacing

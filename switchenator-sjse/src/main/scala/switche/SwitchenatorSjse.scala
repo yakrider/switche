@@ -10,12 +10,12 @@ import scala.scalajs.js.annotation.JSImport
 object SwitchenatorSjse extends js.JSApp {
    def main(): Unit = {
       dom.document.getElementById("scala-js-root-div").appendChild (SwitcheFacePage.getShellPage())
-      
+
       SwitcheState.handleRefreshRequest() // fire up first call
-      
+
       // the fgnd/close/title change listeners should in theory cover everything, but might be useful to periodically clean up random things that might fall through
       js.timers.setInterval(30*1000) {SwitcheState.backgroundOnlyRefreshReq()}
-      
+
    }
 }
 
@@ -24,6 +24,7 @@ object SwitchenatorSjse extends js.JSApp {
 object WinapiLocal extends js.Object {
    // underneath, most use user32.dll, some use kernel32.dll and psapi.dll
    def activateWindow (hwnd:Int):Int = js.native
+   def minimizeWindow (hwnd:Int):Int = js.native
    //def getVisibleWindows (cb:js.Function1[js.Array[String], Unit]):Unit = js.native
    //def printVisibleWindows():Unit = js.native
    def streamWindowsQuery (cb:js.Function2[Int,Int,Boolean], callId:Int):Unit = js.native

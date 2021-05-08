@@ -26,26 +26,31 @@ object ExclusionsManager {
       )
       val exclExeMatches: ExclFnType = {_.exePathName.map(_.name).map(exeMatchExclusions.contains).getOrElse(true) }
 
-      val exeAndTitleMatchExclusions = Set[(Option[String],Option[String])] (
-         //(Some("ShellExperienceHost.exe"), Some("Start"))
-         //(Some("ShellExperienceHost.exe"), Some("Windows Shell Experience Host"))
-         //(Some("ShellExperienceHost.exe"), Some("New notification"))
-         (Some("explorer.exe"), Some("Program Manager")),
-         (Some("explorer.exe"), Some("SubFolderTipWindow")),
-         //(Some("electron.exe"), Some("Sjs-Electron-Local-JS-Test")), // covererd separately as self exclusion so externalized configs wont need this
-         (Some("atmgr.exe"), Some("FloatActionBar")),
-         //(Some("SystemSettings.exe"), Some("Settings")),
-         //(Some("ApplicationFrameHost.exe"), Some("Settings")),
-         //(Some("ApplicationFrameHost.exe"), Some("Microsoft Edge"))
+      val exeAndTitleMatchExclusions = Map[String, Set[String]] ( // exact exe-name and full-title matches
+         "ShellExperienceHost.exe" -> Set ("Start", "Windows Shell Experience Host", "New notification"),
+         "explorer.exe" -> Set ("Program Manager", "SubFolderTipWindow"),
+         //"electron.exe" -> Set ("Sjs-Electron-Local-JS-Test"), // covererd separately as self exclusion so externalized configs wont need this
+         "atmgr.exe" -> Set ("FloatActionBar")
+         //"SystemSettings.exe" -> Set("Settings"),
+         //"ApplicationFrameHost.exe" -> Set("Settings", "Microsoft Edge"),
       )
-      val exclExeAndTitleMatches: ExclFnType = {e => exeAndTitleMatchExclusions.contains((e.exePathName.map(_.name),e.winText)) }
+      val exclExeAndTitleMatches: ExclFnType = { e =>
+         e.exePathName.map(_.name) .flatMap(exeAndTitleMatchExclusions.get) .exists (s => e.winText.exists(s.contains))
+      }
+
+      val exeAndPartTitleMatchExclusions = Map[String,Set[String]] ( // exact exe-name and partial-title matches
+         "Dimmer.exe" -> Set("#"),
+      )
+      val exclExeAndPartTitleMatches: ExclFnType = { e =>
+         e.exePathName.map(_.name) .flatMap(exeAndPartTitleMatchExclusions.get) .exists (s => e.winText.exists(wt => s.exists(wt.contains)))
+      }
 
       val exclSelf: ExclFnType = {e => selfSelector(e)}
 
       val exclusions = List[ExclFnType] (
          // NOTE: exclInvis and exclEmptyTitles have also been partially built into upstream processing to eliminate pointless winapi queries etc
          //exclInvis, exclEmptyTitles, exclTitleMatches, exclExeMatches, exclTitleAndExeMatches
-         exclInvis, exclEmptyTitles, exclExeMatches, exclExeAndTitleMatches, exclSelf
+         exclInvis, exclEmptyTitles, exclExeMatches, exclExeAndTitleMatches, exclExeAndPartTitleMatches, exclSelf
       )
       //def shouldExclude (e:WinDatEntry) = exclInvis(e) || exclEmptyTitles(e) || exclExeMatches(e) || exclTitleMatches(e) || exclExeAndTitleMatches(e)
       def shouldExclude(e:WinDatEntry) = exclusions.exists(_(e))

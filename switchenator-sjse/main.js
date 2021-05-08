@@ -36,6 +36,10 @@ if (!cluster.isMaster) {
               process.send({type:'ObjHidden', hwnd:ref.address(hwnd)});
            } else if (event===0x800C) {
               process.send({type:'TitleChanged', hwnd:ref.address(hwnd)});
+           } else if (event===0x8017) {
+              process.send({type:'ObjCloaked', hwnd:ref.address(hwnd)});
+           } else if (event===0x8018) {
+              process.send({type:'ObjUnCloaked', hwnd:ref.address(hwnd)});
            }
         }
       }
@@ -43,7 +47,7 @@ if (!cluster.isMaster) {
    if (process.env.task=='sys-events') {
       user32.SetWinEventHook (0x0003, 0x0017, null, pfnWinEventProc_fgnd, 0, 0, 0 )
    } else if (process.env.task=='obj-events') {
-      user32.SetWinEventHook (0x8001, 0x800C, null, pfnWinEventProc_objKill, 0, 0, 0 )
+      user32.SetWinEventHook (0x8001, 0x8017, null, pfnWinEventProc_objKill, 0, 0, 0 )
    }
    // winapi requires the thread to be waiting on getMessage to get win-event-hook callbacks!
    function getMessage() { return user32.GetMessageA (ref.alloc(ref.refType(ref.types.void)), null, 0, 0) }
@@ -157,6 +161,7 @@ app.on('ready', () => {
    //globalShortcut.register ('Ctrl+Alt+F1', () => {hotkeyGlobalScrollDownHandler()})
    //globalShortcut.register ('Ctrl+Alt+F2', () => {hotkeyGlobalScrollUpHandler()})
    //globalShortcut.register ('Ctrl+Alt+F3', () => {hotkeyGlobalScrollEndHandler()})
+   globalShortcut.register ('F20', () => {hotkeyGlobalSilentTabSwitchHandler()})
    globalShortcut.register ('F21', () => {hotkeyGlobalScrollDownHandler()})
    globalShortcut.register ('F22', () => {hotkeyGlobalScrollUpHandler()})
    globalShortcut.register ('F23', () => {hotkeyGlobalScrollEndHandler()})
@@ -167,6 +172,10 @@ function hotkeyHandler() {
    //mainWindow.webContents.executeJavaScript('window.handleElectronHotkeyCall()', function(result){console.log(result)})
    mainWindow.webContents.executeJavaScript('window.handleElectronHotkeyCall()')
    mainWindow.show()
+}
+function hotkeyGlobalSilentTabSwitchHandler() {
+   mainWindow.webContents.executeJavaScript('window.handleElectronHotkeyGlobalSilentTabSwitchCall()')
+   //mainWindow.show()
 }
 function hotkeyGlobalScrollDownHandler() {
    mainWindow.webContents.executeJavaScript('window.handleElectronHotkeyGlobalScrollDownCall()')
@@ -209,9 +218,9 @@ sysEventsWorker.on('message', function(msg) {
 })
 //objDestroyedWorker.on('message', function(hwnd) { mainWindow.webContents.executeJavaScript(`window.handleWindowsObjDestroyedReport(${hwnd})`) })
 objEventsWorker.on('message', function(msg) {
-   if (msg.type=='ObjDestroyed' || msg.type=='ObjHidden') {
+   if (msg.type=='ObjDestroyed' || msg.type=='ObjHidden' || msg.type=='ObjCloaked') {
       mainWindow.webContents.executeJavaScript(`window.handleWindowsObjDestroyedReport(${msg.hwnd})`) 
-   } else if (msg.type=='ObjShown') {
+   } else if (msg.type=='ObjShown' || msg.type=='ObjUnCloaked') {
       mainWindow.webContents.executeJavaScript(`window.handleWindowsObjShownReport(${msg.hwnd})`)
    } else if (msg.type=='TitleChanged') {
       mainWindow.webContents.executeJavaScript(`window.handleWindowsTitleChangedReport(${msg.hwnd})`) 

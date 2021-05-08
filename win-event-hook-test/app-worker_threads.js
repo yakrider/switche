@@ -47,6 +47,7 @@ if (isMainThread) {
     }
     const pfnWinEventProc = ffi.Callback('void', ['pointer', 'int', intPtr, 'long', 'long', 'int', 'int'], callback)
 
+   //HWINEVENTHOOK SetWinEventHook (DWORD eventMin, DWORD eventMax, HMODULE hmodWinEventProc, WINEVENTPROC pfnWinEventProc, DWORD idProcess, DWORD idThread, DWORD dwFlags );
     user32.SetWinEventHook(3, 3, null, pfnWinEventProc, 0, 0, 0 )
 
     //setInterval ( function(){console.log('.')}, 1000 ) // keep the script alive

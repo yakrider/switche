@@ -70,13 +70,17 @@ if (cluster.isMaster) {
             if (idObject===0) { // only track at window level
                 //console.log('x0800? hook :: event:',event.toString(16),' hwnd:',ref.address(hwnd),' id:',idObject,' idChild:',idChild);
                 if (event===0x8001) {
-                process.send({type:'kill', hwnd:ref.address(hwnd)});
+                   process.send({type:'kill', hwnd:ref.address(hwnd)});
                 } else if (event===0x8002) {
-                    process.send({type:'show', hwnd:ref.address(hwnd)});
+                   process.send({type:'show', hwnd:ref.address(hwnd)});
                 } else if (event===0x8003) {
-                    process.send({type:'hide', hwnd:ref.address(hwnd)});
+                   process.send({type:'hide', hwnd:ref.address(hwnd)});
+                } else if (event===0x8004) {
+                   process.send({type:'reorder', hwnd:ref.address(hwnd)});
                 } else if (event===0x800C) {
-                    process.send({type:'title', hwnd:ref.address(hwnd)});
+                   process.send({type:'title', hwnd:ref.address(hwnd)});
+                } else {
+                   process.send({type:event.toString(16), hwnd:ref.address(hwnd)});
                 }
             }
         }
@@ -87,7 +91,7 @@ if (cluster.isMaster) {
     if (process.env.task=='fgnd') { console.log('fgnd worker reporting!..')
         user32.SetWinEventHook(0x0003, 0x0017, null, pfnWinEventProc, 0, 0, 0 )
     } else if (process.env.task=='kill') { console.log('kill worker reporting!..')
-        user32.SetWinEventHook(0x8001, 0x800C, null, pfnWinEventProc2, 0, 0, 0 )
+        user32.SetWinEventHook(0x8001, 0x8018, null, pfnWinEventProc2, 0, 0, 0 )
     }
 
     process.on('message', function(msg) {

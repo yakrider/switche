@@ -38,7 +38,7 @@ object SwitcheFacePage {
    import SwitchePageState._
    import SwitcheState._
    import DomExts._
-   
+
    def getShellPage () = {
       val topRibbon = RibbonDisplay.getTopRibbonDiv()
       val elemsDiv = ElemsDisplay.getElemsDiv
@@ -113,7 +113,9 @@ object SwitcheFacePage {
    }
    def capturePhaseKeydownHandler (e:KeyboardEvent) = { //printKeyDebugInfo(e,"down")
       triggerHoverLockTimeout()
-      if (e.altKey) {}
+      if (e.altKey) {
+         if (e.key == "m") {handleCurlElemMinimizeReq()}
+      }
       else if (e.ctrlKey) {
          if (e.key == " ") {handleCurElemActivationReq()}
          else if (e.key == "t") {handleGroupModeToggleReq()}
@@ -138,7 +140,7 @@ object SwitcheFacePage {
          else if (e.key == "F5") {dom.window.location.reload()}
          else { activateSearchBox(); } //printKeyDebugInfo(e,"down") }
    } }
-   
+
 }
 
 object SwitchePageState {
@@ -155,13 +157,13 @@ object SwitchePageState {
    var curFocusId:String = ""; //var curFocusVecIdx:Int = _; // the idx is to be able to check after we rebuild if we can maintain id?
    var isHoverLocked:Boolean = false; var lastActionStamp:Double = 0 //js .Date.now()
    var inSearchState:Boolean = false; var spaceKeyArmed:Boolean = false;
-   
+
    def rebuildElems() = {} // instead of full render, consider surgical updates to divs directly w/o waiting for global render etc
-   
+
    def getElemId (hwnd:Int,isGrpElem:Boolean) = s"${hwnd}${if (isGrpElem) "_g" else ""}"
    def idToHwnd (idStr:String) = idStr.split("_").head.toInt // if fails, meh, its js!
    def isIdGrp (idStr:String) = {idStr.split("_").head != idStr}
-   
+
    private def focusElemIdRecents(id:String) = recentsElemsMap.get(id) .foreach {e => curFocusId = id; e.elem.focus()}
    private def focusElemIdGrouped(id:String) = groupedElemsMap.get(id) .foreach {e => curFocusId = id; e.elem.focus()}
    private def focusElemIdSearch (id:String) = searchElemsMap.get(id) .foreach {e => curFocusId = id; e.elem.focus(); spaceKeyArmed = true;}
@@ -231,16 +233,23 @@ object SwitchePageState {
       else if (SwitcheState.inGroupedMode) { groupedIdsVec.lastOption.map(focusElemIdGrouped) }
       else { recentsIdsVec.lastOption.map(focusElemIdRecents) }
    }
+
    def handleCurElemActivationReq() = { SwitcheState.handleWindowActivationReq(idToHwnd(curFocusId)) }
+   def handleCurlElemMinimizeReq() = { SwitcheState.handleWindowMinimizeReq(idToHwnd(curFocusId)) }
    def handleCurElemCloseReq() = { SwitcheState.handleWindowCloseReq(idToHwnd(curFocusId)) }
    def handleCurElemShowReq() = { SwitcheState.handleWindowShowReq(idToHwnd(curFocusId)) }
+
+   def handleSecondRecentActivationReq() = {
+      recentsIdsVec.drop(1).headOption .map(idToHwnd) .foreach(SwitcheState.handleWindowActivationReq)
+   }
+
    def handleMouseEnter (idStr:String, elem:Div) = { if (!isHoverLocked) { curFocusId = idStr; elem.focus() } }
    def triggerHoverLockTimeout() = {
       isHoverLocked = true; val t = js.Date.now(); lastActionStamp = t;
       js.timers.setTimeout(hoverLockTime){checkHoverLockTimeout(t)}
    }
    def checkHoverLockTimeout(kickerStamp:Double) = { if (lastActionStamp == kickerStamp) isHoverLocked = false; }
-   
+
    def makeElemBox (idStr:String, e:WinDatEntry, dimExeSpan:Boolean=false):Div = {
       val exeInnerSpan = span ( e.exePathName.map(_.name).getOrElse("exe..").toString ).render
       val titleInnerSpan = span ( e.winText.getOrElse("title").toString ).render
@@ -327,14 +336,14 @@ object SwitchePageState {
          searchElemsMap.get(s"${hwnd}_s").map(_.elem).foreach{elem => replaceTitleInnerSpan(elem,sRes.titleSpan)}
       }
    }
-   
+
 }
 
 object ElemsDisplay {
    import SwitcheFaceConfig._
    val elemsDiv = div (id:="elemsDiv").render
    def getElemsDiv = elemsDiv
-   
+
    def updateElemsDivRecentsMode = {
       SwitchePageState.rebuildRecentsElems()
       val recentElemsHeader = div (`class`:="groupedModeHeader", "Recents:")
