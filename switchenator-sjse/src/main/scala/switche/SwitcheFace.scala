@@ -102,9 +102,10 @@ object SwitcheFacePage {
       if (e.button == 1) {mouseMiddleClickHandler(e)}
    }
    def mouseWheelHandler (e:WheelEvent) = {
-      triggerHoverLockTimeout()
-      if (e.deltaY > 0) { focusNextElem() } else { focusPrevElem() }
-   }
+      if (verifyActionRepeatSpacing(10d)) {  // enforced spacing (in ms) between consecutive mouse scroll action handling
+         triggerHoverLockTimeout()
+         if (e.deltaY > 0) { focusNextElem() } else { focusPrevElem() }
+   } }
    def mouseEnterHandler (e:MouseEvent) = {
       e.target.closest(".elemBox").foreach{e => handleMouseEnter(e.id,e.asInstanceOf[Div])}
    }
@@ -250,6 +251,13 @@ object SwitchePageState {
    }
    def checkHoverLockTimeout(kickerStamp:Double) = { if (lastActionStamp == kickerStamp) isHoverLocked = false; }
 
+   def verifyActionRepeatSpacing (minRepeatSpacingMs:Double) : Boolean = {
+      val t = scalajs.js.Date.now()
+      if ((t - lastActionStamp) < minRepeatSpacingMs) { return false }
+      lastActionStamp = t
+      return true
+   }
+
    def makeElemBox (idStr:String, e:WinDatEntry, dimExeSpan:Boolean=false):Div = {
       val exeInnerSpan = span ( e.exePathName.map(_.name).getOrElse("exe..").toString ).render
       val titleInnerSpan = span ( e.winText.getOrElse("title").toString ).render
@@ -346,23 +354,23 @@ object ElemsDisplay {
 
    def updateElemsDivRecentsMode = {
       SwitchePageState.rebuildRecentsElems()
-      val recentElemsHeader = div (`class`:="groupedModeHeader", "Recents:")
+      val recentElemsHeader = div (`class`:="groupedModeHeader", nbsp(1), "Recents:")
       val recentElemsDivList = div (SwitchePageState.recentsElemsMap.values.map(_.elem).toSeq).render
       val elemsDivBlock = div (recentElemsHeader, recentElemsDivList)
       clearedElem(elemsDiv) .appendChild (elemsDivBlock.render)
    }
    def updateElemsDivGroupedMode = {
       SwitchePageState.rebuildGroupedElems()
-      val recentElemsHeader = div (`class`:="groupedModeHeader", "Recents:")
+      val recentElemsHeader = div (`class`:="groupedModeHeader", nbsp(1), "Recents:")
       val recentElemsDivList = div (SwitchePageState.recentsElemsMap.values.map(_.elem).toSeq).render
-      val groupedElemsHeader = div (`class`:="groupedModeHeader", "Grouped:")
+      val groupedElemsHeader = div (`class`:="groupedModeHeader", nbsp(1), "Grouped:")
       val groupedElemsDivList = div (SwitchePageState.groupedElemsMap.values.map(_.elem).toSeq).render
       val elemsDivBlock = div (recentElemsHeader, recentElemsDivList, groupedElemsHeader, groupedElemsDivList)
       clearedElem(elemsDiv) .appendChild (elemsDivBlock.render)
    }
    def updateElemsDivSearchState = {
       SwitchePageState.rebuildSearchElems()
-      val searchElemsHeader = div (`class`:="groupedModeHeader", "Searched::")
+      val searchElemsHeader = div (`class`:="groupedModeHeader", nbsp(1), "Searched::")
       val searchElemsDivList = div (SwitchePageState.searchElemsMap.values.map(_.elem).toSeq).render
       val elemsDivBlock = div (searchElemsHeader, searchElemsDivList)
       clearedElem(elemsDiv) .appendChild (elemsDivBlock.render)
@@ -379,18 +387,25 @@ object ElemsDisplay {
 object RibbonDisplay {
    import SwitcheFaceConfig._
    import SwitcheState._
-   val countSpan = span (id:="countSpan").render
+   val countSpan = span (id:="countSpan", style:="-webkit-app-region:drag").render
+   val debugLinks = span ().render
    val searchBox = input (`type`:="text", id:="searchBox", placeholder:="").render
    searchBox.onkeyup = (e:KeyboardEvent) => {SwitchePageState.handleSearchBoxKeyUp(e)}
    // the box itself takes chars on keypress, do consider interactions here ^ w broader handling.. e.g handling keyup here w keydown elsewhere etc
-   def updateCountsSpan (n:Int) = { clearedElem(countSpan).appendChild( span(s"($n)").render ) }
+   def updateCountsSpan (n:Int) = { clearedElem(countSpan) .appendChild ( span ( nbsp(3), s"($n) ※", nbsp(3) ).render ) }
+   def updateDebugLinks() = {
+      clearElem(debugLinks)
+      if (SwitcheState.inElectronDevMode) {
+         val printExclLink =  a ( href:="#", "DebugPrint", onclick:={e:MouseEvent => handleDebugPrintReq()} ).render
+         debugLinks.appendChild ( printExclLink )
+   } }
    def getTopRibbonDiv() = {
       val reloadLink = a (href:="#", "Reload", onclick:={e:MouseEvent => g.window.location.reload()} )
       val refreshLink = a (href:="#", "Refresh", onclick:={e:MouseEvent => handleRefreshRequest()} )
-      val printExclLink = a (href:="#", "DebugPrint", onclick:={e:MouseEvent => handleDebugPrintReq()} )
       val groupModeLink = a (href:="#", "ToggleGrouping", onclick:={e:MouseEvent => handleGroupModeToggleReq()} )
-      div ( id:="top-ribbon", reloadLink, nbsp(4), refreshLink, nbsp(4), printExclLink, nbsp(4),
-         countSpan, nbsp(4), groupModeLink, nbsp(8), searchBox
+      //val dragSpot = span (style:="-webkit-app-region:drag", nbsp(3), "※", nbsp(3)) // combined with count instead
+      div ( id:="top-ribbon",
+         nbsp(2), reloadLink, nbsp(4), refreshLink, nbsp(4), groupModeLink, countSpan, debugLinks, nbsp(4), searchBox
       ).render
    }
 }

@@ -68,7 +68,7 @@ const argv = process.argv.slice(
 
 // Module to control application life.
 const app = electron.app;
-const remote = electron.remote;
+//const remote = electron.remote;
 const shell = electron.shell;
 const globalShortcut = electron.globalShortcut;
 const BrowserWindow = electron.BrowserWindow;
@@ -107,15 +107,18 @@ function createWindow() {
       mainWindow.frame = true;
       //mainWindow.webContents.openDevTools({ mode: "detach" });
       mainWindow.webContents.openDevTools();
+      global.inDevMode = true;
       mainWindow.loadURL(`file://${__dirname}/web/index-dev.html`);
    } else if (argv[0] === 'dev-server') {
       mainWindow.setSize(1850,1400);
       mainWindow.frame = true;
       mainWindow.webContents.openDevTools();
+      global.inDevMode = true;
       //mainWindow.loadURL(`file://${__dirname}/web/index-dev.html`);
       //mainWindow.loadURL('http://localhost:8080/target/scala-2.12/scalajs-bundler/main/index-dev.html');
       mainWindow.loadURL('http://localhost:8080/web/index-dev-server.html')
    } else {
+      global.inDevMode = false;
       mainWindow.loadURL(`file://${__dirname}/web/index.html`);
    }
 
@@ -125,6 +128,7 @@ function createWindow() {
       // in an array if your app supports multi windows, this is the time
       // when you should delete the corresponding element.
       mainWindow = null;
+      app.quit();  // since we're win-only single-window app, can just exit here
    });
 
    // Handle navigation to another link.
@@ -147,10 +151,8 @@ function createWindow() {
 
 }
 
-// This method will be called when Electron has finished
-// initialization and is ready to create browser windows.
+// This method will be called when Electron has finished initialization and is ready to create browser windows.
 // Some APIs can only be used after this event occurs.
-//
 app.on('ready', () => {
    createWindow()
    globalShortcut.register ('F1', () => {hotkeyHandler()})
@@ -165,6 +167,8 @@ app.on('ready', () => {
    globalShortcut.register ('F21', () => {hotkeyGlobalScrollDownHandler()})
    globalShortcut.register ('F22', () => {hotkeyGlobalScrollUpHandler()})
    globalShortcut.register ('F23', () => {hotkeyGlobalScrollEndHandler()})
+
+   if (true == global.inDevMode) { mainWindow.webContents.executeJavaScript('window.handleElectronDevModeCall()') }
 })
 
 
@@ -188,25 +192,6 @@ function hotkeyGlobalScrollUpHandler() {
 function hotkeyGlobalScrollEndHandler() {
    mainWindow.webContents.executeJavaScript('window.handleElectronHotkeyGlobalScrollEndCall()')
 }
-
-  
-// Quit when all windows are closed.
-app.on('window-all-closed', () => {
-   // On OS X it is common for applications and their menu bar
-   // to stay active until the user quits explicitly with Cmd + Q.
-   if (process.platform !== 'darwin') {
-      app.quit();
-   }
-});
-
-// On OS X it's common to re-create a window in the app when the
-// dock icon is clicked and there are no other windows open.
-//
-app.on('activate', function () {
-   if (mainWindow === null) {
-      createWindow();
-   }
-});
 
 
 // setup to send window activation calls from worker thread setup above to webapp

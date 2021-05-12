@@ -17,7 +17,7 @@ object SwitcheState {
    var latestTriggeredCallId = 0; var cbCountForCallId = 0;
    var hMapCur = LinkedHashMap[Int,WinDatEntry]();
    var hMapPrior = LinkedHashMap[Int,WinDatEntry]();
-   var inGroupedMode = true; var isDismissed = false;
+   var inElectronDevMode = false; var inGroupedMode = true; var isDismissed = false;
    var curElemId = ""
 
    def prepForNewEnumWindowsCall (callId:Int) = {
@@ -212,6 +212,13 @@ object SwitcheState {
 
    def handleGroupModeToggleReq() = { inGroupedMode = !inGroupedMode; SwitcheFacePage.render() }
 
+
+   def handleElectronDevModeCall() = {
+      //println("heard dev-mode notification call!")
+      inElectronDevMode = true
+      RibbonDisplay.updateDebugLinks()
+   }
+
    def handleElectronHotkeyCall() = { //println ("..electron global hotkey press reported!")
       SwitchePageState.triggerHoverLockTimeout()
       if (isDismissed) { isDismissed=false; SwitchePageState.resetFocus(); }
@@ -235,6 +242,7 @@ object SwitcheState {
    def handleElectronHideEvent() = {}
 
    def init() {
+      js.Dynamic.global.updateDynamic("handleElectronDevModeCall")(SwitcheState.handleElectronDevModeCall _)
       js.Dynamic.global.updateDynamic("handleElectronHotkeyCall")(SwitcheState.handleElectronHotkeyCall _)
       js.Dynamic.global.updateDynamic("handleElectronHotkeyGlobalSilentTabSwitchCall")(SwitcheState.handleElectronHotkeyGlobalSilentTabSwitchCall _)
       js.Dynamic.global.updateDynamic("handleElectronHotkeyGlobalScrollDownCall")(SwitcheState.handleElectronHotkeyGlobalScrollDownCall _)

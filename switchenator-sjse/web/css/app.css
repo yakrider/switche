@@ -14,13 +14,13 @@ body {
   padding: 4px;
 }
 #top-ribbon a { color: yellowgreen; }
-#countSpan {}
+#countSpan { }
 #searchBox {
   background: #404040;
   font-size: large;
   color: yellow;
   border: none;
-  width: 600px;
+  min-width: 500px;
 }
 .mtxt { color: yellow; }
 .elemBox:focus .mtxt { color: aquamarine; }
@@ -41,7 +41,8 @@ body {
 
 .titleSpan {
   display: inline-block;
-  width: 850px;
+  min-width: 600px;
+  max-width: 800px;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;

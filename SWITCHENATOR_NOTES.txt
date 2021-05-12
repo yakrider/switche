@@ -5,6 +5,20 @@ RUNNING NOTES DUMP ON POSSIBLE WORK ON THE SWITCHENATOR PROJECT :
 
 
 
+0510y21 .. on getting switche working over on the laptop
+	
+	- prob easiest is to just install node, try and fire up copied over prebuilt proj, else try and rebuild etc .. there was some pain involved w electron builds, node-gyp etc .. for now just want a switche instance running
+	- sooo, copied over the whole thing, and firing up from vbs brought up the whole frontend, shortcuts and all, so clearly electron and winapi querying parts were working, which was awesome .. and this was without even installing node separately(!!).. however, that has the prior sometimes seen aggravating behavior of not actually bringing the windows to front etc .. ughh .. in the old machine reboots fixed those, will try out here .. huh interesting, maybe its just that it doesnt work in remote desktop, but in the laptop (after restart) was working .. ughh 
+	- huh, interestingly enough, it seems to work on laptop from reboot, rdp into that and it wont work on rdp, then get back on laptop and still wont work .. all the while when the rest of the ffi winapi to monitor the windows etc continue to work .. what a pita .. and after that happens, havent found any way to restore it to working other than reboot or logoff
+	- oh well, fk it .. hopefully not gonna use rdp much, and if so should be tolerable .. did check out the evolved version of vistaswitcher thats now called alt-tab-terminator and is a paid app .. its nice works rdp or not, but still has no option for list only w/o screenshot, and even if could ask dev to allow that, also doesnt do grouped mode which I find very useful .. the guy does seem to have recently added type-to-search, which was THE major think lacking that got me to build my own, but oh well
+	- umm .. although it randomly works sometimes lol(!) .. not sure if it will keep up, but its just worked rn, idk wth the deal is .. and then, after swithching that back to laptop didnt work, regardless of restarting app etc, nor did it work in any subsequent rdp either .. so basically maybe it works on first start then switching rdp or back both screw it up for ever .. worst part is the non-recoverability ughh
+	
+	-- aight, so, found a thing on stackoverflow that said the iffy behavior on bring to foreground can be helped by sending a keypress first .. tried it out and it does seem to work .. at least for a couple attempts, rdp back and forth etc still seemed to do activation fine .. we'll see if it lasts .. 
+	- however, had to build in old machine and copy whole thing over again .. somehow screwed up the setup here trying to do a clean build, and then having to do the node-gyp and electron rebuild crap etc which quickly got unrecoverable .. so dont do that ever is the lesson ig .. otoh, looks like everything is literally just in the node folders, and ig at least as long as similar os etc just copying over was fine!
+	- also there's some weird shit in both machines where 'sbt fastOptJS::webpack' wasnt updating the js in the bundler consistently .. was a pita and eventually just edited directly eqv to in code js .. gotta dig in more eventually ig, but deleting the bundler js file (just search in everything etc) does seem to recreate the updated one so meh
+	- also, noting here that whether the electron process seems to end up having 3 sub processes or 4 or 5 seems to be unrelated, though was initially suspecting something there as in desktop there used to be 4 (sometimes 5), but in laptop mostly there's 3 and now it seems fine still
+	
+
 03/12/2021 .. starting to jot down some nagging observations/improvements
 
    - esp when things go slow etc, not sure why but after many weeks of pc being on etc, seems not catch all events etc .. so regardless, it becomes often enough after a while that it seems worthwhile adding some fallback periodic refresh mechanism

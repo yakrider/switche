@@ -1,11 +1,6 @@
 
 var exports = module.exports = {};
 
-exports.hello = function hello() {
-   return "hello from local js incl";
-}
-
-
 var ref = require('ref')
 var ffi = require('ffi')
 var refStruct = require('ref-struct')
@@ -80,7 +75,9 @@ function TEXT(text) {
    GetWindowPlacement : ['int', ['int',lpwndpl_t_ptr]],
    //HWINEVENTHOOK SetWinEventHook (DWORD eventMin, DWORD eventMax, HMODULE hmodWinEventProc, WINEVENTPROC pfnWinEventProc, DWORD idProcess, DWORD idThread, DWORD dwFlags );
    //WINEVENTPROC void Wineventproc( HWINEVENTHOOK hWinEventHook, DWORD event, HWND hwnd, LONG idObject, LONG idChild, DWORD idEventThread, DWORD dwmsEventTime )
-   SetWinEventHook : ['int',['int','int','pointer','pointer','int','int','int']]
+   SetWinEventHook : ['int',['int','int','pointer','pointer','int','int','int']],
+   //void keybd_event(byte bVk, byte bScan, uint dwFlags, int dwExtraInfo);
+   keybd_event : ['void', ['int','int','int','int']]
  });
  // note on EnumWindows usage.. check the ms docs, but from usage below, looks like it repeatedly calls the callback w new found
  // windows, until either the callback returns false, or it has nothing more to send.. also looks like it only gives 'top-level' windows
@@ -246,6 +243,14 @@ exports.activateWindow = function activateWindow (hwnd) {
   }
   //console.log('did async 0/hide 5/sw_show')
   //user32.SetForegroundWindow(hwnd);
+
+  // from stack overflow suggesting seding a keypress helps makes set-foreground more consistent
+  // https://stackoverflow.com/questions/10740346/setforegroundwindow-only-working-while-visual-studio-is-open/13881647#13881647
+  // key are : (alt, extendedKey, keyup) = (0xA4, 0x1, 0x2), scancode for alt is 0x45?
+  // Simulate a key press followed by a release, using alt for key here
+  //user32.keybd_event (0xA4, 0x45, 0x1 | 0, 0)
+  //user32.keybd_event (0xA4, 0x45, 0x1 | 0x2, 0)
+  user32.keybd_event (0, 0, 0, 0)
   return user32.SetForegroundWindow(hwnd);
 }
 exports.minmizeWindow = function minimizeWindow (hwnd) {
