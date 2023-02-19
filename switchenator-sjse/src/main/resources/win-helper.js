@@ -95,6 +95,19 @@ function TEXT(text) {
  });
 
 
+var psapi = new ffi.Library('psapi.dll', {
+  // DWORD GetProcessImageFileNameA( HANDLE hProcess, LPSTR  lpImageFileName, DWORD  nSize );
+  // note that a process handle is not the same as the pid
+  GetProcessImageFileNameA : ['int', ['int',stringPtr,'int']]
+});
+
+
+var dwmapi = new ffi.Library('dwmapi.dll', {
+   //HRESULT DwmGetWindowAttribute(HWND  hwnd, DWORD dwAttribute, [out] PVOID pvAttribute, DWORD cbAttribute);
+   DwmGetWindowAttribute : ['int', ['int','int',intPtr,'int']]
+});
+
+
 
  function findWindow (name) {
    for(i=0;i<50;i++){ //ensure accurate reading, sometimes returns 0 when window does exist .. horrible horrible crap this is!
@@ -137,11 +150,8 @@ exports.getProcessExeFromPid = function getProcessExeFromPid (pid) {
 }
 
 
-var psapi = new ffi.Library('psapi.dll', {
-  // DWORD GetProcessImageFileNameA( HANDLE hProcess, LPSTR  lpImageFileName, DWORD  nSize );
-  // note that a process handle is not the same as the pid
-  GetProcessImageFileNameA : ['int', ['int',stringPtr,'int']]
-});
+
+// from psapi
 exports.getProcessExe = function getProcessExe (handle) {
    var buf = new Buffer(200);
    var copiedLen = psapi.GetProcessImageFileNameA(handle,buf,200);
@@ -156,6 +166,16 @@ exports.getProcessExeFromHwnd = function getProcessExeFromHwnd(hwnd) {
    return name
 }
 
+
+// from dwmapi
+exports.checkWindowCloaked = function checkWindowCloaked(hwnd) {
+   //HRESULT DwmGetWindowAttribute(HWND  hwnd, DWORD dwAttribute, [out] PVOID pvAttribute, DWORD cbAttribute);
+   // DWMWA_CLOAKED is 14 in dwAttribute enum
+   var pva = ref.alloc('int');
+   var hres = dwmapi.DwmGetWindowAttribute(hwnd, 14, pva, ref.sizeof.int);
+   var cloakedState = pva.readInt32LE(0);
+   return cloakedState
+}
  
 var enumWindowsArray = []; //{};
 var enumWindowsTimeout;

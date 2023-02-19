@@ -5,6 +5,17 @@ RUNNING NOTES DUMP ON POSSIBLE WORK ON THE SWITCHENATOR PROJECT :
 
 
 
+
+04/25/2022 .. revisit re icons and exe names for UWP/store apps 
+
+	- so its been a long standing (mostly minor) issue that UWP windows 10 native apps like Store/Settings/Calculator/Edge etc, as well as any store-installed apps show up in our list under ApplicationFrameHost.exe, and we couldnt get icons to those either
+	- was recently, unrelated, looking at exe locations for one such app, and saw that relatively easily, once the actual exe path is available, one might be able to parse the manifest xml for the app and get at a usable (though prob not the most ideal) logo png asset to use for our purposes
+	- now, extracting the path itself can be somewhat involved too, but seems doable on quick search .. and indeed even just showing the exe name in the list might be worthwhile spending some time on, even setting aside the actual icon acquisition for a bit
+	- now, there's some sample code for those purposes, but those are C# code pieces, and not really going just the various win-api calls .. which might not be too bad if that means we can just write that in sjs code instead as they dont need to do much win-api calling (or for those cases we add js stubs as usual)
+		- e.g. https://stackoverflow.com/a/36495656
+	
+	
+
 0510y21 .. on getting switche working over on the laptop
 	
 	- prob easiest is to just install node, try and fire up copied over prebuilt proj, else try and rebuild etc .. there was some pain involved w electron builds, node-gyp etc .. for now just want a switche instance running

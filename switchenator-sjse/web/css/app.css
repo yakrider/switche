@@ -1,78 +1,141 @@
 * {
     margin: 0;
 }
+:root {
+  --background-color: #404040;
+  --ribbon-color: #bd9d2c;
+  --curElem-color: #dbe4d7;
+  /*--mode-header-color: #b08fcc;*/
+  --recents-color: #a8c77d;
+  --grouped-color: #e0d180;
+  --searched-color: #7aff00;
+  --exe-color: #bbc18f;
+  --yspan-color: #5c9d4d;
+  --dim-color: grey;
+}
 body {
    background: #404040;
+   border: 1px solid #8e8600;
+   padding: 4px 8px 8px 8px;
+}
+#scala-js-root-div {
+   margin: 0;
+   height: calc(100vh - 14px);
    overflow: hidden;
 }
-#scala-js-root-div { }
 
 #top-ribbon {
-  color: yellowgreen;
+  color: var(--ribbon-color);
   font-size: 14px;
-  line-height: 1.4;
   padding: 4px;
 }
-#top-ribbon a { color: yellowgreen; }
-#countSpan { }
+#top-ribbon a { color: var(--ribbon-color); }
+.dragSpan {
+  -webkit-app-region: drag;
+  cursor: move;   /* doesnt show up due to -webkit-app-region bug in win-os, at least in this electron version */
+}
 #searchBox {
-  background: #404040;
+  background: var(--background-color);
+  color: var(--searched-color);
   font-size: large;
-  color: yellow;
   border: none;
-  min-width: 500px;
+  min-width: 400px;
 }
-.mtxt { color: yellow; }
-.elemBox:focus .mtxt { color: aquamarine; }
+.searchTxt { color: var(--searched-color); }
+/*.elemBox.curElem .searchTxt { color: #9fef02; }*/
 
-.groupedModeHeader {
-  color: lightgrey;
+.modeHeader { /*color: var(--mode-header-color);*/ }
+.modeHeader.r { color: var(--recents-color); }
+.modeHeader.g { color: var(--grouped-color); }
+.modeHeader.s { color: var(--searched-color); }
+
+.recentsDiv { }
+.groupedDiv { }
+.searchedDiv { }
+.recentsDiv.dim {
+  filter: grayscale(80%) brightness(80%);
 }
+
 .elemBox {
+  display: flex;
+  line-height: 1.33;
+  overflow: hidden;
+  cursor: context-menu;
   font: status-bar;
   font-size: 14px;
-  line-height: 1.2;
+  /*font: 14px Alegreya;*/
+  /*font: 12px Merriweather;*/
+  /*font: 14px Montserrat;*/
+  /*font: 13.5px "Open Sans";*/
+  /*font: 14px Quicksand;*/
+  /*font: 14px "Times New Roman";*/
+  /*font: 14px Garamond;*/
+  /*font: 14px Verdana;*/
+  /*font: 14px Arial;*/
+  /*font: 14px Tahoma;*/
+  /*font: 14px Georgia;*/
+  /*font: 14px Helvetica;*/
+  /*font: 14px Geneva;*/
+  /* ^^ basically was searching for better fonts, but meh the 'status-bar' still seems the best */
 }
-.elemBox:focus {
-   background: slateblue;
-   border: none;
+.elemBox.curElem {
+   background: #54489e;
    outline: none;
 }
 
 .titleSpan {
-  display: inline-block;
-  min-width: 600px;
   max-width: 800px;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  color: gold;
+  color: var(--grouped-color);
+  flex: auto;
+  font-kerning: none;
 }
-.elemBox:focus .titleSpan { color: floralwhite}
-/*.elemBox:hover .titleSpan { color: floralwhite}*/
-/*.elemBox:active .titleSpan { color: aquamarine}*/
+.titleSpan.recents { color: var(--recents-color); }
+/*.elemBox:focus .titleSpan { color: var(--curElem-color); }*/
+.elemBox.curElem .titleSpan { color: var(--curElem-color); }
+/*.elemBox:hover .titleSpan { color: var(--curElem-color); }*/
+/*.elemBox:active .titleSpan { color: var(--curElem-color); }*/
+
+.ySpan {
+   width: 12px;
+   /*color: var(--recents-color);*/
+   color: var(--yspan-color);
+   font-size: 11px;
+   font-weight: 700;
+   text-align: right;
+   flex: none;
+}
+/*.ySpan.recents { color: var(--recents-color); }*/
+.elemBox.curElem .ySpan { color: var(--curElem-color); }
 
 .exeSpan {
-  display: inline-block;
   width: 120px;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
   text-align: right;
   font-size: 13px;
-  color: burlywood;
+  color: var(--exe-color);
+  flex: none;
 }
-.elemBox:focus .exeSpan { color: floralwhite; }
-.exeSpan.dim { color: grey; }
+.elemBox.curElem .exeSpan { color: var(--curElem-color); }
+/*.exeSpan.recents { color: var(--recents-color); }*/
+.exeSpan.dim { color: var(--dim-color); }
 
 .exeIcoSpan {
   display: inline-flex;
   width: 22px;
   overflow: hidden;
   color: darkcyan;
+  flex: none;
 }
-.ico { height: 16px; }
+.ico {
+   height: 16px;
+   filter: brightness(90%) saturate(100%);
+}
 /*
 - light good colors : honeydew, lightyellow, lightgrey, lightcyan, azure, bisque, beige, ghostwhite, ivory, lavender, mintcream, oldlace, aliceblue
-- slightly dark contrast colors considered for exespan (cf w gold for elemBox).. burlwood, tan, goldenron, darkkhaki, darkgrey, silver
+- slightly dark contrast colors considered for exespan (cf w gold for elemBox).. burlwood, tan, goldenrod, darkkhaki, darkgrey, silver
 */

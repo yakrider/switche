@@ -26,7 +26,7 @@ libraryDependencies ++= Seq(
 )
 
 // nodejs sources
-npmDependencies in Compile ++= Seq(
+Compile/npmDependencies ++= Seq(
   // e.g. "snabbdom" -> "0.5.3"
   //"electron" -> "2.0.0", // this gives issues, but should run w/o it in sjs
   "ffi" -> "^2.3.0",
@@ -37,26 +37,26 @@ npmDependencies in Compile ++= Seq(
 )
 
 // root webpack config file
-webpackConfigFile := Some(baseDirectory.value / "webpack.config.js")
-webpackDevServerExtraArgs in fastOptJS ++= Seq(
-  "--content-base", (baseDirectory in ThisBuild).value.getAbsolutePath
+webpackConfigFile := Some(baseDirectory.value/"webpack.config.js")
+fastOptJS/webpackDevServerExtraArgs ++= Seq(
+  "--content-base", (ThisBuild/baseDirectory).value.getAbsolutePath
 )
-//version in webpack := "4.8.1"
-//version in webpack := "3.3.1"
-//version in startWebpackDevServer := "3.1.4"
-//version in startWebpackDevServer := "3.3.1"
+//webpack / version := "4.8.1"
+//webpack / version := "3.3.1"
+//startWebpackDevServer / version := "3.1.4"
+//startWebpackDevServer / version := "3.3.1"
 
 // optionally use yarn over npm
 useYarn := false
 
 // put all js dependencies into a single output file
-skip in packageJSDependencies := false
+packageJSDependencies/skip := false
 
 // call the `main` method after the js is loaded
 scalaJSUseMainModuleInitializer := true
 
 // do not emit source maps in production
-emitSourceMaps in fullOptJS := false
+fullOptJS/emitSourceMaps := false
 
 // skip in fastOpt too, seldom used and makes build slow
-emitSourceMaps in fastOptJS := false
+fastOptJS/emitSourceMaps := false

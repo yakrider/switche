@@ -9,7 +9,7 @@ if (!cluster.isMaster) {
 
    //HWINEVENTHOOK SetWinEventHook (DWORD eventMin, DWORD eventMax, HMODULE hmodWinEventProc, WINEVENTPROC pfnWinEventProc, DWORD idProcess, DWORD idThread, DWORD dwFlags );
    const user32 = ffi.Library("user32", {
-   SetWinEventHook: ["int", ["int", "int", "pointer", "pointer", "int", "int", "int"]],
+      SetWinEventHook: ["int", ["int", "int", "pointer", "pointer", "int", "int", "int"]],
       GetMessageA: ["bool", ['pointer', "int", "uint", "uint"]]
    })
    //WINEVENTPROC void Wineventproc( HWINEVENTHOOK hWinEventHook, DWORD event, HWND hwnd, LONG idObject, LONG idChild, DWORD idEventThread, DWORD dwmsEventTime )
@@ -47,7 +47,7 @@ if (!cluster.isMaster) {
    if (process.env.task=='sys-events') {
       user32.SetWinEventHook (0x0003, 0x0017, null, pfnWinEventProc_fgnd, 0, 0, 0 )
    } else if (process.env.task=='obj-events') {
-      user32.SetWinEventHook (0x8001, 0x8017, null, pfnWinEventProc_objKill, 0, 0, 0 )
+      user32.SetWinEventHook (0x8001, 0x8018, null, pfnWinEventProc_objKill, 0, 0, 0 )
    }
    // winapi requires the thread to be waiting on getMessage to get win-event-hook callbacks!
    function getMessage() { return user32.GetMessageA (ref.alloc(ref.refType(ref.types.void)), null, 0, 0) }
@@ -85,8 +85,8 @@ function createWindow() {
 
    mainWindow = new BrowserWindow({
       icon: `web/favicon.png`,
-      width: 1050, height: 1400,
-      x: 1000, y:20,
+      width: 980, height: 1180,
+      x: 650, y:15,
       frame: frameVal,
       thickFrame : true,
       useContentSize: true,
@@ -144,10 +144,10 @@ function createWindow() {
     mainWindow.webContents.on('will-navigate', handleRedirect);
     mainWindow.webContents.on('new-window', handleRedirect);
 
-    mainWindow.on('focus',() => { mainWindow.webContents.executeJavaScript('window.handleElectronFocusEvent()') });
-    mainWindow.on('blur', () => { mainWindow.webContents.executeJavaScript('window.handleElectronBlurEvent()') });
-    mainWindow.on('show', () => { mainWindow.webContents.executeJavaScript('window.handleElectronShowEvent()') });
-    mainWindow.on('hide', () => { mainWindow.webContents.executeJavaScript('window.handleElectronHideEvent()') });
+    mainWindow.on('focus',() => { mainWindow.webContents.executeJavaScript('window.procAppEvent_Focus()') });
+    mainWindow.on('blur', () => { mainWindow.webContents.executeJavaScript('window.procAppEvent_Blur()') });
+    mainWindow.on('show', () => { mainWindow.webContents.executeJavaScript('window.procAppEvent_Show()') });
+    mainWindow.on('hide', () => { mainWindow.webContents.executeJavaScript('window.procAppEvent_Hide()') });
 
 }
 
@@ -155,42 +155,47 @@ function createWindow() {
 // Some APIs can only be used after this event occurs.
 app.on('ready', () => {
    createWindow()
-   globalShortcut.register ('F1', () => {hotkeyHandler()})
-   globalShortcut.register ('Alt+1', () => {hotkeyHandler()})
+   //globalShortcut.register ('F1', () => {sysHotkeyHandler_Invoke()})     // disabling since we're having krusty send F21 (and have ralt-f1 send f1)
+   //globalShortcut.register ('Alt+1', () => {sysHotkeyHandler_Invoke()})
+   //globalShortcut.register ('Super+F1', () => {sysHotkeyHandler_Invoke()})
+   globalShortcut.register ('Super+F12', () => {sysHotkeyHandler_Invoke()})
    //globalShortcut.register ('Esc', () => {mainWindow.hide()})
    // lol ^ cant do that.. lots of ppl need Esc.. gonna have to handle it from inside window, not globally
    //globalShortcut.register ('F2', () => {hotkeyReverseHandler()}) // ofc cant do this either, hence the following
-   //globalShortcut.register ('Ctrl+Alt+F1', () => {hotkeyGlobalScrollDownHandler()})
-   //globalShortcut.register ('Ctrl+Alt+F2', () => {hotkeyGlobalScrollUpHandler()})
-   //globalShortcut.register ('Ctrl+Alt+F3', () => {hotkeyGlobalScrollEndHandler()})
-   globalShortcut.register ('F20', () => {hotkeyGlobalSilentTabSwitchHandler()})
-   globalShortcut.register ('F21', () => {hotkeyGlobalScrollDownHandler()})
-   globalShortcut.register ('F22', () => {hotkeyGlobalScrollUpHandler()})
-   globalShortcut.register ('F23', () => {hotkeyGlobalScrollEndHandler()})
+   //globalShortcut.register ('Ctrl+Alt+F1', () => {sysHotkeyHandler_ScrollDown()})
+   //globalShortcut.register ('Ctrl+Alt+F2', () => {sysHotkeyHandler_ScrollUp()})
+   //globalShortcut.register ('Ctrl+Alt+F3', () => {sysHotkeyHandler_ScrollEnd()})
+   globalShortcut.register ('F20', () => {sysHotkeyHandler_SilentTabSwitch()})
+   globalShortcut.register ('F21', () => {sysHotkeyHandler_ScrollDown()})
+   globalShortcut.register ('F22', () => {sysHotkeyHandler_ScrollUp()})
+   globalShortcut.register ('F23', () => {sysHotkeyHandler_ScrollEnd()})
+   globalShortcut.register ('F24', () => {sysHotkeyHandler_ChromeTabsList()})
 
-   if (true == global.inDevMode) { mainWindow.webContents.executeJavaScript('window.handleElectronDevModeCall()') }
+   if (true == global.inDevMode) { mainWindow.webContents.executeJavaScript('window.procAppEvent_DevMode()') }
 })
 
 
-function hotkeyHandler() {
-   //mainWindow.webContents.executeJavaScript('window.handleElectronHotkeyCall()', function(result){console.log(result)})
-   mainWindow.webContents.executeJavaScript('window.handleElectronHotkeyCall()')
+function sysHotkeyHandler_Invoke() {
+   //mainWindow.webContents.executeJavaScript('window.procHotkey_Invoke()', function(result){console.log(result)})
+   mainWindow.webContents.executeJavaScript('window.procHotkey_Invoke()')
    mainWindow.show()
 }
-function hotkeyGlobalSilentTabSwitchHandler() {
-   mainWindow.webContents.executeJavaScript('window.handleElectronHotkeyGlobalSilentTabSwitchCall()')
-   //mainWindow.show()
-}
-function hotkeyGlobalScrollDownHandler() {
-   mainWindow.webContents.executeJavaScript('window.handleElectronHotkeyGlobalScrollDownCall()')
+function sysHotkeyHandler_ScrollDown() {
+   mainWindow.webContents.executeJavaScript('window.procHotkey_ScrollDown()')
    mainWindow.show()
 }
-function hotkeyGlobalScrollUpHandler() {
-   mainWindow.webContents.executeJavaScript('window.handleElectronHotkeyGlobalScrollUpCall()')
+function sysHotkeyHandler_ScrollUp() {
+   mainWindow.webContents.executeJavaScript('window.procHotkey_ScrollUp()')
    mainWindow.show()
 }
-function hotkeyGlobalScrollEndHandler() {
-   mainWindow.webContents.executeJavaScript('window.handleElectronHotkeyGlobalScrollEndCall()')
+function sysHotkeyHandler_ScrollEnd() {
+   mainWindow.webContents.executeJavaScript('window.procHotkey_ScrollEnd()')
+}
+function sysHotkeyHandler_SilentTabSwitch() {
+   mainWindow.webContents.executeJavaScript('window.procHotkey_SilentTabSwitch()')
+}
+function sysHotkeyHandler_ChromeTabsList() {
+   mainWindow.webContents.executeJavaScript('window.procHotkey_ChromeTabsList()')
 }
 
 
@@ -198,17 +203,17 @@ function hotkeyGlobalScrollEndHandler() {
 //worker.on('message', function(msg) {console.log('got msg from worker: ', msg)})
 sysEventsWorker.on('message', function(msg) {
    if (msg.type=='Fgnd' || msg.type=='MinimizeEnd') {
-      mainWindow.webContents.executeJavaScript(`window.handleWindowsFgndHwndReport(${msg.hwnd})`)
+      mainWindow.webContents.executeJavaScript(`window.procWinReport_FgndHwnd(${msg.hwnd})`)
    }
 })
 //objDestroyedWorker.on('message', function(hwnd) { mainWindow.webContents.executeJavaScript(`window.handleWindowsObjDestroyedReport(${hwnd})`) })
 objEventsWorker.on('message', function(msg) {
    if (msg.type=='ObjDestroyed' || msg.type=='ObjHidden' || msg.type=='ObjCloaked') {
-      mainWindow.webContents.executeJavaScript(`window.handleWindowsObjDestroyedReport(${msg.hwnd})`) 
+      mainWindow.webContents.executeJavaScript(`window.procWinReport_ObjDestroyed(${msg.hwnd})`)
    } else if (msg.type=='ObjShown' || msg.type=='ObjUnCloaked') {
-      mainWindow.webContents.executeJavaScript(`window.handleWindowsObjShownReport(${msg.hwnd})`)
+      mainWindow.webContents.executeJavaScript(`window.procWinReport_ObjShown(${msg.hwnd})`)
    } else if (msg.type=='TitleChanged') {
-      mainWindow.webContents.executeJavaScript(`window.handleWindowsTitleChangedReport(${msg.hwnd})`) 
+      mainWindow.webContents.executeJavaScript(`window.procWinReport_TitleChanged(${msg.hwnd})`)
    }
 })
 

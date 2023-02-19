@@ -25,24 +25,28 @@ object IconsManager {
          RenderSpacer.queueSpacedRender()
       } else {
          println (s"got empty icon-string callback for hwnd=${hwnd}, ctx=${ctx} !!")
-         checkAndQueueIconExePathQuery(ctx)
+         checkAndQueueIconExePathQuery(ctx,ctx)
       }
    }
    def iconStringFromExePathCallback (exePath:String, ctx:String, iconString:String):Unit = {
-      val iconCacheIdx = iconsCacheCheckMap.getOrElseUpdate(iconString,iconsCache.size)
-      if (iconCacheIdx == iconsCache.size) {iconsCache.+=(iconString)}
-      iconsExePathMap.put(exePath,iconCacheIdx) .map(_ => Unit) .getOrElse(RenderSpacer.queueSpacedRender()) // only queue render if new
+      if (!iconString.isEmpty) {
+         val iconCacheIdx = iconsCacheCheckMap.getOrElseUpdate(iconString,iconsCache.size)
+         if (iconCacheIdx == iconsCache.size) {iconsCache.+=(iconString)}
+         iconsExePathMap.put(exePath,iconCacheIdx) .map(_ => Unit) .getOrElse(RenderSpacer.queueSpacedRender()) // only queue render if new
+      } else {
+         println (s"got empty icon-string callback for path=${exePath}, ctx=${ctx} !!")
+      }
    }
-   def queueIconExePathQuery (path:String) = {
-      NodeIconExtractor.getIconStringFromExePathLater(path,"",iconStringFromExePathCallback _)
+   def queueIconExePathQuery (path:String, ctx:String) = {
+      NodeIconExtractor.getIconStringFromExePathLater (path, ctx, iconStringFromExePathCallback _)
    }
-   def checkAndQueueIconExePathQuery (path:String) = {
-      if (!queriedExePathCache.contains(path)) { queriedExePathCache.add(path); queueIconExePathQuery(path) }
+   def checkAndQueueIconExePathQuery (path:String, ctx:String) = {
+      if (!queriedExePathCache.contains(path)) { queriedExePathCache.add(path); queueIconExePathQuery(path,ctx) }
    }
 
    // second version of node hwnd icon ext mechanism, uses SendMessageCallbackA, didnt preserve path ctx, so look up from hwnd
    def nodeIconExtractorHwndIconStringCallback (hwnd:Int, hicon:Int, iconString:String):Unit = {
-      queriedHwndCache.get(hwnd).foreach {case hepp => iconStringFromHwndCallback (hwnd,hepp.exePath,iconString) }
+      queriedHwndCache.get(hwnd).foreach {case hepp => iconStringFromHwndCallback (hwnd,hepp.path,iconString) }
    }
    def initNodeIconExtractor() = NodeIconExtractor.registerHwndIconStringCallback (nodeIconExtractorHwndIconStringCallback _)
    initNodeIconExtractor()
@@ -62,7 +66,7 @@ object IconsManager {
       iconsHwndMap .get(hwndExePathPair) .orElse(iconsExePathMap.get(path)) .map(iconsCache)
    }
 
-   case class HwndExePathPair (hwnd:Int, exePath:String)
+   case class HwndExePathPair (hwnd:Int, path:String)
    val queriedExePathCache = mutable.HashSet[String]()
    val queriedHwndCache = mutable.HashMap[Int,HwndExePathPair]()
 
@@ -73,20 +77,25 @@ object IconsManager {
    val empty16x16Image = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAAAklEQVR4AewaftIAAAAPSURBVGMYBaNgFIwCKAAABBAAAY7F3VUAAAAASUVORK5CYII="
    iconsCache.+=(empty16x16Image); iconsCacheCheckMap.put(empty16x16Image,0)
 
-   def processFoundHwndExePath (hwnd:Int, path:String) = {
-      val hwndExePathPair = HwndExePathPair(hwnd,path)
-      if ( !queriedHwndCache.get(hwnd).contains(hwndExePathPair) || iconsHwndMap.get(hwndExePathPair).contains(0) ) {
-         queriedHwndCache.put(hwnd,hwndExePathPair); queueIconHwndQuery(hwnd,path)
-         queueUnheardIconsCallbackFallbackCheck (hwndExePathPair)
-      }
+   def processFoundHwndExePath (e:WinDatEntry) = {
+      e.iconOverrideLoc .orElse (e.exePathName.map(_.fullPath)) .map (p => HwndExePathPair(e.hwnd,p)) .foreach { hpp =>
+         if ( !queriedHwndCache.get(e.hwnd).contains(hpp) || iconsHwndMap.get(hpp).contains(0) ) {
+            queriedHwndCache.put(e.hwnd,hpp);
+            if (e.iconOverrideLoc.isEmpty) {
+               queueIconHwndQuery(e.hwnd, hpp.path)
+               queueUnheardIconsCallbackFallbackCheck (hpp)
+            } else {
+               checkAndQueueIconExePathQuery (hpp.path, hpp.path)
+            }
+      } }
    }
    def queueUnheardIconsCallbackFallbackCheck (hepp: HwndExePathPair) = {
       js.timers.setTimeout (1000) {unheardIconsCallbackFallbackCheck(hepp)}
    }
-   def unheardIconsCallbackFallbackCheck (hepp: HwndExePathPair): Unit = {
-      if (!iconsHwndMap.contains(hepp)) {
-         println (s"did not hear callback for ${hepp} within check period, falling back to exe icon query")
-         checkAndQueueIconExePathQuery (hepp.exePath)
+   def unheardIconsCallbackFallbackCheck (hpp: HwndExePathPair): Unit = {
+      if (!iconsHwndMap.contains(hpp)) {
+         println (s"did not hear callback for ${hpp} within check period, falling back to exe icon query")
+         checkAndQueueIconExePathQuery (hpp.path, hpp.path)
       }
    }
 
@@ -96,6 +105,4 @@ object IconsManager {
    }
 
 }
-
-
 

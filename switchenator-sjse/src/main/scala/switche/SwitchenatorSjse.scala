@@ -11,10 +11,10 @@ object SwitchenatorSjse extends js.JSApp {
    def main(): Unit = {
       dom.document.getElementById("scala-js-root-div").appendChild (SwitcheFacePage.getShellPage())
 
-      SwitcheState.handleRefreshRequest() // fire up first call
+      SwitcheState.handleReq_Refresh() // fire up first call
 
       // the fgnd/close/title change listeners should in theory cover everything, but might be useful to periodically clean up random things that might fall through
-      js.timers.setInterval(30*1000) {SwitcheState.backgroundOnlyRefreshReq()}
+      js.timers.setInterval(30*1000) {SwitcheState.handleReq_RefreshIdle()}
 
    }
 }
@@ -38,6 +38,7 @@ object WinapiLocal extends js.Object {
    def getWindowProcessId (hwnd:Int):Int = js.native
    def getProcessExe (hand:Int):String = js.native
    def getProcessExeFromHwnd (hwnd:Int):String = js.native
+   def checkWindowCloaked (hwnd:Int):Int = js.native
    //HWINEVENTHOOK SetWinEventHook (DWORD eventMin, DWORD eventMax, HMODULE hmodWinEventProc, WINEVENTPROC pfnWinEventProc, DWORD idProcess, DWORD idThread, DWORD dwFlags );
    //WINEVENTPROC void Wineventproc( HWINEVENTHOOK hWinEventHook, DWORD event, HWND hwnd, LONG idObject, LONG idChild, DWORD idEventThread, DWORD dwmsEventTime )
    def hookFgndWindowChangeListener (cb:js.Function7[Int,Int,Int,Long,Long,Int,Int,Unit]):Unit = js.native

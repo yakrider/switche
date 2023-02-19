@@ -3,15 +3,29 @@
 
 <head>
     <meta charset='UTF-8'>
-    <title>Sjs-Electron-Local-JS-Test</title>
 
-    <!-- stylesheets -->
+    <title>Switche - Searchable Task Switcher</title>
+
     <link rel='stylesheet' type='text/css' href='css/app.css'>
+
+    <!-- meta content-security-policy, with allowance for downloading google web fonts -->
+    <meta
+        http-equiv="Content-Security-Policy"
+        content="default-src 'self';
+          script-src 'self';
+          font-src 'self' https://fonts.gstatic.com;
+          style-src 'self' https://fonts.googleapis.com;
+          img-src 'self' data: ;"
+    >
+    <!--
+    <link rel="stylesheet" type="text/css" href="https://fonts.googleapis.com/css2?family=Merriweather&family=Alegreya&family=Montserrat&family=Open+Sans&family=Quicksand" >
+    -->
+
 </head>
 
 <body>
     <!-- gotta make sure to define the div before calling the script, as that will immediately run its main when included, and that queries for the div -->
-    <div id="scala-js-root-div"/></div>
+    <div id="scala-js-root-div"></div>
 
 
     <script src='../target/scala-2.12/scalajs-bundler/main/switchenator-sjse-bundle.js' type='text/javascript'></script>

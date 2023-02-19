@@ -11,5 +11,8 @@ project/target/
 # target folder
 target/
 
+# coursier cache issues
+null/
+
 # log files
 *.log
