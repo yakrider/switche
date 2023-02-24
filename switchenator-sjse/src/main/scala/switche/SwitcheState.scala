@@ -16,7 +16,8 @@ case class RenderListEntry (dat:WinDatEntry, y:Int)
 
 object SwitcheState {
 
-   var latestTriggeredCallId = 0; var cbCountForCallId = 0;
+   @volatile var latestTriggeredCallId = 0;
+   @volatile var cbCountForCallId = 0;
    var hMapCur = LinkedHashMap[Int,WinDatEntry]();
    var hMapPrior = LinkedHashMap[Int,WinDatEntry]();
    var inElectronDevMode = false; var inGroupedMode = true; var isDismissed = false;
@@ -31,6 +32,7 @@ object SwitcheState {
    }
    def delayedTaskListCleanup (cbCountSnapshot:Int) = {
       if (cbCountSnapshot == cbCountForCallId) { //println (s"delayed prior cache cleanup.. cbCount: $cbCountForCallId")
+         IconsManager.clearDeadHwnds (hMapPrior.filterKeys(!hMapCur.contains(_)).values)
          hMapPrior = hMapCur;
    } }
    def getExePathName(hwnd:Int) = {
@@ -73,7 +75,7 @@ object SwitcheState {
       if (hMapCur == hMapPrior) {hMapPrior = hMapUpdated} else {hMapPrior.put(hwnd,dat)}
       hMapCur = hMapUpdated
       if (!dat.shouldExclude.contains(true)) {
-         IconsManager.processFoundHwndExePath(dat)
+         IconsManager.refreshIcon(dat)
          RenderSpacer.queueSpacedRender() // no point being more surgical, as for grouped stuff, everything might have to be reordered anyway
       }
       // ugh, this sucks, but looks like alt-esc which sends cur win to z-order back has no triggered event other than the next win coming up ..
@@ -83,7 +85,7 @@ object SwitcheState {
       //  .. as compromise, we'll call w delay to avoid that .. render is almost 100ms, 50ms spacing, plus other proc .. so 250ms seems ok
       js.timers.setTimeout (250) { handleReq_Refresh() }
    }
-   def procWinReport_ObjShown(hwnd:Int):Unit = { //println(s"fgnd report: $hwnd")
+   def procWinReport_ObjShown(hwnd:Int):Unit = { //println(s"obj-shown report: $hwnd")
       if ( !hMapCur.contains(hwnd) || hMapCur(hwnd).isVis.contains(true) || !hMapCur(hwnd).everFgnd.contains(true) ) return;
       val dat = getUpdatedDat(hMapCur(hwnd), true)
       hMapCur.put(hwnd,dat); hMapPrior.put(hwnd,dat)
@@ -111,34 +113,46 @@ object SwitcheState {
       }
    }
 
-   object RenderReadyListsManager {
+   private object RenderReadyListsManager {
       case class GroupSortingEntry (seenCount:Int, meanPercIdx:Double)
       val grpSortingMap = mutable.HashMap[String,GroupSortingEntry]()
       var (renderList:Seq[RenderListEntry], groupedRenderList:Seq[Seq[RenderListEntry]]) = calcRenderReadyLists()
 
-      def registerEntry (exePath:String, idx:Int, listSize:Int) = {
+      private def updateEntry (exePath:String, ge:GroupSortingEntry, percIdx:Double) : Unit = {
+         grpSortingMap.put (exePath, GroupSortingEntry (ge.seenCount+1, ge.meanPercIdx.*(ge.seenCount).+(percIdx)./(ge.seenCount+1)) )
+      }
+      private def registerEntry (exePath:String, idx:Int, listSize:Int) = {
+         // note: we'll always update new entries (e.g at init time), but for existing entries, we'll only update when not actively displaying
+         // .. this avoids groups moving around during search state etc due to progressive re-renders
          val percIdx = idx.toDouble./(listSize)
-         grpSortingMap.get(exePath).orElse(Some(GroupSortingEntry(0,0.0))) .foreach { case(ge) =>
-            grpSortingMap.put (exePath, GroupSortingEntry (ge.seenCount+1, ge.meanPercIdx.*(ge.seenCount).+(percIdx)./(ge.seenCount+1)) )
-      } }
+         if (!grpSortingMap.contains(exePath)) {
+             updateEntry (exePath, GroupSortingEntry(0,0d), percIdx)
+         } else if (SwitcheState.isDismissed) {
+            grpSortingMap.get(exePath) .foreach { case(ge) => updateEntry (exePath, ge, percIdx) }
+         }
+      }
       private def calcRenderReadyLists() = {
          val renderList = hMapCur.values.toSeq .++ ( hMapPrior.values.filterNot{d => hMapCur.contains(d.hwnd)}.toSeq )
          val filtRenderList = ExclusionsManager.filterExclusions (renderList) .zipWithIndex .map {case (d,i) => RenderListEntry(d,i+1)}
-         // v1: this bunches groups while keeping ordering of highest in list member, but causes groups to move around
+         // v1: this bunches groups while keeping ordering of highest in list member, but causes groups to move around frequently
          //val groupedRenderList = filtRenderList.groupBy(_._1.exePathName.map(_.fullPath)).values .map(l => l.map(_._1)->l.map(_._2).min).toSeq.sortBy(_._2).map(_._1)
          // v2: this orders by exePath only, but at least wont cause groups jumping around all the time
          //val groupedRenderList = filtRenderList.groupBy(_._1.exePathName.map(_.fullPath)).toSeq.sortBy(_._1).map(_._2)
-         // v3: this will build a pretty stable but responsive ordering for groups by tracking recents index percentile averages
-         filtRenderList .foreach { e => e.dat.exePathName.map(_.fullPath).foreach {p => registerEntry(p,e.y,filtRenderList.size)} }
+         // v3: this will build a fairly stable but still responsive group ordering by tracking recents index percentile averages
+         filtRenderList .foreach { e => e.dat.exePathName.map(_.fullPath) .foreach {p => registerEntry(p,e.y,filtRenderList.size)} }
          val groupedRenderList = filtRenderList.groupBy(_.dat.exePathName.map(_.fullPath)).toSeq
-            .sortBy { case (po,l) => po.map(grpSortingMap.get).flatten.map(_.meanPercIdx) -> po } .map(_._2)
+            .sortBy { case (po,l) => (po.flatMap(grpSortingMap.get).map(_.meanPercIdx), po) } .map(_._2)
          (filtRenderList, groupedRenderList)
       }
-      def updateRenderReadyLists() = {val t = calcRenderReadyLists(); renderList = t._1; groupedRenderList = t._2}
+      def updateRenderReadyLists() = {
+         val (rl, gl) = calcRenderReadyLists()
+         renderList = rl; groupedRenderList = gl;
+      }
    }
    def updateRenderReadyLists() = RenderReadyListsManager.updateRenderReadyLists()
    def getRenderList() = RenderReadyListsManager.renderList
    def getGroupedRenderList() = RenderReadyListsManager.groupedRenderList
+   def getRenderListTopMost() = RenderReadyListsManager.renderList.headOption.map(_.dat)
 
    def handleReq_Refresh():Unit = { //println (s"refresh called! @${js.Date.now()}")
       latestTriggeredCallId += 1
@@ -148,39 +162,44 @@ object SwitcheState {
    }
    def handleReq_RefreshIdle() = {
       // the windows event listeners should handle most change, but this is useful periodically for some clean sweeps?
+      // Note that we dont want try and refresh icons etc, as this is supposed to be periodic light refreshes only!
       if (isDismissed) handleReq_Refresh()
    }
 
-   def handleReq_WindowActivation(hwnd:Int):Unit = {
+   def handleReq_WindowActivation (hwnd:Int) : Unit = {
       // note that win rules to allow switching require the os to register our switche app processing the most recent ui input (which would've triggered this)
       // hence calling this immediately here can actually be flaky, but putting it on a small timeout seems to make it a LOT more reliable!
       // note also, that the set foreground doesnt bring back minimized windows, which requires showWindow, currently handled by js
       //WinapiLocal.activateWindow(hwnd)
-      js.timers.setTimeout(25) {WinapiLocal.activateWindow(hwnd)}
-      js.timers.setTimeout(50) {WinapiLocal.activateWindow(hwnd)}
-      if (SwitchePageState.inSearchState) {SwitchePageState.exitSearchState()}
-      js.timers.setTimeout(80) {
-         isDismissed = true;  SwitchePageState.resetFocus(); // resetting focus now makes it less flickery when its called back up
-         getSelfWindowOpt.map(WinapiLocal.hideWindow);
-      }
+      js.timers.setTimeout(25) { WinapiLocal.activateWindow(hwnd) }
+      js.timers.setTimeout(50) { WinapiLocal.activateWindow(hwnd) }
+      if (SwitchePageState.inSearchState) { SwitchePageState.exitSearchState() }
+      js.timers.setTimeout(80) { handleReq_SwitcheDismiss() }
       //js.timers.setTimeout(150) {handleReq_Refresh()}
    }
-   def handleReq_WindowMinimize(hwnd:Int):Unit = {
-      js.timers.setTimeout(25) {WinapiLocal.minimizeWindow(hwnd)}
-      js.timers.setTimeout(60) {WinapiLocal.minimizeWindow(hwnd)}
+   def handleReq_WindowMinimize (hwnd:Int) : Unit = {
+      js.timers.setTimeout(25) { WinapiLocal.minimizeWindow(hwnd) }
+      js.timers.setTimeout(60) { WinapiLocal.minimizeWindow(hwnd) }
    }
    def getSelfWindowOpt() = {
-      hMapPrior.values.filter(ExclusionsManager.selfSelector).headOption.map(_.hwnd)
+      hMapPrior.values .find (ExclusionsManager.selfSelector) .map(_.hwnd)
    }
-   def handleReq_SelfWindowHide() = {
+   def checkSelfWindowVisible() = {
+      // in general shouldn't have to use this as our 'isDismissed' should reflect that
+      hMapPrior.values .find (ExclusionsManager.selfSelector) .flatMap(_.isVis) .contains(true)
+   }
+   def handleReq_SwitcheDismiss() = {
+      isDismissed = true; SwitchePageState.resetFocus();  // resetting focus now makes it less flickery when its called back up
+      getSelfWindowOpt.map(WinapiLocal.hideWindow);
+   }
+   def handleReq_SelfWindowHide() : Unit = {
       // want to make sure focus is returned to the window we were supposed to have active
       js.timers.setTimeout(40) {
          SwitchePageState.recentsIdsVec.headOption .map (SwitchePageState.idToHwnd) .foreach (WinapiLocal.activateWindow)
       }
-      isDismissed = true; SwitchePageState.resetFocus(); // resetting focus now makes it less flickery when its called back up
-      getSelfWindowOpt.map(WinapiLocal.hideWindow)
+      handleReq_SwitcheDismiss()
    }
-   def handleReq_WindowClose(hwnd:Int) = {
+   def handleReq_WindowClose (hwnd:Int) = {
       // we try and activate the window first so it doesnt just die in the bkg, then send close, then after some delay, a refresh to update
       js.timers.setTimeout(30) {WinapiLocal.activateWindow(hwnd)}
       js.timers.setTimeout(50) {WinapiLocal.activateWindow(hwnd)}
@@ -191,7 +210,7 @@ object SwitcheState {
       //js.timers.setTimeout(600) {handleReq_Refresh()}
       // making this ^ call and elsewhere to clear out closed windows, but maybe could get rid of these if could setup a window destroyed listener
    }
-   def handleReq_WindowShow(hwnd:Int) = { // useful for inspection/closing.. brings that window to top, then brings ourselves back
+   def handleReq_WindowShow (hwnd:Int) = { // useful for inspection/closing.. brings that window to top, then brings ourselves back
       js.timers.setTimeout(30) {WinapiLocal.activateWindow(hwnd)}
       js.timers.setTimeout(50) {WinapiLocal.activateWindow(hwnd)}
       js.timers.setTimeout(1000) {getSelfWindowOpt.map(WinapiLocal.activateWindow)}
@@ -211,31 +230,46 @@ object SwitcheState {
       IconsManager.printIconCaches(); println()
    }
 
-   def handleReq_GroupModeToggle() = { inGroupedMode = !inGroupedMode; SwitcheFacePage.render() }
+   def handleReq_GroupModeToggle() = {
+      inGroupedMode = !inGroupedMode;
+      RenderSpacer.immdtRender()
+   }
 
+   def handleEvent_SwitcheFgnd() = {
+      isDismissed = false
+      // the idea below is that to keep icons mostly updated, we do icon-refresh for a window when it comes to fgnd ..
+      // however, when switche is brought to fgnd, recent changes in the topmost window might not be updated yet .. so we'll trigger that here
+      getRenderListTopMost() .foreach (IconsManager.refreshIcon)
+   }
 
    def procAppEvent_DevMode() = {
       //println("heard dev-mode notification call!")
       inElectronDevMode = true
       RibbonDisplay.updateDebugLinks()
    }
-   def procAppEvent_Focus() = {}
-   def procAppEvent_Blur() = {}
-   def procAppEvent_Show() = {}
-   def procAppEvent_Hide() = {}
+   def procAppEvent_Focus() = { handleEvent_SwitcheFgnd() }
+   def procAppEvent_Blur() = { }
+   def procAppEvent_Show() = { isDismissed = false } // this is called for every hotkey, so dont want to refresh top icon etc here
+   def procAppEvent_Hide() = { isDismissed = true }
 
-   def procHotkey_Invoke() = { //println ("..electron global hotkey press reported!")
+   def procHotkey_Invoke() = {
+      // note: for all practical purposes, invoke must be scroll-down because successive invokes should scroll down the list
+      // (unless ofc we started tracking if switche is topmost, in which case, we could resetFocus upon invoke if not-topmost .. meh)
+      procHotkey_ScrollDown()
+   }
+   def procHotkey_ScrollDown() = {
       SwitchePageState.triggerHoverLockTimeout()
-      if (isDismissed) { isDismissed=false; SwitchePageState.resetFocus(); }
+      if (isDismissed) { handleEvent_SwitcheFgnd(); SwitchePageState.resetFocus() }
       else { SwitchePageState.focusElem_Next() }
    }
-   def procHotkey_ScrollDown() = { procHotkey_Invoke }
    def procHotkey_ScrollUp() = {
       SwitchePageState.triggerHoverLockTimeout()
-      if (isDismissed) { isDismissed=false; SwitchePageState.focusElem_Bottom() }
+      if (isDismissed) { handleEvent_SwitcheFgnd(); SwitchePageState.focusElem_Bottom() }
       else { SwitchePageState.focusElem_Prev() }
    }
    def procHotkey_ScrollEnd() = {
+      SwitchePageState.triggerHoverLockTimeout()
+      // note below that a scroll-end only has meaning if we're scrolling (and hence already active)
       if (!isDismissed) { SwitchePageState.handleReq_CurElemActivation() }
    }
    def procHotkey_SilentTabSwitch() = {
@@ -247,23 +281,23 @@ object SwitcheState {
 
    def init() {
 
-      js.Dynamic.global.updateDynamic ("procHotkey_Invoke")           (SwitcheState.procHotkey_Invoke _)
-      js.Dynamic.global.updateDynamic ("procHotkey_SilentTabSwitch")  (SwitcheState.procHotkey_SilentTabSwitch _)
-      js.Dynamic.global.updateDynamic ("procHotkey_ChromeTabsList")   (SwitcheState.procHotkey_ChromeTabsList _)
-      js.Dynamic.global.updateDynamic ("procHotkey_ScrollDown")       (SwitcheState.procHotkey_ScrollDown _)
-      js.Dynamic.global.updateDynamic ("procHotkey_ScrollUp")         (SwitcheState.procHotkey_ScrollUp _)
-      js.Dynamic.global.updateDynamic ("procHotkey_ScrollEnd")        (SwitcheState.procHotkey_ScrollEnd _)
+      js.Dynamic.global.updateDynamic ("procHotkey_Invoke")           (procHotkey_Invoke _)
+      js.Dynamic.global.updateDynamic ("procHotkey_SilentTabSwitch")  (procHotkey_SilentTabSwitch _)
+      js.Dynamic.global.updateDynamic ("procHotkey_ChromeTabsList")   (procHotkey_ChromeTabsList _)
+      js.Dynamic.global.updateDynamic ("procHotkey_ScrollDown")       (procHotkey_ScrollDown _)
+      js.Dynamic.global.updateDynamic ("procHotkey_ScrollUp")         (procHotkey_ScrollUp _)
+      js.Dynamic.global.updateDynamic ("procHotkey_ScrollEnd")        (procHotkey_ScrollEnd _)
 
-      js.Dynamic.global.updateDynamic ("procAppEvent_DevMode")        (SwitcheState.procAppEvent_DevMode _)
-      js.Dynamic.global.updateDynamic ("procAppEvent_Focus")          (SwitcheState.procAppEvent_Focus _)
-      js.Dynamic.global.updateDynamic ("procAppEvent_Blur")           (SwitcheState.procAppEvent_Blur _)
-      js.Dynamic.global.updateDynamic ("procAppEvent_Show")           (SwitcheState.procAppEvent_Show _)
-      js.Dynamic.global.updateDynamic ("procAppEvent_Hide")           (SwitcheState.procAppEvent_Hide _)
+      js.Dynamic.global.updateDynamic ("procAppEvent_DevMode")        (procAppEvent_DevMode _)
+      js.Dynamic.global.updateDynamic ("procAppEvent_Focus")          (procAppEvent_Focus _)
+      js.Dynamic.global.updateDynamic ("procAppEvent_Blur")           (procAppEvent_Blur _)
+      js.Dynamic.global.updateDynamic ("procAppEvent_Show")           (procAppEvent_Show _)
+      js.Dynamic.global.updateDynamic ("procAppEvent_Hide")           (procAppEvent_Hide _)
 
-      js.Dynamic.global.updateDynamic ("procWinReport_FgndHwnd")      (SwitcheState.procWinReport_FgndHwnd _)
-      js.Dynamic.global.updateDynamic ("procWinReport_ObjDestroyed")  (SwitcheState.procWinReport_ObjDestroyed _)
-      js.Dynamic.global.updateDynamic ("procWinReport_ObjShown")      (SwitcheState.procWinReport_ObjShown _)
-      js.Dynamic.global.updateDynamic ("procWinReport_TitleChanged")  (SwitcheState.procWinReport_TitleChanged _)
+      js.Dynamic.global.updateDynamic ("procWinReport_FgndHwnd")      (procWinReport_FgndHwnd _)
+      js.Dynamic.global.updateDynamic ("procWinReport_ObjDestroyed")  (procWinReport_ObjDestroyed _)
+      js.Dynamic.global.updateDynamic ("procWinReport_ObjShown")      (procWinReport_ObjShown _)
+      js.Dynamic.global.updateDynamic ("procWinReport_TitleChanged")  (procWinReport_TitleChanged _)
 
    }
    init()
@@ -275,6 +309,10 @@ object RenderSpacer {
    // so too many requestAnimationFrame interspersed are taking a lot of time, as they each are upto 100ms, so gonna bunch them up too
    val minRenderSpacing = 50; val slop = 4; // in ms, slop is there just to catch jitter, delays etc, might not be needed
    var lastRenderTargStamp = 0d;
+   def immdtRender() : Unit = {
+      lastRenderTargStamp = js.Date.now()
+      SwitcheFacePage.updatePageElems()
+   }
    def queueSpacedRender():Unit = {
       // main idea .. if its past reqd spacing, req frame now and update stamp
       // else if its not yet time, but nothing queued already, queue with reqd delay
@@ -289,9 +327,8 @@ object RenderSpacer {
             //   js.Dynamic.global.window.requestAnimationFrame ({t:js.Any => SwitcheFacePage.render()})
             //} else { SwitcheFacePage.render() }
             // note that ^^ at 60Hz, repaints trigger ~16ms, so w our 50ms spacing, prob no longer much point in doing this .. so do it direct:
-            SwitcheFacePage.render()
-         }
-      }
+            SwitcheFacePage.updatePageElems()
+      } }
    }
 
 }

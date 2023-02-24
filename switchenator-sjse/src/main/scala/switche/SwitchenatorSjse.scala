@@ -9,7 +9,7 @@ import scala.scalajs.js.annotation.JSImport
 
 object SwitchenatorSjse extends js.JSApp {
    def main(): Unit = {
-      dom.document.getElementById("scala-js-root-div").appendChild (SwitcheFacePage.getShellPage())
+      dom.document .getElementById("scala-js-root-div") .appendChild (SwitcheFacePage.getShellPage())
 
       SwitcheState.handleReq_Refresh() // fire up first call
 

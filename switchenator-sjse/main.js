@@ -155,21 +155,31 @@ function createWindow() {
 // Some APIs can only be used after this event occurs.
 app.on('ready', () => {
    createWindow()
-   //globalShortcut.register ('F1', () => {sysHotkeyHandler_Invoke()})     // disabling since we're having krusty send F21 (and have ralt-f1 send f1)
+
+   //globalShortcut.register ('F1', () => {sysHotkeyHandler_Invoke()})
    //globalShortcut.register ('Alt+1', () => {sysHotkeyHandler_Invoke()})
    //globalShortcut.register ('Super+F1', () => {sysHotkeyHandler_Invoke()})
-   globalShortcut.register ('Super+F12', () => {sysHotkeyHandler_Invoke()})
+   // ^^ disabling these options on F1 since we're having krusty send F21 (and have ralt-f1 send f1)
+
+   // but even though we'll set mostly Fn[13+] keys via krusty for F1, we'll also add win-f12 so we're not fully reliant on krusty remappings
+   globalShortcut.register ('Super+F12',       () => {sysHotkeyHandler_ScrollDown()})
+   globalShortcut.register ('Super+Shift+F12', () => {sysHotkeyHandler_ScrollUp()})
+
    //globalShortcut.register ('Esc', () => {mainWindow.hide()})
-   // lol ^ cant do that.. lots of ppl need Esc.. gonna have to handle it from inside window, not globally
+   // lol ^ ofc cant do that.. lots of ppl need Esc.. so we'll handle it from inside window, not globally
    //globalShortcut.register ('F2', () => {hotkeyReverseHandler()}) // ofc cant do this either, hence the following
-   //globalShortcut.register ('Ctrl+Alt+F1', () => {sysHotkeyHandler_ScrollDown()})
-   //globalShortcut.register ('Ctrl+Alt+F2', () => {sysHotkeyHandler_ScrollUp()})
-   //globalShortcut.register ('Ctrl+Alt+F3', () => {sysHotkeyHandler_ScrollEnd()})
-   globalShortcut.register ('F20', () => {sysHotkeyHandler_SilentTabSwitch()})
-   globalShortcut.register ('F21', () => {sysHotkeyHandler_ScrollDown()})
-   globalShortcut.register ('F22', () => {sysHotkeyHandler_ScrollUp()})
-   globalShortcut.register ('F23', () => {sysHotkeyHandler_ScrollEnd()})
-   globalShortcut.register ('F24', () => {sysHotkeyHandler_ChromeTabsList()})
+
+   // NOTE that combo-fn keys like Ctrl-FX or Alt-FX arent ideal here, esp if those are actually being sent via krusty etc ..
+   // .. as that seems to cause slowdown and choppy nav etc (due to the wrapped ctrl etc from krusty, let alone the masking keys if alt!)
+   // .. and esp for for scrolls, we'll want best key-repeat perf, so we'll use direct Fn keys
+   //globalShortcut.register ( 'F15', () => { sysHotkeyHandler_Invoke() } )      // not essential, we'll just use scroll-down for invocation
+   globalShortcut.register ( 'F16',       () => { sysHotkeyHandler_ScrollDown() } )
+   globalShortcut.register ( 'Shift+F16', () => { sysHotkeyHandler_ScrollUp() } )   // for krusty, this eliminates wrapping shift-ups !
+   globalShortcut.register ( 'F17',       () => { sysHotkeyHandler_ScrollUp() } )   // but for mouse scrolls, we'll keep this so its fast
+   // while for the others, key-repeat perf is irrelevant, so we'll use Ctrl-Fns to not hog up Fn keys for any other apps etc
+   globalShortcut.register ( 'Ctrl+F18', () => { sysHotkeyHandler_ScrollEnd() } )
+   globalShortcut.register ( 'Ctrl+F19', () => { sysHotkeyHandler_SilentTabSwitch() } )
+   globalShortcut.register ( 'Ctrl+F20', () => { sysHotkeyHandler_ChromeTabsList() } )
 
    if (true == global.inDevMode) { mainWindow.webContents.executeJavaScript('window.procAppEvent_DevMode()') }
 })

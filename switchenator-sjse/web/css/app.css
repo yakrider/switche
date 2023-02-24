@@ -53,7 +53,7 @@ body {
 .groupedDiv { }
 .searchedDiv { }
 .recentsDiv.dim {
-  filter: grayscale(80%) brightness(80%);
+  filter: grayscale(20%) brightness(80%);
 }
 
 .elemBox {
