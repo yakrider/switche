@@ -7,9 +7,10 @@ import org.scalajs.dom.raw.{KeyboardEvent, MouseEvent, WheelEvent}
 import org.scalajs.dom.{document => doc}
 import scalatags.JsDom.all._
 
-import scala.collection.{breakOut, mutable}
+import scala.collection.{breakOut, mutable, Map, IndexedSeq}
 import scala.scalajs.js
 import scala.scalajs.js.Dynamic.{global => g}
+import scala.util.Try
 
 
 object SwitcheFaceConfig {
@@ -34,6 +35,28 @@ object DomExts {
    } } }
 
 }
+
+// some type defs for the various modes and states for various ui sections
+sealed abstract class GrpT (val cls:String)
+object GrpTs {
+   case object NG extends GrpT ("ng")   // Non-Grouped
+   case object GH extends GrpT ("gh")   // Group-Head
+   case object GT extends GrpT ("gt")   // Group-Tail
+}
+
+sealed abstract class ElemT (val cls:String)
+object ElemTs {
+   case object R  extends ElemT ("r")     // recents-mode recents block
+   case object G  extends ElemT ("g")     // grouped mode grouped block
+   case object GR extends ElemT ("gr")    // grouped mode recents block
+}
+
+sealed abstract class StateT (val cls:String)
+object StateTs {
+   case object L  extends StateT ("l")    // listing state (search not activated)
+   case object S  extends StateT ("s")    // searching state
+}
+
 
 object SwitcheFacePage {
    import SwitchePageState._
@@ -107,12 +130,13 @@ object SwitcheFacePage {
          if (e.deltaY > 0 || e.deltaX > 0) { focusElem_Next() } else { focusElem_Prev() }
    } }
    def procMouse_Enter (e:MouseEvent) = {
+      // NOTE: this is deprecated in favor of directly setting mouse-enter in the div boxes
       e.target.closest(".elemBox") .foreach {e => handleMouseEnter (e.asInstanceOf[Div]) }
    }
    def capturePhaseKeyupHandler (e:KeyboardEvent) = { //printKeyDebugInfo(e,"up")
       // note: escape can cause app hide, and when doing that, we dont want that to leak outside app, hence on keyup
       if (inSearchState) {
-         handleSearchModeKeyup(e)   // let it recalc matches if necessary etc
+         handle_SearchModeKeyup(e)   // let it recalc matches if necessary etc
       } else { // not in search state
          if (e.key == "Escape")  SwitcheState.handleReq_SelfWindowHide()
       }
@@ -121,9 +145,9 @@ object SwitcheFacePage {
    def capturePhaseKeydownHandler (e:KeyboardEvent) = { //printKeyDebugInfo(e,"down")
       var doStopProp = true
       @inline def setupSearchboxPassthrough() = {
-         inSearchState = true; doStopProp = false;
-         if (!modifierKeys.contains(e.key)) { activateSearchBox(); }
-      }
+         if (!modifierKeys.contains(e.key)) {
+            inSearchState = true; doStopProp = false; activateSearchBox();
+      } }
       @inline def eventPassthroughGuarded() = {
          if (doStopProp) { e.stopPropagation(); e.preventDefault(); }
       }
@@ -137,8 +161,8 @@ object SwitcheFacePage {
       else if (e.ctrlKey) {
          if      (e.key == " ")  handleReq_CurElemActivation()
          else if (e.key == "g")  handleReq_GroupModeToggle()
-         else if (e.key == "t")  handleReq_ChromeTabsListActivation (doTog=false)   // t for tabs (but is two hand key)
-         else if (e.key == "c")  handleReq_ChromeTabsListActivation (doTog=false)   // c for chrome-tabs .. we'll see which we use more
+         else if (e.key == "t")  procHotkey_Switch_TabsOutliner()   // t for tabs (but is two hand key)
+         else if (e.key == "c")  procHotkey_Switch_TabsOutliner()   // c for chrome-tabs .. we'll see which we use more
          else if (e.key == "w")  handleReq_CurElemClose()
          else if (e.key == "v")  handleReq_CurElemShow()
          //else if (e.key == "r") RibbonDisplay.handleRefreshBtnClick()  // ctrl-r is not available for us because of the way we overload it in ahk remapping
@@ -149,6 +173,7 @@ object SwitcheFacePage {
          // these are enabled for both normal and  search-state
          if      (e.key == "F1")         focusElem_Next()         // note: not really needed, registered as global hotkey, set electron to forwards it as a call
          else if (e.key == "F2")         focusElem_Prev()
+         else if (e.key == "F16")        if (e.shiftKey) focusElem_Prev() else focusElem_Next()
          else if (e.key == "Tab")        if (e.shiftKey) focusElem_Prev() else focusElem_Next()
          else if (e.key == "ArrowDown")  focusElem_Next()
          else if (e.key == "ArrowUp")    focusElem_Prev()
@@ -172,135 +197,63 @@ object SwitcheFacePage {
 
 }
 
+
+
 object SwitchePageState {
    import SwitcheFaceConfig._
+   import SwitcheState.inGroupedMode
+
    // doing recents and grouped elems separately as they literally are different divs (w/ diff styles etc)
+   // note that in search mode, both of these containers will be updated with search style elems and search-filtered id-vecs
    case class OrderedElemsEntry (y:Int, elem:Div, yg:Int=(-1))
-   var recentsElemsMap:   mutable.LinkedHashMap[String,OrderedElemsEntry] = mutable.LinkedHashMap()
-   var groupedElemsMap:   mutable.LinkedHashMap[String,OrderedElemsEntry] = mutable.LinkedHashMap()
-   var searchElemsMap:    mutable.LinkedHashMap[String,OrderedElemsEntry] = mutable.LinkedHashMap()
-   var recentsIdsVec:     Vector[String] = Vector()
-   var searchIdsVec:      Vector[String] = Vector()
-   var groupedIdsVec:     Vector[String] = Vector()
-   var groupsHeadsIdsVec: mutable.ArrayBuffer[String] = mutable.ArrayBuffer()
+   var recentsElemsMap:   Map[String,OrderedElemsEntry] = Map()
+   var groupedElemsMap:   Map[String,OrderedElemsEntry] = Map()
+   var recentsIdsVec:     IndexedSeq[String] = Vector()
+   var groupedIdsVec:     IndexedSeq[String] = Vector()
+   var groupsHeadsIdsVec: IndexedSeq[String] = Vector()
    var curElemId = ""; var inSearchState = false;
    var isHoverLocked = false; var lastActionStamp = 0d;
    // ^^ hover-lock flag locks-out mouseover, and is intended to be set (w small timeout) while mouse scrolling/clicks etc
    // .. and that prevents mouse jiggles from screwing up any in-preogress mouse scrolls, clicks, key-nav etc
 
-   def rebuildElems() = {} // todo: instead of full render, consider surgical updates to divs directly w/o waiting for global render etc
 
-   def recentsId  (hwnd:Int) = s"${hwnd}_r"
-   def groupedId  (hwnd:Int) = s"${hwnd}_g"
-   def searchedId (hwnd:Int) = s"${hwnd}_s"
-   def idToHwnd (idStr:String) = idStr.split("_").head.toInt // if fails, meh, its js!
-   def isIdGrp (idStr:String) = { idStr.split("_").head != idStr }
+   def recentsId (hwnd:Int) = s"${hwnd}_r"
+   def groupedId (hwnd:Int) = s"${hwnd}_g"
+   def idToHwnd (idStr:String) = idStr.split("_") .headOption .flatMap (s => Try(s.toInt).toOption)
 
-   def setCurElem (id:String) = { curElemId = id; }
-   def setCurElemHighlight (newFocusElem:Div) = {
-      // we manage 'focus' ourselves so that remains even when actual focus is moved to search-box etc
-      clearCurElemHighlight()       // note that this will clear curElemId too
-      setCurElem (newFocusElem.id)
-      newFocusElem.classList.add("curElem")
-      if (inSearchState) { // in search state see if we can find another in recents to highlight too
-         recentsElemsMap .get (recentsId (idToHwnd (newFocusElem.id))) .foreach (_.elem.classList.add("curElem"))
-      }
-   }
-   def clearCurElemHighlight () = {
-      curElemId = ""
-      //doc.querySelectorAll(s".curElem") .foreach(_.classList.remove("curElem"))
-      // ^^ our (old) sjs versions doesnt have NodeList conversion to scala iterable ..
-      // .. so for now, we'll just try it twice, as there are at most two of these (if there's one in recents too during search)
-      Option (doc.querySelector(s".curElem")) .foreach(_.classList.remove("curElem"))
-      if (inSearchState) { // if in search mode try to clear one more
-         Option (doc.querySelector(s".curElem")) .foreach(_.classList.remove("curElem"))
-      }
-   }
 
-   def focusElem (isReverseDir:Boolean=false, isGrpNext:Boolean=false) = {
-      type Wrapper = Vector[String] => Option[String]
-      val (incr, vecWrap) = { if (!isReverseDir) { (1, (_.headOption):Wrapper) } else { (-1, (_.lastOption):Wrapper) } }
-      // first we'll pick curElem from whichever map the it is in
-      recentsElemsMap.get(curElemId).map(e => (false,e))
-      .orElse { groupedElemsMap .get(curElemId) .map(e => (true,e)) }
-      .orElse { searchElemsMap.get(curElemId).map(e => (false,e)) }
-      // now that we have the cur-entry, lets try to find the next-entry option
-      .flatMap { case (hasGrps, e) =>
-         if (inSearchState) {        // search mode is non-grouped
-            searchIdsVec .lift(e.y+incr) .orElse (vecWrap(searchIdsVec)) .flatMap(searchElemsMap.get)
-         } else if (!SwitcheState.inGroupedMode) {    // this is recents mode, and is non-grouped
-            recentsIdsVec .lift(e.y+incr) .orElse (vecWrap(recentsIdsVec)) .flatMap(recentsElemsMap.get)
-         } else {              // i.e. in grouped mode (which has a recents block followed by grouped block!)
-            if (!isGrpNext) {  // this is regular next/prev
-               if (!hasGrps) {  // but cur-item is in recents block .. move to prev/next in recents, but wrap over to grp
-                  recentsIdsVec .lift(e.y+incr) .flatMap(recentsElemsMap.get) .orElse ( vecWrap(groupedIdsVec) .flatMap(groupedElemsMap.get) )
-               } else {        // ok, cur-item is already in grpd block .. move to prev/next in grp, but wrap over to recents
-                  groupedIdsVec .lift(e.y+incr) .flatMap(groupedElemsMap.get) .orElse ( vecWrap(recentsIdsVec) .flatMap(recentsElemsMap.get) )
-               }
-            } else {           // this is group-next/prev
-               if (!hasGrps) {  // but cur-item is in recents block .. so just move to the grp block
-                  vecWrap (groupedIdsVec) .flatMap(groupedElemsMap.get)
-               } else {        // ok, cur-item is in grpd-block .. move to next/prev by grp, but wrap over to recents head
-                  groupsHeadsIdsVec .lift(e.yg+incr) .flatMap(groupedElemsMap.get) .orElse ( recentsIdsVec.headOption.flatMap(recentsElemsMap.get) )
-               }
-      }  }  } // then finally, we can make that current (if we found one)
-      .map(_.elem) .foreach (setCurElemHighlight)
-   }
-
-   def focusElem_Next()  = focusElem (isReverseDir=false, isGrpNext=false)
-   def focusElem_Prev()  = focusElem (isReverseDir=true,  isGrpNext=false)
-   def focusGroup_Next() = focusElem (isReverseDir=false, isGrpNext=true)
-   def focusGroup_Prev() = focusElem (isReverseDir=true,  isGrpNext=true)
-
-   def focusElem_Top() = {
-      if (inSearchState) { searchIdsVec.headOption.flatMap(searchElemsMap.get) }
-      else { recentsIdsVec.headOption.flatMap(recentsElemsMap.get) }
-   } .map(_.elem) .foreach (setCurElemHighlight)
-
-   def focusElem_Bottom() = {
-      if (inSearchState) { searchIdsVec.lastOption.flatMap(searchElemsMap.get) }
-      else if (SwitcheState.inGroupedMode) { groupedIdsVec.lastOption.flatMap(groupedElemsMap.get) }
-      else { recentsIdsVec.lastOption.flatMap(recentsElemsMap.get) }
-   } .map(_.elem) .foreach (setCurElemHighlight)
-
-   def resetFocus() = {
-      //js.Dynamic.global.document.activeElement.blur()
-      setCurElem(recentsIdsVec.head); focusElem_Next()
-   }
-
-   def handleReq_CurElemActivation() = { SwitcheState.handleReq_WindowActivation (idToHwnd(curElemId)) }
-   def handleReq_CurElemMinimize()   = { SwitcheState.handleReq_WindowMinimize   (idToHwnd(curElemId)) }
-   def handleReq_CurElemClose()      = { SwitcheState.handleReq_WindowClose      (idToHwnd(curElemId)) }
-   def handleReq_CurElemShow()       = { SwitcheState.handleReq_WindowShow       (idToHwnd(curElemId)) }
+   def handleReq_CurElemActivation() = { idToHwnd (curElemId) .foreach (SwitcheState.handleReq_WindowActivation) }
+   def handleReq_CurElemMinimize()   = { idToHwnd (curElemId) .foreach (SwitcheState.handleReq_WindowMinimize) }
+   def handleReq_CurElemClose()      = { idToHwnd (curElemId) .foreach (SwitcheState.handleReq_WindowClose) }
+   def handleReq_CurElemShow()       = { idToHwnd (curElemId) .foreach (SwitcheState.handleReq_WindowShow) }
 
    def handleReq_SecondRecentActivation() = {
-      recentsIdsVec.lift(1) .map(idToHwnd) .foreach(SwitcheState.handleReq_WindowActivation)
+      recentsIdsVec.lift(1) .flatMap(idToHwnd) .foreach(SwitcheState.handleReq_WindowActivation)
    }
-   def handleReq_ChromeTabsListActivation(doTog:Boolean=true) = {
+   def handleReq_MatchedWindowActivation (exe:Option[String], title:Option[String], doTog:Boolean = true) = {
       val hwnd = SwitcheState.getRenderList() .filter { e =>
-         e.dat.winText.contains("Tabs Outliner") && e.dat.exePathName.map(_.name).contains("chrome.exe") &&
-            e.dat.isVis.contains(true) && e.dat.isUnCloaked.contains(true) // these two are redundant checks, just for peace of mind
+         exe.forall(e.dat.exePathName.map(_.name).contains) && title.forall(e.dat.winText.contains)
       } .map(_.dat.hwnd)
       // if we found the hwnd, if its not already active, activate it, else switch to next window
       if (hwnd.isEmpty) {
          // didnt find it, do nothing .. (certainly dont switch to second window!)
-      } else if (doTog && recentsIdsVec.headOption.map(idToHwnd).exists(hwnd.contains)) {
+      } else if (doTog && recentsIdsVec.headOption.flatMap(idToHwnd).exists(hwnd.contains)) {
          // found it, its already at top, so toggle to the next-top window
          handleReq_SecondRecentActivation()
       } else { // aight, found it, and its not top, switch to it
-         hwnd.foreach(SwitcheState.handleReq_WindowActivation)
+         hwnd.headOption.foreach(SwitcheState.handleReq_WindowActivation)
       }
    }
 
    def handleMouseEnter (elem:Div) = {
       if (!isHoverLocked) { setCurElemHighlight(elem) }
    }
+   def handleHoverLockTimeout (kickerStamp:Double) = {
+      if (lastActionStamp == kickerStamp) { isHoverLocked = false }
+   }
    def triggerHoverLockTimeout() = {
       isHoverLocked = true; val t = js.Date.now(); lastActionStamp = t;
       js.timers.setTimeout(hoverLockTime) {handleHoverLockTimeout(t)}
-   }
-   def handleHoverLockTimeout(kickerStamp:Double) = {
-      if (lastActionStamp == kickerStamp) { isHoverLocked = false }
    }
    def verifyActionRepeatSpacing (minRepeatSpacingMs:Double) : Boolean = {
       val t = scalajs.js.Date.now()
@@ -309,20 +262,20 @@ object SwitchePageState {
       return true
    }
 
-   def makeElemBox (idStr:String, e:RenderListEntry, isDim:Boolean, isRecents:Boolean):Div = {
+
+   def makeElemBox (idStr:String, e:RenderListEntry, elemT:ElemT, grpT:GrpT) : Div = {
       val exeInnerSpan = span ( e.dat.exePathName.map(_.name).getOrElse("exe..").toString ).render
       val yInnerSpan = span (`class`:="ySpan", f"${e.y}%2d" ).render
       val titleInnerSpan = span ( e.dat.winText.getOrElse("title").toString ).render
-      makeElemBox ( idStr, e, isDim, isRecents, exeInnerSpan, yInnerSpan, titleInnerSpan )
+      makeElemBox ( idStr, e, elemT, grpT, exeInnerSpan, yInnerSpan, titleInnerSpan )
    }
-   def makeElemBox (idStr:String, e:RenderListEntry, isDim:Boolean, isRecents:Boolean,
-                    exeInnerSpan:Span, yInnerSpan:Span, titleInnerSpan:Span
-    ) : Div = {
-      val recentsCls = if (isRecents) " recents" else ""
-      val dimCls = if (isDim) " dim" else ""
-      val exeSpan = span (`class`:=s"exeSpan$recentsCls$dimCls", exeInnerSpan)
-      val ySpan = span (`class`:=s"ySpan$recentsCls", yInnerSpan)
-      val titleSpan = span (`class`:=s"titleSpan$recentsCls", titleInnerSpan)
+   def makeElemBox (
+      idStr:String, e:RenderListEntry, elemT:ElemT, grpT:GrpT,
+      exeInnerSpan:Span, yInnerSpan:Span, titleInnerSpan:Span
+   ) : Div = {
+      val exeSpan = span (`class`:=s"exeSpan ${elemT.cls} ${grpT.cls}", exeInnerSpan)
+      val ySpan = span (`class`:=s"ySpan ${elemT.cls}", yInnerSpan)
+      val titleSpan = span (`class`:=s"titleSpan ${elemT.cls}", titleInnerSpan)
       val ico = IconsManager.getCachedIcon(e.dat) .map (icoStr => img(`class`:="ico", src:=icoStr)) .getOrElse(span("ico"))
       val icoSpan = span (`class`:="exeIcoSpan", ico)
       val elem = div (`class`:="elemBox", id:=idStr, tabindex:=0, exeSpan, nbsp(2), ySpan, nbsp(2), icoSpan, nbsp(), titleSpan).render
@@ -334,76 +287,91 @@ object SwitchePageState {
    }
 
    def rebuildRecentsElems() = {
-      recentsElemsMap.clear()
-      SwitcheState.getRenderList .take (
-         if (SwitcheState.inGroupedMode) groupedModeTopRecentsCount else SwitcheState.getRenderList().length
-      ) .zipWithIndex .foreach { case (d,i) =>
+      // this needs the elems table, and a vec to navigate through it
+      val elemsMap = mutable.LinkedHashMap[String,OrderedElemsEntry]()
+      val cappedRecents = {
+         if (!inGroupedMode) SwitcheState.getRenderList else SwitcheState.getRenderList.take(groupedModeTopRecentsCount)
+      }
+      cappedRecents .zipWithIndex .foreach { case (d,i) =>
          val id = recentsId (d.dat.hwnd)
-         val elem = makeElemBox (id, d, isDim=false, isRecents=true)
-         recentsElemsMap.put (id, OrderedElemsEntry (i, elem))
+         val elemT = if (inGroupedMode) ElemTs.GR else ElemTs.R
+         val elem = makeElemBox (id, d, elemT, GrpTs.NG)
+         elemsMap.put (id, OrderedElemsEntry (i, elem))
       }
-      recentsIdsVec = recentsElemsMap.keys.toVector
+      recentsElemsMap = elemsMap                // will cast it to immutable trait
+      recentsIdsVec = elemsMap.keys.toVector
    }
+
    def rebuildGroupedElems() = {
-      groupedElemsMap.clear()
-      groupsHeadsIdsVec = mutable.ArrayBuffer()
-      case class PartOrderedElem (id:String, d:Div, grpIdx:Int)
-      def getIdElemH (d:RenderListEntry, isExeDim:Boolean, grpIdx:Int) = {
+      // this additionally needs a group-heads vec to nav across groups (and has non-grp-head exes dimmed)
+      val elemsMap = mutable.LinkedHashMap[String,OrderedElemsEntry]()
+      val groupsHeadsIdsBuf = mutable.ArrayBuffer[String]()
+      case class GrpIdxdElem (id:String, d:Div, grpIdx:Int)
+      def getGrpIdxdElem (d:RenderListEntry, grpT:GrpT, grpIdx:Int) = {
          val id = groupedId (d.dat.hwnd)
-         val elem = makeElemBox (id, d, isExeDim, isRecents=false)
-         PartOrderedElem (id, elem, grpIdx)
+         val elem = makeElemBox (id, d, ElemTs.G, grpT)
+         GrpIdxdElem (id, elem, grpIdx)
       }
-      SwitcheState.getGroupedRenderList .zipWithIndex .map {case (ll,gi) =>
-         Seq ( ll.take(1).map(d => getIdElemH(d,false,gi)), ll.tail.map(d => getIdElemH(d,true,gi)) ).flatten
-      } .map { ll => ll.headOption.map(_.id).foreach(groupsHeadsIdsVec.+=(_)); ll } .flatten .zipWithIndex
-      .foreach {case (e,i) => groupedElemsMap.put (e.id, OrderedElemsEntry(i,e.d,e.grpIdx)) }
-      groupedIdsVec = groupedElemsMap.keys.toVector
+      SwitcheState.getGroupedRenderList .zipWithIndex .map { case (ll, gi) => Seq (
+         // we wanted to set the first (if any) in group to group-head type, and rest (if any) to group-tail type (dimmed)
+         ll .take(1) .map (d => getGrpIdxdElem (d, GrpTs.GH, gi)),
+         ll .tail    .map (d => getGrpIdxdElem (d, GrpTs.GT, gi))
+      ) .flatten } .map { ll =>     // also register each group head to build out the group-heads idx for group-nav
+         ll.headOption .map(_.id) .foreach (groupsHeadsIdsBuf.+=); ll
+      } .flatten .zipWithIndex .foreach { case (e,i) => // and finally we can build out the flattened elems-map
+         elemsMap.put (e.id, OrderedElemsEntry(i,e.d,e.grpIdx))
+      }
+      groupedElemsMap = elemsMap
+      groupedIdsVec = elemsMap.keys.toVector
+      groupsHeadsIdsVec = groupsHeadsIdsBuf
    }
-   def rebuildSearchElems() : Unit = {
-      searchElemsMap.clear(); recentsElemsMap.clear();   // we'll also build recents here w/ match highlighting like for search
+
+   def rebuildSearchStateElems() : Unit = {
+      // we'll build both recents and grouped for search-state together to reuse common mechanisms
+      // note that in search state, there will be no group nav, nav will be restricted to search matches, and if grouped, nav will use that block
       val matchStr = RibbonDisplay.searchBox.value.trim
       case class SearchedElem (id:String, elem:Div, chkPassed:Boolean)
-      def getSearchElem (e:RenderListEntry, isRecents:Boolean, isExeDim:Boolean, r:CheckSearchExeTitleRes) = {
-         val id = if (isRecents) recentsId(e.dat.hwnd) else searchedId(e.dat.hwnd)
-         val elem = makeElemBox (id, e, isExeDim, isRecents, r.exeSpan, r.ySpan, r.titleSpan)
+      def getSearchElem (e:RenderListEntry, elemT:ElemT, grpT:GrpT, r:CheckSearchExeTitleRes) = {
+         val id = if (elemT == ElemTs.G) groupedId(e.dat.hwnd) else recentsId(e.dat.hwnd)
+         val elem = makeElemBox (id, e, elemT, grpT, r.exeSpan, r.ySpan, r.titleSpan)
          SearchedElem (id, elem, r.chkPassed)
       }
       def getSearchMatchRes (e:RenderListEntry) = {
          SearchHelper.checkSearchExeTitle (e.dat.exePathName.map(_.name).getOrElse(""), e.dat.winText.getOrElse(""), matchStr, e.y)
       }
-      // the searchElemsMap idxs need to have not the zipWithIndex, but sequential idxs of only matching elems ..
-      // .. so we'll do it in stages, first lets make the elems
-      val sElems = SwitcheState.getGroupedRenderList() .map {_ .map { e => e -> getSearchMatchRes(e) } } .map { ll =>
-         Seq ( ll.take(1).map {case (e,r) => getSearchElem(e,false,false,r)}, ll.tail.map {case (e,r) => getSearchElem(e,false,true,r)} ) .flatten
-      } .flatten
-      // then we'll create a separate matchIdxs for only the matching elems ids
-      val matchIdxs = sElems .filter(_.chkPassed) .zipWithIndex .map { case (e,i) => e.id -> i } (breakOut):mutable.LinkedHashMap[String,Int]
-      // and using that, we'll build the searchElemsMap and the searchIdsVec
-      sElems .zipWithIndex .foreach { case (e,i) =>
-         val y = matchIdxs.get(e.id).getOrElse(-1)
-         searchElemsMap .put (e.id, OrderedElemsEntry(y,e.elem))
+      def getSearchStateMapAndVec (sElems:Seq[SearchedElem]) = {
+         val searchedElemsMap = mutable.LinkedHashMap[String,OrderedElemsEntry]()
+         // this creates a separate matchIdxs table for only the matching elems ids (in place of regular recents/grouped ids nav vec)
+         val matchIdxs = sElems .filter(_.chkPassed) .zipWithIndex .map { case (e,i) => e.id -> i }(breakOut):mutable.LinkedHashMap[String,Int]
+         // then using that we can build out the search-state elems-map and nav-ids-vec
+         sElems .zipWithIndex .foreach { case (e,i) =>
+            val y = matchIdxs.get(e.id).getOrElse(-1)
+            searchedElemsMap .put (e.id, OrderedElemsEntry(y,e.elem))
+         }
+         (searchedElemsMap, matchIdxs.keys.toVector)
       }
-      searchIdsVec = matchIdxs.keys.toVector
+      if (!inGroupedMode) {
+         // lets do the simpler case of non-grouped mode
+         val sElems = SwitcheState.getRenderList() .map (e => getSearchElem (e, ElemTs.R, GrpTs.NG, getSearchMatchRes(e)))
+         getSearchStateMapAndVec(sElems) match { case (m,v) => recentsElemsMap = m; recentsIdsVec = v }
+      } else {
+         // in grouped mode, we'll do navs in grouped block, but do simpler eqv match highlighting in dimmed top-recents where available
+         // the searchElemsMap idxs need to have not the zipWithIndex, but sequential idxs of only matching elems ..
+         val sElems = SwitcheState.getGroupedRenderList() .map {_ .map { e => e -> getSearchMatchRes(e) } } .map { ll => Seq (
+            ll .take(1) .map { case (e,r) => getSearchElem (e, ElemTs.G, GrpTs.GH, r) },
+            ll .tail    .map { case (e,r) => getSearchElem (e, ElemTs.G, GrpTs.GT, r) }
+         ) .flatten } .flatten
+         getSearchStateMapAndVec(sElems) match { case (m,v) => groupedElemsMap = m; groupedIdsVec = v }
 
-      // now lets build the recents w similar search-match highlighting as well .. (it is simpler since we dont need to next/prev through it)
-      SwitcheState.getRenderList() .take (
-         if (SwitcheState.inGroupedMode) groupedModeTopRecentsCount else SwitcheState.getRenderList().length
-      ) .zipWithIndex .foreach { case (e,i) =>
-         val se = getSearchElem(e,true,true,getSearchMatchRes(e))
-         recentsElemsMap .put (se.id, OrderedElemsEntry (i, se.elem))
+         // now lets build the recents w similar search-match highlighting as well .. (we wont need nav idxs for it)
+         val elemsMap = mutable.LinkedHashMap[String,OrderedElemsEntry]()
+         SwitcheState.getRenderList() .take(groupedModeTopRecentsCount) .zipWithIndex .foreach { case (e,i) =>
+            val se = getSearchElem (e, ElemTs.GR, GrpTs.NG, getSearchMatchRes(e))
+            elemsMap .put (se.id, OrderedElemsEntry (i, se.elem))
+         }
+         recentsElemsMap = elemsMap
+         recentsIdsVec = elemsMap.keys.toVector
       }
-      recentsIdsVec = recentsElemsMap.keys.toVector
-   }
-
-   def reSyncCurFocusIdAfterRebuild() = {
-      { if (inSearchState) { // try search-elems match or else search-elems top
-            searchElemsMap .get (searchedId (idToHwnd(curElemId))) .orElse (searchIdsVec.headOption.flatMap(searchElemsMap.get))
-         } else if (SwitcheState.inGroupedMode) { // try grouped-elems match, or else recents above it, (or else recents-top fallback below)
-            groupedElemsMap.get(curElemId) .orElse (recentsElemsMap.get(curElemId))
-         } else { // try recents elems match, (or else recents-top in fallback further below)
-            recentsElemsMap.get(curElemId)
-         } // if still not found default to top of recents list (e.g. at initial load)
-      } .orElse (recentsIdsVec.headOption.flatMap(recentsElemsMap.get)) .map(_.elem) .foreach (setCurElemHighlight)
    }
 
    def activateSearchBox () = { RibbonDisplay.searchBox.focus() }
@@ -411,11 +379,8 @@ object SwitchePageState {
       inSearchState = false; RibbonDisplay.searchBox.value = ""; RibbonDisplay.searchBox.blur();
       RenderSpacer.immdtRender()
    }
-   def resetSearchMatchFocus() : Unit = {
-      searchIdsVec.headOption .flatMap(searchElemsMap.get) .map(_.elem) .map(setCurElemHighlight) .getOrElse(clearCurElemHighlight)
-   }
 
-   val handleSearchModeKeyup: KeyboardEvent => Unit = {
+   val handle_SearchModeKeyup: KeyboardEvent => Unit = {
       var cachedSearchBoxTxt = ""
       // ^^ we only need to cache it for this fn, so we're wrapping the whole thing into a closured val (instead of a fn)
       (e: KeyboardEvent) => {
@@ -430,73 +395,168 @@ object SwitchePageState {
       } }
    }
 
-   def replaceTitleInnerSpan (elem:Div, newSpan:Span) = {
-      clearedElem (elem.getElementsByClassName("titleSpan").apply(0)) .appendChild (newSpan)
-   }
    def handle_TitleUpdate (hwnd:Int, dat:WinDatEntry) = {
-      def titleUpdate_NonSearchDiv (oe:OrderedElemsEntry) : Unit = {
-         replaceTitleInnerSpan ( oe.elem, span (dat.winText.getOrElse("title.."):String).render )
+      def replaceTitleSpan (oe:OrderedElemsEntry) : Unit = {
+         val titleSpan = if (!inSearchState) {
+            span ( dat.winText.getOrElse("title.."):String ).render
+         } else {
+            SearchHelper.checkSearchExeTitle (
+               dat.exePathName.map(_.name).getOrElse(""), dat.winText.getOrElse(""), RibbonDisplay.searchBox.value.trim, oe.y
+            ) .titleSpan
+         }
+         clearedElem (oe.elem.getElementsByClassName("titleSpan").item(0)) .appendChild (titleSpan)
       }
-      def titleUpdate_SearchDiv (oe:OrderedElemsEntry) : Unit = {
-         val sRes = SearchHelper.checkSearchExeTitle (
-            dat.exePathName.map(_.name).getOrElse(""), dat.winText.getOrElse(""), RibbonDisplay.searchBox.value.trim, oe.y
-         )
-         replaceTitleInnerSpan (oe.elem, sRes.titleSpan)
+      recentsElemsMap .get(recentsId(hwnd)) .foreach (replaceTitleSpan)
+      groupedElemsMap .get(groupedId(hwnd)) .foreach (replaceTitleSpan)
+   }
+
+
+
+   def setCurElem (id:String) = { curElemId = id; }
+   def setCurElemHighlight (newFocusElem:Div) = {
+      // we manage 'focus' ourselves so that remains even when actual focus is moved to search-box etc
+      clearCurElemHighlight()       // note that this will clear curElemId too
+      setCurElem (newFocusElem.id)
+      newFocusElem.classList.add("curElem")
+      if (inSearchState && inGroupedMode) { // in group-mode search-state see if we can find another in recents to highlight too
+         idToHwnd (newFocusElem.id) .map (recentsId) .flatMap (recentsElemsMap.get) .foreach (_.elem.classList.add("curElem"))
       }
-      if (inSearchState) {
-         // note that in search mode, even recents elems are search match highlighted etc
-         recentsElemsMap .get(recentsId(hwnd))  .foreach (titleUpdate_SearchDiv)
-         searchElemsMap  .get(searchedId(hwnd)) .foreach (titleUpdate_SearchDiv)
-      } else {
-         recentsElemsMap .get(recentsId(hwnd)) .foreach (titleUpdate_NonSearchDiv)
-         groupedElemsMap .get(groupedId(hwnd)) .foreach (titleUpdate_NonSearchDiv)
+   }
+   def clearCurElemHighlight () = {
+      curElemId = ""
+      //doc.querySelectorAll(s".curElem") .foreach(_.classList.remove("curElem"))
+      // ^^ our (old) sjs versions doesnt have NodeList conversion to scala iterable ..
+      // .. so for now, we'll just try it twice, as there are at most two of these (if there's one in recents too during search)
+      Option (doc.querySelector(s".curElem")) .foreach(_.classList.remove("curElem"))
+      if (inSearchState && inGroupedMode) { // if in grouped-mode search-state try to clear one more
+         Option (doc.querySelector(s".curElem")) .foreach(_.classList.remove("curElem"))
       }
    }
 
+   def getIdfnVecAndMap(elemT:ElemT) = {
+      if (elemT == ElemTs.G) { (groupedId _, groupedIdsVec, groupedElemsMap) } else { (recentsId _, recentsIdsVec, recentsElemsMap) }
+   }
+   def resetFocus() = {
+      setCurElem(recentsIdsVec.head); focusElem_Next()
+   }
+   def resetSearchMatchFocus() : Unit = {
+      val (_, idsVec, elemsMap) = getIdfnVecAndMap (if (inGroupedMode) ElemTs.G else ElemTs.R)
+      idsVec.headOption .flatMap(elemsMap.get) .map(_.elem) .map(setCurElemHighlight) .getOrElse(clearCurElemHighlight)
+   }
+
+   def reSyncCurFocusIdAfterRebuild() = {
+      // note that doing id-conversion checks helps sync up even in cases when we're toggling between recents and grouped modes!
+      def getSyncElem (curBlock:ElemT, wrapBlock:ElemT) = {
+         val ((curIdm,_,curMap),(_,wrapVec,wrapMap)) = getIdfnVecAndMap(curBlock) -> getIdfnVecAndMap(wrapBlock)
+         idToHwnd(curElemId) .map(curIdm) .flatMap(curMap.get) .orElse ( wrapVec.headOption.flatMap(wrapMap.get) )
+      }
+      (inSearchState, inGroupedMode) match {
+         // in recents-mode, whether search or not, we try to sync up within recents-block (falling back to its top)
+         case (     _, false ) => { getSyncElem (ElemTs.R, ElemTs.R) }
+         // in grouped-mode search-state, we can only sync within the grouped-block (recents is dimmed out and non-navigable)
+         case (  true,  true ) => { getSyncElem (ElemTs.G, ElemTs.G) }
+         // in grouped-mode non-search-state, we can sync either recents or grpd, but if fails, fall back to recents-top
+         case ( false,  true ) => { recentsElemsMap.get(curElemId) .orElse ( getSyncElem (ElemTs.G, ElemTs.R) ) }
+      }
+   } .map(_.elem) .foreach (setCurElemHighlight)      // finally do the focus syncing
+
+
+   def focusElem (isReverseDir:Boolean=false, isGrpNext:Boolean=false) = {
+      // we'll setup closures to nav and wrap-over forwards or backwards so it can handle both with same logic block below
+      type Wrapper = Seq[String] => Option[String]
+      val (incr, vecWrap) = {
+         if (!isReverseDir) { (1, (_.headOption):Wrapper) } else { (-1, (_.lastOption):Wrapper) }
+      }
+      // then w/ those, setup the common case nav fn that operates on either recents/grpd block, and any specified block to wrap-over to
+      def pickNext (oe:OrderedElemsEntry, curBlock:ElemT, wrapBlock:ElemT) = {
+         val ((_,curVec,curMap),(_,wrapVec,wrapMap)) = getIdfnVecAndMap(curBlock) -> getIdfnVecAndMap(wrapBlock)
+         curVec .lift(oe.y+incr) .flatMap(curMap.get) .orElse ( vecWrap(wrapVec).flatMap(wrapMap.get) )
+      }
+      // now we'll pick curElem from whichever (recents/grouped) map it currently happens to be in
+      recentsElemsMap .get(curElemId) .map (oe => (false, oe))
+      .orElse { groupedElemsMap .get(curElemId) .map (oe => (true, oe)) }
+      // now lets try to find the next-entry option for various state/mode/nav-type/curElem combinations
+      .flatMap { case (curInGrpd, oe) =>
+         (inSearchState, inGroupedMode, isGrpNext, curInGrpd) match {
+            // in recents-mode, always stay within recents (in both regular and search-state)
+            case (     _, false,     _,     _ ) => { pickNext (oe, ElemTs.R, ElemTs.R) }
+            // in grouped-mode, if in search-state, always stay within grouped (recents is dimmed out, and non navigable)
+            case (  true,  true,     _,     _ ) => { pickNext (oe, ElemTs.G, ElemTs.G) }
+            // non-search recents, for regular-nav (not grp-next) .. if cur in recents nav there w fallback to grpd, and vice-versa
+            case ( false,  true, false, false ) => { pickNext (oe, ElemTs.R, ElemTs.G) }
+            case ( false,  true, false,  true ) => { pickNext (oe, ElemTs.G, ElemTs.R) }
+            // non-search grouped, for grp-next, cur in recents .. if recents top, nav groups-head, else do recents top or first grp-head
+            case ( false,  true,  true, false ) => {
+               if (recentsIdsVec.headOption.contains(oe.elem.id)) { vecWrap (groupsHeadsIdsVec) .flatMap(groupedElemsMap.get) }
+               else if (isReverseDir) { recentsIdsVec.headOption .flatMap(recentsElemsMap.get) } // reversing from rec middle .. do rec top
+               else { groupsHeadsIdsVec.headOption .flatMap(groupedElemsMap.get) }  // but for fwd do first grp-head
+            }
+            // non-search grouped, grp-next, cur in grouped .. if grp-head or nav-fwd, nav grp heads w wrap to recents, else move to grp-head
+            case ( false,  true,  true,  true ) => {
+               if (groupsHeadsIdsVec.lift(oe.yg).contains(oe.elem.id) || !isReverseDir) {
+                  groupsHeadsIdsVec .lift(oe.yg+incr) .flatMap(groupedElemsMap.get)
+                     .orElse ( recentsIdsVec.headOption.flatMap(recentsElemsMap.get) )
+               } else { groupsHeadsIdsVec .lift(oe.yg) .flatMap(groupedElemsMap.get) }
+            }
+         }
+      } .map(_.elem) .foreach (setCurElemHighlight)  // finally, can make that current (if we found one)
+   }
+   def focusElem_Next()  = focusElem (isReverseDir=false, isGrpNext=false)
+   def focusElem_Prev()  = focusElem (isReverseDir=true,  isGrpNext=false)
+   def focusGroup_Next() = focusElem (isReverseDir=false, isGrpNext=true )
+   def focusGroup_Prev() = focusElem (isReverseDir=true,  isGrpNext=true )
+
+   def focusElem_Top() = {
+      // top is usually recents top, except for search during grpd mode, when we dim out recents block
+      if (inGroupedMode && inSearchState) { groupedIdsVec.headOption.flatMap(groupedElemsMap.get) }
+      else                                { recentsIdsVec.headOption.flatMap(recentsElemsMap.get) }
+   } .map(_.elem) .foreach (setCurElemHighlight)
+
+   def focusElem_Bottom() = {
+      // regardless of search mode, in grp mode, btm is grp-nav-vec btm, and ditto for recents
+      if (inGroupedMode) { groupedIdsVec.lastOption.flatMap(groupedElemsMap.get) }
+      else               { recentsIdsVec.lastOption.flatMap(recentsElemsMap.get) }
+   } .map(_.elem) .foreach (setCurElemHighlight)
+
 }
+
+
 
 object ElemsDisplay {
    import SwitcheFaceConfig._
+   import SwitchePageState._
+   import SwitcheState._
+
    val elemsDiv = div (id:="elemsDiv").render
    def getElemsDiv = elemsDiv
 
-   def header(txt:String, mode:String) = {
-      div (`class`:=s"modeHeader $mode", nbsp(1), txt) .render
-   }
-   def makeRecentsDiv (isDim:Boolean=false) = {
-      val cls = s"recentsDiv${ if (isDim) " dim" else "" }"
-      div (`class`:=cls, header("Recents:","r"), SwitchePageState.recentsElemsMap.values.map(_.elem).toSeq) .render
-   }
-   def makeGroupedDiv() = {
-      div (`class`:="groupedDiv",  header("Grouped:","g"), SwitchePageState.groupedElemsMap.values.map(_.elem).toSeq) .render
-   }
-   def makeSearchedDiv()  = {
-      //div (`class`:="searchedDiv", header("Searched:","s"), SwitchePageState.searchElemsMap .values.map(_.elem).toSeq) .render
-      div (`class`:="searchedDiv", header("Grouped:","g"), SwitchePageState.searchElemsMap .values.map(_.elem).toSeq) .render
-   }
-
-   def updateElemsDiv_RecentsMode() = {
-      SwitchePageState.rebuildRecentsElems()
-      clearedElem(elemsDiv) .appendChild (makeRecentsDiv())
-   }
-   def updateElemsDiv_GroupedMode() = {
-      SwitchePageState.rebuildRecentsElems()
-      SwitchePageState.rebuildGroupedElems()
-      clearedElem(elemsDiv) .appendChild ( div ( makeRecentsDiv(), makeGroupedDiv() ).render )
-   }
-   def updateElemsDiv_SearchState() = {
-      //SwitchePageState.rebuildRecentsElems() // recents will also be specially rebuilt by search rebuild below
-      SwitchePageState.rebuildSearchElems()
-      clearedElem(elemsDiv) .appendChild ( div ( makeRecentsDiv(isDim=true), makeSearchedDiv() ).render )
+   def makeElemsDiv (elemT:ElemT, stateT:StateT) = {
+      val headerTxt = if (elemT == ElemTs.G) "Grouped:" else "Recents:"
+      val header = div (`class`:=s"modeHeader ${elemT.cls}", nbsp(1), headerTxt) .render
+      val elemsMap = if (elemT == ElemTs.G) groupedElemsMap else recentsElemsMap
+      div ( `class`:=s"elemsDiv ${elemT.cls} ${stateT.cls}", header, elemsMap.values.map(_.elem).toSeq ) .render
    }
    def updateElemsDiv () = {
-      SwitcheState.updateRenderReadyLists()
-      if (SwitchePageState.inSearchState) { updateElemsDiv_SearchState }
-      else if (SwitcheState.inGroupedMode) { updateElemsDiv_GroupedMode }
-      else { updateElemsDiv_RecentsMode }
-      SwitchePageState.reSyncCurFocusIdAfterRebuild()
+      updateRenderReadyLists()
+      val searchedDiv : Div = {
+         if (inSearchState) {
+            rebuildSearchStateElems()
+            if (inGroupedMode) {
+               //makeElemsDiv (ElemTs.G, StateTs.S)      // uncommenting this instead of below will remove top-recents in grpd search state
+               div ( makeElemsDiv (ElemTs.GR, StateTs.S), makeElemsDiv (ElemTs.G, StateTs.S) ) .render
+            } else { makeElemsDiv (ElemTs.R,  StateTs.S) }
+         } else {
+            rebuildRecentsElems()
+            if (inGroupedMode) {
+               rebuildGroupedElems()
+               div ( makeElemsDiv (ElemTs.GR, StateTs.L), makeElemsDiv (ElemTs.G, StateTs.L) ) .render
+            } else { makeElemsDiv (ElemTs.R,  StateTs.L) }
+      } }
+      clearedElem(elemsDiv) .appendChild (searchedDiv.render)
+      reSyncCurFocusIdAfterRebuild()
    }
 }
+
 
 object RibbonDisplay {
    import SwitcheFaceConfig._
@@ -506,18 +566,19 @@ object RibbonDisplay {
    val searchBox = input (`type`:="text", id:="searchBox", placeholder:="").render
    // note: ^^ all key handling is now done at doc level capture phase (which selectively allows char updates etc to filter down to searchBox)
    def updateCountsSpan () : Unit = {
-      val count = SwitcheState.getRenderList().length
+      val count = getRenderList().length
       clearedElem(countSpan) .appendChild ( span ( nbsp(3), s"($count) ※", nbsp(3) ).render )
    }
    def updateDebugLinks() : Unit = {
       clearElem(debugLinks)
-      if (SwitcheState.inElectronDevMode) {
+      if (inElectronDevMode) {
          val printExclLink =  a ( href:="#", "DebugPrint", onclick:={e:MouseEvent => handleReq_DebugPrint()} ).render
          debugLinks.appendChild ( printExclLink )
    } }
+   def debugDisplayMsg (msg:String) = { debugLinks.innerHTML = s"$msg (${js.Date.now().toString})"; }
    def handleRefreshBtnClick() : Unit = {
       // we want to refresh too (as do periodic calls elsewhere), but here we want to also force icons-refresh
-      IconsManager.clearCachedIconMappings()
+      IconsManager.markCachedIconMappingsStale()
       handleReq_Refresh()
    }
    def getTopRibbonDiv() = {

@@ -16,20 +16,21 @@ object IconsManager {
    }
 
    private case class HwndExePathPair (hwnd:Int, path:String)
+   private case class IconCacheMapping (cacheIdx:Int, markedStale:Boolean=false)
    private val iconsCache          = mutable.ArrayBuffer[String]() // iconStrs in buffer whose index can be stored in maps by hwnd or path
    private val iconsCacheCheckMap  = mutable.HashMap[String,Int]() // actual iconStr to its location in vector to give others
-   private val iconsHwndMap        = mutable.HashMap[HwndExePathPair,Int]()
+   private val iconsHwndMap        = mutable.HashMap[HwndExePathPair,IconCacheMapping]()
    private val iconsExePathMap     = mutable.HashMap[String,Int]()
    private val queriedExePathCache = mutable.HashSet[String]()
    private val queriedHwndCache    = mutable.HashMap[Int,HwndExePathPair]()
 
    // this is the first version of node hwnd icon ext mechanism, used SendMessageA so preserved path ctx (but that could hang!)
    private def iconStringFromHwndCallback (hwnd:Int, ctx:String, iconString:String):Unit = {
-      if (!iconString.isEmpty) {
+      if (iconString.nonEmpty) {
          val hwndExePathPair = HwndExePathPair(hwnd,ctx)
          val iconCacheIdx = iconsCacheCheckMap.getOrElseUpdate(iconString,iconsCache.size)
          if (iconCacheIdx == iconsCache.size) {iconsCache.+=(iconString)}
-         iconsHwndMap.put(hwndExePathPair,iconCacheIdx)
+         iconsHwndMap .put ( hwndExePathPair, IconCacheMapping (iconCacheIdx, markedStale=false))
          RenderSpacer.queueSpacedRender()
       } else {
          println (s"got empty icon-string callback for hwnd=${hwnd}, ctx=${ctx} !!")
@@ -40,7 +41,9 @@ object IconsManager {
       if (iconString.nonEmpty) {
          val iconCacheIdx = iconsCacheCheckMap .getOrElseUpdate (iconString,iconsCache.size)
          if (iconCacheIdx == iconsCache.size) { iconsCache.+=(iconString) }
-         iconsExePathMap.put(exePath,iconCacheIdx) .map(_ => Unit) .getOrElse(RenderSpacer.queueSpacedRender()) // only queue render if new
+         if (iconsExePathMap .put(exePath,iconCacheIdx) .isDefined) {
+            RenderSpacer.queueSpacedRender() // only queue render if new
+         }
       } else {
          println (s"got empty icon-string callback for path=${exePath}, ctx=${ctx} !!")
       }
@@ -54,7 +57,7 @@ object IconsManager {
 
    // second version of node hwnd icon ext mechanism, uses SendMessageCallbackA, didnt preserve path ctx, so look up from hwnd
    private def nodeIconExtractorHwndIconStringCallback (hwnd:Int, hicon:Int, iconString:String):Unit = {
-      queriedHwndCache.get(hwnd).foreach {case hepp => iconStringFromHwndCallback (hwnd,hepp.path,iconString) }
+      queriedHwndCache .get(hwnd) .foreach {hepp => iconStringFromHwndCallback (hwnd,hepp.path,iconString) }
    }
    private def initNodeIconExtractor() = NodeIconExtractor.registerHwndIconStringCallback (nodeIconExtractorHwndIconStringCallback _)
    initNodeIconExtractor()
@@ -64,20 +67,27 @@ object IconsManager {
       NodeIconExtractor.queueIconStringFromHwnd (hwnd)
    }
 
+   private def hwndExePathPair (e:WinDatEntry) = {
+      e.iconOverrideLoc .orElse (e.exePathName.map(_.fullPath)) .map (p => HwndExePathPair(e.hwnd,p))
+   }
    def getCachedIcon (e:WinDatEntry) = {
-      e.iconOverrideLoc .orElse (e.exePathName.map(_.fullPath)) .map { path =>
-         iconsHwndMap .get(HwndExePathPair(e.hwnd,path)) .orElse(iconsExePathMap.get(path))
+      hwndExePathPair(e) .map { hpp =>
+         iconsHwndMap.get(hpp).map(_.cacheIdx) .orElse(iconsExePathMap.get(hpp.path))
       } .flatten .map(iconsCache)
    }
-   def removeCachedIconMapping (e:WinDatEntry) : Boolean = {
-      e.exePathName.map(_.fullPath) .map (path => HwndExePathPair (e.hwnd,path)) .flatMap { hpp =>
-         iconsHwndMap.remove(hpp);           // we'll ignore this return val (whether it was there or not)
-         queriedHwndCache.remove(hpp.hwnd)   // return val of this will be used to indicate if it was present (ever queried this hwnd)
-      } .isDefined
+   def removeCachedIconMapping (e:WinDatEntry) : Unit = {
+      hwndExePathPair(e) .map { hpp => iconsHwndMap.remove(hpp); queriedHwndCache.remove(hpp.hwnd) }
    }
-   def clearCachedIconMappings () = { SwitcheState.hMapCur .valuesIterator .foreach (removeCachedIconMapping) }
+   def markCachedIconMappingStale (e:WinDatEntry) : Unit = {
+      hwndExePathPair(e) .map { hpp =>
+         iconsHwndMap .get(hpp) .map (_.copy(markedStale=true)) .foreach (icm => iconsHwndMap.update(hpp,icm));
+   } }
    def clearDeadHwnds (wdes:Iterable[WinDatEntry]) = { wdes .foreach (removeCachedIconMapping) }
-   def refreshIcon (e:WinDatEntry) = { removeCachedIconMapping(e); processFoundHwndExePath(e); }
+   def markCachedIconMappingsStale () = { SwitcheState.hMapCur .valuesIterator .foreach (markCachedIconMappingStale) }
+   def queueIconRefresh (e:WinDatEntry) = {
+      //RibbonDisplay.debugDisplayMsg("icon-refresh")
+      markCachedIconMappingStale(e); processFoundHwndExePath(e);
+   }
 
 
    // this is yet another hack, as some windows, e.g. chrome apps, put up placeholder empty icons before they get done loading
@@ -89,8 +99,10 @@ object IconsManager {
 
    def processFoundHwndExePath (e:WinDatEntry) : Unit = {
       if (e.shouldExclude.contains(true)) return;
-      e.iconOverrideLoc .orElse (e.exePathName.map(_.fullPath)) .map (p => HwndExePathPair(e.hwnd,p)) .foreach { hpp =>
-         if ( !queriedHwndCache.get(e.hwnd).contains(hpp) || iconsHwndMap.get(hpp).contains(0) ) {
+      hwndExePathPair(e) .foreach { hpp =>
+         if ( !queriedHwndCache.get(e.hwnd).contains(hpp) ||
+              iconsHwndMap.get(hpp) .exists (icm => icm.markedStale || icm.cacheIdx == 0)
+         ) {
             queriedHwndCache.put(e.hwnd,hpp);
             if (e.iconOverrideLoc.isEmpty) {
                queueIconHwndQuery (e.hwnd, hpp.path)

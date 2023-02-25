@@ -16,7 +16,7 @@ object ExclusionsManager {
       val exclEmptyTitles: ExclFnType = {_.winText.getOrElse("").isEmpty}
 
       val titleMatchExclusions = Set[String]()
-      val exclTitleMatches: ExclFnType = {_.winText.map(titleMatchExclusions.contains).getOrElse(true)}
+      val exclTitleMatches: ExclFnType = {_.winText.forall(titleMatchExclusions.contains)}
 
       val exeMatchExclusions = Set[String](
          "SearchUI.exe", "shakenMouseEnlarger.exe", "ShellExperienceHost.exe", "LockApp.exe",
@@ -27,7 +27,7 @@ object ExclusionsManager {
          // had to add following after activating wireless display adapter to cast/project to/from TVs/Android etc
          "WDADesktopService.exe"
       )
-      val exclExeMatches: ExclFnType = {_.exePathName.map(_.name).map(exeMatchExclusions.contains).getOrElse(true) }
+      val exclExeMatches: ExclFnType = {_.exePathName.map(_.name).forall(exeMatchExclusions.contains) }
 
       val exeAndTitleMatchExclusions = Map[String, Set[String]] ( // exact exe-name and full-title matches
          "ShellExperienceHost.exe" -> Set ("Start", "Windows Shell Experience Host", "New notification"),
@@ -59,7 +59,10 @@ object ExclusionsManager {
       def shouldExclude(e:WinDatEntry) = exclusions.exists(_(e))
    }
 
-   def filterRuleExclusions (wdes:Seq[WinDatEntry]) = wdes.filterNot(RulesExcluder.shouldExclude)
+   def filterRuleExclusions (wdes:Seq[WinDatEntry]) = {
+      //wdes.filterNot(RulesExcluder.shouldExclude)
+      wdes .filterNot (e => e.shouldExclude .getOrElse (RulesExcluder.shouldExclude(e)))
+   }
 
    // though here is many windows apps show up with two entries, one of which is the ApplicationFrameHost.. and mostly share title
    // so if find AFH entry with matching title to something else, prob safe to exclude one of those .. should cut down on a bunch
@@ -76,10 +79,7 @@ object ExclusionsManager {
       wdes .filterNot (e => e.exePathName.map(_.name).contains("winamp.exe") && winampTitleHwnds.get(e.winText).exists(_.drop(1).contains(e.hwnd)))
    }
 
-   def shouldExclude (e:WinDatEntry, callId:Int = -1) = {
-      // call id was used to track dups between same set of winapi streamWindows query, but now we just filter for dups on full render list
-      e.shouldExclude .getOrElse ( RulesExcluder.shouldExclude(e) )
-   }
+   def calcExclusionFlag (e:WinDatEntry) = RulesExcluder.shouldExclude(e)
 
    def filterExclusions (wdes:Seq[WinDatEntry]) = {
       Some(wdes) .map (filterRuleExclusions) .map (filterApplicationFrameHostDups) .map (filterWinampDups) .get

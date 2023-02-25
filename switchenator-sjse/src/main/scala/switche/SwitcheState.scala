@@ -8,8 +8,7 @@ import scala.scalajs.js
 case class ExePathName (fullPath:String, name:String)
 case class WinDatEntry (
    hwnd:Int, isVis:Option[Boolean]=None, isUnCloaked:Option[Boolean]=None, winText:Option[String]=None,
-   exePathName:Option[ExePathName]=None, shouldExclude:Option[Boolean]=None, everFgnd:Option[Boolean]=None,
-   iconOverrideLoc:Option[String]=None
+   exePathName:Option[ExePathName]=None, shouldExclude:Option[Boolean]=None, iconOverrideLoc:Option[String]=None
 )
 case class RenderListEntry (dat:WinDatEntry, y:Int)
 
@@ -46,7 +45,7 @@ object SwitcheState {
       val winText = isUnCloaked.filter(identity).map(_ => WinapiLocal.getWindowText(dat.hwnd)).orElse(dat.winText)
       val exePathName = winText.filterNot(_.isEmpty).map(_ => dat.exePathName.orElse(getExePathName(dat.hwnd))).flatten
       val preExclDat = WinDatEntry (dat.hwnd, isVis, isUnCloaked, winText, exePathName, None)
-      val shouldExclFlag = Some ( ExclusionsManager.shouldExclude (preExclDat, if(isListenedUpdate){-1} else{latestTriggeredCallId}) )
+      val shouldExclFlag = Some ( ExclusionsManager.calcExclusionFlag(preExclDat) )
       val iconOverrideLoc = shouldExclFlag.filter(_!=true) .flatMap(_ => IconPathOverridesManager.getIconOverridePath(preExclDat))
       preExclDat.copy (shouldExclude = shouldExclFlag, iconOverrideLoc = iconOverrideLoc)
    }
@@ -67,15 +66,17 @@ object SwitcheState {
       }
       return (callId <= latestTriggeredCallId) // cancel further callbacks on this callId if its no longer the latest call
    }
-   def procWinReport_FgndHwnd(hwnd:Int):Unit = { //println(s"fgnd report: $hwnd")
-      val dat = hMapCur .get(hwnd) .orElse (hMapPrior.get(hwnd)) .orElse (Some(WinDatEntry (hwnd))) .map(getUpdatedDat(_,true)) .get .copy(everFgnd = Some(true))
+
+   def procWinReport_FgndHwnd(hwnd:Int):Unit = {
+      val dat = hMapCur.get(hwnd) .orElse(hMapPrior.get(hwnd)) .orElse(Some(WinDatEntry(hwnd))) .map(getUpdatedDat(_,true)) .get
       val hMapUpdated = LinkedHashMap[Int, WinDatEntry]();
       hMapUpdated.put(hwnd, dat); hMapCur.filterKeys(_ != hwnd).foreach {case (k, v) => hMapUpdated.put(k, v)}
       // if not in middle of query, can resync priorMap, else can just add it there and either it will update in place or append, nbd
       if (hMapCur == hMapPrior) {hMapPrior = hMapUpdated} else {hMapPrior.put(hwnd,dat)}
       hMapCur = hMapUpdated
       if (!dat.shouldExclude.contains(true)) {
-         IconsManager.refreshIcon(dat)
+         //RibbonDisplay.debugDisplayMsg("fgnd-report")
+         IconsManager.queueIconRefresh(dat)
          RenderSpacer.queueSpacedRender() // no point being more surgical, as for grouped stuff, everything might have to be reordered anyway
       }
       // ugh, this sucks, but looks like alt-esc which sends cur win to z-order back has no triggered event other than the next win coming up ..
@@ -85,34 +86,53 @@ object SwitcheState {
       //  .. as compromise, we'll call w delay to avoid that .. render is almost 100ms, 50ms spacing, plus other proc .. so 250ms seems ok
       js.timers.setTimeout (250) { handleReq_Refresh() }
    }
-   def procWinReport_ObjShown(hwnd:Int):Unit = { //println(s"obj-shown report: $hwnd")
-      if ( !hMapCur.contains(hwnd) || hMapCur(hwnd).isVis.contains(true) || !hMapCur(hwnd).everFgnd.contains(true) ) return;
-      val dat = getUpdatedDat(hMapCur(hwnd), true)
-      hMapCur.put(hwnd,dat); hMapPrior.put(hwnd,dat)
-      if (!dat.shouldExclude.contains(true)) {
-         IconsManager.processFoundHwndExePath(dat)
-         RenderSpacer.queueSpacedRender() // no point being more surgical, as for grouped stuff, everything might have to be reordered anyway
-      }
+
+   def procWinReport_ObjShown(hwnd:Int):Unit = {
+      hMapCur.get(hwnd) .orElse(hMapPrior.get(hwnd)) .fold {
+         //RibbonDisplay.debugDisplayMsg(s"obj-shown-rpt_unseen-hwnd:${hwnd}")
+         //handleReq_Refresh();
+         // ^^ disabled to avoid transient stuff during changing explorer folder etc screwing title-update icon refresh etc
+         js.timers.setTimeout (250) { handleReq_Refresh() }
+         return
+      } { old_dat =>
+         val dat = getUpdatedDat(old_dat, true)
+         if (!dat.shouldExclude.contains(true)) {
+            //RibbonDisplay.debugDisplayMsg("obj-shown")
+            IconsManager.queueIconRefresh(dat)
+            RenderSpacer.queueSpacedRender() // no point being more surgical, as for grouped stuff, everything might have to be reordered anyway
+      } }
    }
    def procWinReport_ObjDestroyed(hwnd:Int):Unit = {
       // note that we've made reports of windows being hidden (go to tray etc) come here too
-      if (!hMapCur.contains(hwnd) || !hMapCur(hwnd).isVis.contains(true)) return;
-      if (ExclusionsManager.selfSelector(hMapCur(hwnd))) return;
-      if (!hMapCur(hwnd).shouldExclude.contains(true)) { RenderSpacer.queueSpacedRender() }
-      hMapCur.remove(hwnd); hMapPrior.remove(hwnd)
-   }
-   def procWinReport_TitleChanged(hwnd:Int):Unit = {
-      if (!hMapCur.contains(hwnd) || !hMapCur(hwnd).isVis.contains(true)) return;
-      val winText = WinapiLocal.getWindowText(hwnd)
-      val dat = hMapCur(hwnd)
-      var updatedDat = dat.copy(winText = Some(winText))
-      updatedDat = updatedDat.copy(shouldExclude = Some(ExclusionsManager.shouldExclude(updatedDat)))
-      if (updatedDat!=dat) {
-         hMapCur.put(hwnd,updatedDat); hMapPrior.put(hwnd,updatedDat)
-         if (!updatedDat.shouldExclude.contains(true)) { SwitchePageState.handle_TitleUpdate (hwnd,updatedDat) }
+      hMapCur.get(hwnd) .orElse(hMapPrior.get(hwnd)) .foreach { dat =>
+         if (ExclusionsManager.selfSelector(hMapCur(hwnd))) return;   // keeping ourselves populated avoids some computations
+         if (!dat.shouldExclude.contains(true)) {
+            //RibbonDisplay.debugDisplayMsg("obj-destroyed")
+            RenderSpacer.queueSpacedRender()
+         }
+         hMapCur.remove(hwnd); hMapPrior.remove(hwnd)
       }
    }
-
+   def procWinReport_TitleChanged(hwnd:Int):Unit = {
+      hMapCur.get(hwnd) .orElse(hMapPrior.get(hwnd)) .fold {
+         //RibbonDisplay.debugDisplayMsg(s"title-rpt_unseen-hwnd:${hwnd}")
+         //handleReq_Refresh();
+         // ^^ cant do this as apparently many transient things come and go while say switching explorer folders etc .. oh well
+         js.timers.setTimeout (250) { handleReq_Refresh() }
+         return
+      } { old_dat =>
+         if (old_dat.isVis.contains(false)) { return }
+         val winText = WinapiLocal.getWindowText(hwnd)
+         var updatedDat = old_dat.copy(winText = Some(winText))
+         updatedDat = updatedDat.copy(shouldExclude = Some(ExclusionsManager.calcExclusionFlag(updatedDat)))
+         if (updatedDat != old_dat) {
+            hMapCur.put(hwnd,updatedDat); hMapPrior.put(hwnd,updatedDat)
+            if (!updatedDat.shouldExclude.contains(true)) {
+               //RibbonDisplay.debugDisplayMsg("title-update")
+               IconsManager.queueIconRefresh(updatedDat)
+               SwitchePageState.handle_TitleUpdate (hwnd,updatedDat)
+      } } }
+   }
    private object RenderReadyListsManager {
       case class GroupSortingEntry (seenCount:Int, meanPercIdx:Double)
       val grpSortingMap = mutable.HashMap[String,GroupSortingEntry]()
@@ -154,7 +174,8 @@ object SwitcheState {
    def getGroupedRenderList() = RenderReadyListsManager.groupedRenderList
    def getRenderListTopMost() = RenderReadyListsManager.renderList.headOption.map(_.dat)
 
-   def handleReq_Refresh():Unit = { //println (s"refresh called! @${js.Date.now()}")
+   def handleReq_Refresh():Unit = {
+      //RibbonDisplay.debugDisplayMsg("re-win-query")
       latestTriggeredCallId += 1
       prepForNewEnumWindowsCall(latestTriggeredCallId)
       js.timers.setTimeout(250) {RenderSpacer.queueSpacedRender()} // mandatory repaint per refresh, simpler this way to catch only ordering changes
@@ -195,7 +216,7 @@ object SwitcheState {
    def handleReq_SelfWindowHide() : Unit = {
       // want to make sure focus is returned to the window we were supposed to have active
       js.timers.setTimeout(40) {
-         SwitchePageState.recentsIdsVec.headOption .map (SwitchePageState.idToHwnd) .foreach (WinapiLocal.activateWindow)
+         SwitchePageState.recentsIdsVec.headOption .flatMap (SwitchePageState.idToHwnd) .foreach (WinapiLocal.activateWindow)
       }
       handleReq_SwitcheDismiss()
    }
@@ -236,10 +257,11 @@ object SwitcheState {
    }
 
    def handleEvent_SwitcheFgnd() = {
+      //RibbonDisplay.debugDisplayMsg("switche-fgnd")
       isDismissed = false
       // the idea below is that to keep icons mostly updated, we do icon-refresh for a window when it comes to fgnd ..
       // however, when switche is brought to fgnd, recent changes in the topmost window might not be updated yet .. so we'll trigger that here
-      getRenderListTopMost() .foreach (IconsManager.refreshIcon)
+      getRenderListTopMost() .foreach (IconsManager.queueIconRefresh)
    }
 
    def procAppEvent_DevMode() = {
@@ -272,21 +294,39 @@ object SwitcheState {
       // note below that a scroll-end only has meaning if we're scrolling (and hence already active)
       if (!isDismissed) { SwitchePageState.handleReq_CurElemActivation() }
    }
-   def procHotkey_SilentTabSwitch() = {
+
+   def procHotkey_Switch_Last() = {
       SwitchePageState.handleReq_SecondRecentActivation()
    }
-   def procHotkey_ChromeTabsList() = {
-      SwitchePageState.handleReq_ChromeTabsListActivation (doTog=true)
+   def procHotkey_Switch_TabsOutliner() = {
+      SwitchePageState.handleReq_MatchedWindowActivation ( Some("chrome.exe"), Some("Tabs Outliner"), doTog=true)
+   }
+   def procHotkey_Switch_NotepadPP() = {
+      SwitchePageState.handleReq_MatchedWindowActivation ( Some("notepad++.exe"), None, doTog=true)
+   }
+   def procHotkey_Switch_IDEA() = {
+      SwitchePageState.handleReq_MatchedWindowActivation ( Some("idea64.exe"), None, doTog=true)
+   }
+   def procHotkey_Switch_Winamp() = {
+      SwitchePageState.handleReq_MatchedWindowActivation ( Some("winamp.exe"), None, doTog=true)
+   }
+   def procHotkey_Switch_Browser() = {
+      SwitchePageState.handleReq_MatchedWindowActivation ( Some("chrome.exe"), None, doTog=true)
    }
 
    def init() {
 
-      js.Dynamic.global.updateDynamic ("procHotkey_Invoke")           (procHotkey_Invoke _)
-      js.Dynamic.global.updateDynamic ("procHotkey_SilentTabSwitch")  (procHotkey_SilentTabSwitch _)
-      js.Dynamic.global.updateDynamic ("procHotkey_ChromeTabsList")   (procHotkey_ChromeTabsList _)
-      js.Dynamic.global.updateDynamic ("procHotkey_ScrollDown")       (procHotkey_ScrollDown _)
-      js.Dynamic.global.updateDynamic ("procHotkey_ScrollUp")         (procHotkey_ScrollUp _)
-      js.Dynamic.global.updateDynamic ("procHotkey_ScrollEnd")        (procHotkey_ScrollEnd _)
+      js.Dynamic.global.updateDynamic ("procHotkey_Invoke")       (procHotkey_Invoke _)
+      js.Dynamic.global.updateDynamic ("procHotkey_ScrollDown")   (procHotkey_ScrollDown _)
+      js.Dynamic.global.updateDynamic ("procHotkey_ScrollUp")     (procHotkey_ScrollUp _)
+      js.Dynamic.global.updateDynamic ("procHotkey_ScrollEnd")    (procHotkey_ScrollEnd _)
+
+      js.Dynamic.global.updateDynamic ("procHotkey_Switch_Last")           (procHotkey_Switch_Last _)
+      js.Dynamic.global.updateDynamic ("procHotkey_Switch_TabsOutliner")   (procHotkey_Switch_TabsOutliner _)
+      js.Dynamic.global.updateDynamic ("procHotkey_Switch_NotepadPP")      (procHotkey_Switch_NotepadPP _)
+      js.Dynamic.global.updateDynamic ("procHotkey_Switch_IDEA")           (procHotkey_Switch_IDEA _)
+      js.Dynamic.global.updateDynamic ("procHotkey_Switch_Winamp")         (procHotkey_Switch_Winamp _)
+      js.Dynamic.global.updateDynamic ("procHotkey_Switch_Browser")        (procHotkey_Switch_Browser _)
 
       js.Dynamic.global.updateDynamic ("procAppEvent_DevMode")        (procAppEvent_DevMode _)
       js.Dynamic.global.updateDynamic ("procAppEvent_Focus")          (procAppEvent_Focus _)
@@ -319,7 +359,7 @@ object RenderSpacer {
       // else if last queued still in future, can just ignore it! -d
       if ( js.Date.now() + slop > lastRenderTargStamp ) {
          // i.e nothing queued is still in the future, so lets setup a delayed req w appropriate spacing
-         val waitDur =  math.max (0, lastRenderTargStamp + minRenderSpacing - js.Date.now() - slop)
+         val waitDur =  math.max (1, lastRenderTargStamp + minRenderSpacing - js.Date.now() - slop)
          lastRenderTargStamp = js.Date.now() + waitDur
          js.timers.setTimeout (waitDur) {
             // note that in theory, animation frames might not trigger when browser minimized etc, but didnt seem to matter w our show/hide mechanism
