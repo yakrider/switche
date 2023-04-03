@@ -1,0 +1,36 @@
+[package]
+name = "switche-tauri"
+version = "0.0.0"
+description = "A Tauri App"
+authors = ["you"]
+license = ""
+repository = ""
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[build-dependencies]
+tauri-build = { version = "1.2", features = [] }
+
+[dependencies]
+tauri = { version = "1.2", features = ["shell-open"] }
+serde = { version = "1.0", features = ["derive"] }
+
+serde_json = "1.0"
+[features]
+custom-protocol = ["tauri/custom-protocol"]
+# this ^^ feature is used for production builds or when `devPath` points to the filesystem
+# DO NOT REMOVE!!
+
+
+[target.'cfg(windows)'.dependencies.windows]
+version = "0.44.0"
+features = [
+    "Win32_Foundation",
+    "Win32_UI_WindowsAndMessaging",
+    "Win32_UI_Input_KeyboardAndMouse",
+    "Win32_System_SystemServices",
+    "Win32_System_ProcessStatus",
+    "Win32_System_Threading",
+]
+
