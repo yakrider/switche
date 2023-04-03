@@ -6,6 +6,69 @@ RUNNING NOTES DUMP ON POSSIBLE WORK ON THE SWITCHENATOR PROJECT :
 
 
 
+
+04.01.y23 .. starting to look at tauri migration .. so a bunch of quick notes and mile-marker type dumps here
+
+	- so far seems reasonable and w/o significant roadblocks to dive into tauri migration .. first off, it wont be just a swapping out of electron for tauri .. a bunch of code will have to be moved from sjs to rust, and not just the winapi portions, but likely a lot of stuff upstream of actual render-ready lists .. so winapi calls, maintaining win-dat tables, exclusion filtering, icons extraction and caching, icon overrides etc
+	- so to recap current setup, electron is basically chromium (w/o its v8 engine) running in node v8 engine .. so that brings both the browser dom/js and node-apis in the same context .. which means for us, we didnt have a 'backend' or 'frontend' and so we have a lot of that code intermingled (not including the winapi portions which have a clearer delineation via ffi)
+	- now in tauri, the webview will handle the dom/js portions and the rust backend communicates with that via message passing queues (cmds/events) .. which means emitting/responding to msgs should be async .. so thats a poor match to replace our various winapi calls directly (i.e. relay winapi calls to backend, passthrough winapi responses directly to frontend), because the current code is written w expectation of just being able to make quick winapi calls, often repeatedly over some simple fn to gather data etc... so if we'll have to update the code due to that anyway, makes much more sense to just go with a more native redesign, while ofc trying to retain as much of the ui layer code as is
+	
+	-- soo, the rough outline for starters is as follows
+		- we'll prep everything upto render-ready-lists in rust backend, and only send that to sjs .. and to send that, it prob makes sense to have the front-end maintain a hwnd map of win-dat-entries which the backend will actively update when there are any changes, and the actual render-ready-list can simply be a sorted/ordered vec sent over whenever there are updates to the list 
+			- so that means we'll do all winapi querying, cur/last hwnd-maps curation, listening to win-event updates etc in rust
+			- and ofc, any events from the frontend we'll route to rust as well (user action reqs on specific window entries etc)			
+		- we'll also do all icon querying/caching/refreshes etc in rust backend, and similar to above, maintain an actual icons cache both in front-end and backend, and when actual entries in the map change (e.g. new icon encountered), we send that to the frontend to add to it cache, but otherwise, we just include in the win-dat-entries similarly maintained in front/back the indices to that icons-cache .. (should be fine for now and long while to not worry about actually removing icons from cache)
+		- all filtering on the hwnd lists to gen render-ready lists also needs to be in rust, as just the size diff between the rendering list and full hwnd list is almost order of mag .. and likewise w any icon-override mgmt
+		- and so, beyond the render-ready lists, we should be able to use most of the sjs code as is .. that includes ui event handling, search, grouping, tracking highlights etc .. which is also quite involved by now				
+		
+	-- aight, so as to actual step by step diving in to the impl ...
+		- there's the laminar sample w sjs/tauri/vite, and although we'd not touch laminar/vite for this, might be a good starting point anyway to just get something up and going .. thats also in scala3, and its not clear if we should also take on that migration from scala-2 w this, but prob makes sense .. might as well do it while we'll be going in making massive changes there
+		- the winapi parts actually is now much more familiar by now .. we already have did winapi in rust for krusty, and we'd have working setup in js to port over, so shouldnt present substantial roadblocks
+		- the icons will prob be somewhat painful as we relied heavily on finding the icon-extractor .. but hopefully we can find some crate or samples for that in rust too (e.g. https://users.rust-lang.org/t/how-to-convert-hicon-to-png/90975/6)
+		- for incr work, we should prob focus on the back/front comm etc and getting a representative window up first to derisk that ..
+			- so first off, get a sjs/tauri setup going, full compilation, rendering/cmds betwn front/back, something to start coding in
+			- re repo setup .. prob upto this, can do on any external test repo, and after this, prob make a second clone of cur switche, and in that do all the extensive changes to move over to rust .. that'll keep a working switche throughout!
+			- then maybe do a minimal mockup of win-dat-cache and renderlist to send over (w mock icons) and get the ui up first .. 
+			- then we can add all the actual winapi calls and the hwnd-maps handling in rust
+			- and after all that we can flesh out the icons caches and icon extraction from files/exes/windows prob in that order
+			- and finally, we start getting to actual new stuff ..
+				- long in the wishlist has been extracting icons properly from windows UWP apps .. will prob be some digging into it, but we did have some code pointers on parsing manifest etc before, and any filesys exploration/load will be more comfy in rust for me than having to deal w js in the cur node/elec switche incarnation
+				- next up, we could start looking at tray-icons, and actual installation in windows etc!
+				- and ofc then it becomes meaningful to look at saving/loading configs .. incl for remembering window loc/size, loading excl filters if still necessary, possibly icon overrides if needed, maybe grouping choice, num-recents etc .. maybe eventually even the hotkeys!
+		- anyway .. seems manageable in reasonable time .. gotta get started!
+		
+		
+	-- associated adventures picked up : 
+		- intend to migrate from sbt to mill .. thought being if I end up having to do any fancy configs etc (and the sample seems to suggest I will indeed), then its prob better to get on mill than try to wrestle with sbt and its configs .. plus there's prob a whole bunch of actual tauri configs etc, so getting on mill and its offering of manageable flexibility would prob be valuable
+			- (sadly though, the sjs-tauri sample build is in sbt .. but even then prob makes sense to try and move to mill for this)
+		- intend to migrate from scala-2 to scala-3 .. no better time than now, and certainly need to get on that anyway
+		- do NOT intend to start on laminar for now .. it'd be cool, but we already have all ui stuff done, no point redoing anything
+		
+		- also just noting that if we needed to use npm dependencies, we'd have to use some more complexity to get it to work with either sbt or mill, though there are examples on how to get that working .. however, once we move all the winapi stuff out into tauri land, we shouldnt need any npm stuff for our sjs code at all! .. so that should make it easier
+		- in particular, the samples talking about using vite or scalablytyped etc are basically for that .. and the eqv of what we're currently doing in sbt via scalajs-bundler-plugin to collate up our npm dependencies into our sjs output js files
+		- for later reference in git: /lolgab/scalajs-vite-example, pstutz/scala-fullstack/, /keynmol/scalajs-tauri-example, nafg/mill-bundler etc
+		
+	-- step by step dumps (prob can delete later)
+		d- 04.01 resume dump .. finish going through mill task and module sections
+		- pull down tauri-sjs sample, pull down mill-sjs sample, get them both to work (hopefully both in scala-3, upgraded if needed)
+			- should be able to ignore the portions with vite or bundler coz we dont need that for this
+			- hmm, could consider converting something simple like kbd-evs-printer or TabsO-tree-opener to mill too
+		- then try and convert the tauri-sjs sample to mill .. will be good exercise getting used to all of mill/scala-3/tauri
+		- then can get back on the actual proj impl steps as outlined above
+		
+	
+
+	-- 03.31, quick resume-later mind-dump
+		- we see now that when vscode is open, switche lists a window titled 'Setup' .. its cant be brought to front, and shouldnt be there .. if switche is showing it, its got rect, title, is-vis, is-uncloaked .. so something else is presumably going on .. 
+		- worse.. it looks like trying to do anything with it in switche, like closing or bringing-to-front etc might be causing switche to be stuck at 6%+ cpu usage, presumably meaning a thread is stuck .. not good at all!
+		- found that visual studio comes with a spyxx.exe that gives some details and allows for searching windows by handle which can be found via say process-hacker etc .. its useful utility for reference (as ahk window spy requires viz windows), but it didnt show anything useful either
+		- found this in stack-ov : https://stackoverflow.com/questions/7277366/why-does-enumwindows-return-more-windows-than-i-expected .. can follow up later
+		- also, dont think we've tried to see which of our old exclusion rules are no longer necessary after we added cloaked check .. that prob needs a revisit too and hopefully a bunch can be cleaned out .. and those that cant might show some pattern that can be followed up on later
+		- there was also mention elsewhere of some such windows being 'hung' as defined by ms (no msg proc for 5s apparently), and can be queried by IsHungAppWindow (and there's more about ghost windows and HungWindowFromGhostWindow etc) .. but doesnt feel like thats an appropriate (or cheap) way of figuring this out either, though prob good to have in the backpocket
+		- also, in balance, since so far this is ONLY seen for vs-code .. might not be worth following up on, at least not until we've migrated to tauri as that's much more valuable
+		- (also, just noting, apparently by now, we're far far behind on latest electron, not to mention node, scala2, sbt, node-gyp etc .. so even our cur switche is in need of tlc just to rebuild etc .. so presumably at this point just migrating to tauri might be better option than try to put more work into switche, esp if it involves dealing w winapi or any js)
+
+
 04/25/2022 .. revisit re icons and exe names for UWP/store apps 
 
 	- so its been a long standing (mostly minor) issue that UWP windows 10 native apps like Store/Settings/Calculator/Edge etc, as well as any store-installed apps show up in our list under ApplicationFrameHost.exe, and we couldnt get icons to those either

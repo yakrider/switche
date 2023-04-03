@@ -1,8 +1,8 @@
 {
   "build": {
-    "beforeDevCommand": "",
-    "beforeBuildCommand": "",
-    "devPath": "../out/webapp",
+    "beforeBuildCommand": "npm run build",
+    "beforeDevCommand": "npm run dev",
+    "devPath": "http://127.0.0.1:4173",
     "distDir": "../out/webapp",
     "withGlobalTauri": true
   },
@@ -28,6 +28,9 @@
         "icons/icon.ico"
       ],
       "identifier": "com.yakrider.switche",
+      "shortDescription": "",
+      "longDescription": "",
+      "resources": [],
       "targets": "all"
     },
     "security": {

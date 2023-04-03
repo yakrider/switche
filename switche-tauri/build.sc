@@ -64,8 +64,10 @@ object switche extends JavaModule {
       val webappPath = T.workspace / "out" / "webapp"
       os.copy.over (jsPath / "main.js", webappPath / "main.js")
       os.copy.over (jsPath / "main.js.map", webappPath / "main.js.map")
-      val touchFile = T.workspace / "src-tauri" / "src" / "main.rs"
-      os.proc("touch", touchFile.wrapped.toString).call()
+      
+      //val touchFile = T.workspace / "src-tauri" / "src" / "main.rs"
+      //os.proc("touch", touchFile.wrapped.toString).call()
+      // ^^ shouldnt need this now that we're using vite for hot-reload dev server
    }
    def webapp = T {
       //switche.copyStatics()
