@@ -1,5 +1,5 @@
 [package]
-name = "switche-tauri"
+name = "switche"
 version = "0.0.0"
 description = "A Tauri App"
 authors = ["you"]
@@ -12,13 +12,27 @@ edition = "2021"
 [build-dependencies]
 tauri-build = { version = "1.2", features = [] }
 
+
+[dependencies.tauri]
+version = "1.2"
+features = ["fs-all", "global-shortcut-all", "process-all", "shell-open", "system-tray", "window-hide", "window-set-focus", "window-show", "window-start-dragging"]
+
 [dependencies]
-tauri = { version = "1.2", features = ["shell-open"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
+linked-hash-map = "0.5.6"
+once_cell = "1.9.0"
+grouping_by = "0.2.2"
+strum = "0.24"
+strum_macros = "0.24"
+no_deadlocks = "1.3.0"
+
+
+
+
 
 [features]
-default = [ "custom-protocol" ]
+default = ["custom-protocol"]
 # ^^ by default Tauri runs in production mode
 # when `tauri dev` runs it is executed with `cargo run --no-default-features` if `devPath` is an URL
 custom-protocol = ["tauri/custom-protocol"]
@@ -32,8 +46,10 @@ features = [
     "Win32_Foundation",
     "Win32_UI_WindowsAndMessaging",
     "Win32_UI_Input_KeyboardAndMouse",
+    "Win32_UI_Accessibility",
     "Win32_System_SystemServices",
     "Win32_System_ProcessStatus",
     "Win32_System_Threading",
+    "Win32_Graphics_Dwm"
 ]
 

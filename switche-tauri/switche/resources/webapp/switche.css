@@ -1,0 +1,129 @@
+
+
+* {
+   margin: 0;
+   user-select: none;
+}
+
+*:focus {
+   outline: none;
+}
+
+:root {
+  --background-color: #404040;
+  --ribbon-color: #bd9d2c;
+  --curElem-color: #dbe4d7;
+  --primary-color: #e0d180;
+  --secondary-color: #a8c77d;
+  --searched-color: #7aff00;
+  --exe-color: #bbc18f;
+  --yspan-color: #5c9d4d;
+  --dim-color: grey;
+}
+
+body {
+   background: var(--background-color);
+   border: 1px solid #8e8600;
+   padding: 4px 8px 8px 8px;
+}
+
+#scala-js-root-div {
+   margin: 0;
+   height: calc(100vh - 14px);
+   overflow: hidden;
+}
+
+#top-ribbon {
+  color: var(--ribbon-color);
+  font-size: 14px;
+  padding: 4px;
+}
+#top-ribbon a { color: var(--ribbon-color); }
+
+.dragSpan {
+  -webkit-app-region: drag;
+  cursor: move;   /* doesnt show up due to -webkit-app-region bug in win-os, at least in this electron version */
+}
+
+#searchBox {
+  background: var(--background-color);
+  color: var(--searched-color);
+  font-size: large;
+  border: none;
+  min-width: 400px;
+}
+
+.searchTxt { color: var(--searched-color); }
+/*.elemBox.curElem .searchTxt { color: #9fef02; }*/
+
+.modeHeader    { /*color: var(--mode-header-color);*/ }
+.modeHeader.r  { color: var(--primary-color); }
+.modeHeader.g  { color: var(--primary-color); }
+.modeHeader.gr { color: var(--secondary-color); }
+
+.elemsDiv      { }
+.elemsDiv.r    { }
+.elemsDiv.g    { }
+.elemsDiv.gr   { }
+.elemsDiv.gr.s { filter: grayscale(20%) brightness(80%); }
+
+.elemBox {
+  display: flex;
+  line-height: 1.33;
+  overflow: hidden;
+  cursor: context-menu;
+  font: status-bar;
+  font-size: 14px;
+}
+.elemBox.curElem {
+   background: #54489e;
+   outline: none;
+}
+
+.titleSpan {
+  max-width: 800px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex: auto;
+  font-kerning: none;
+}
+.titleSpan.r  { color: var(--primary-color); }
+.titleSpan.g  { color: var(--primary-color); }
+.titleSpan.gr { color: var(--secondary-color); }
+.elemBox.curElem .titleSpan { color: var(--curElem-color); }
+
+.ySpan {
+   width: 12px;
+   color: var(--yspan-color);
+   font-size: 11px;
+   font-weight: 700;
+   text-align: right;
+   flex: none;
+}
+.elemBox.curElem .ySpan { color: var(--curElem-color); }
+
+.exeSpan {
+  width: 120px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  text-align: right;
+  font-size: 13px;
+  flex: none;
+}
+.exeSpan.ng { color: var(--exe-color); }
+.exeSpan.gh { color: var(--exe-color); }
+.exeSpan.gt { color: var(--dim-color); }
+.elemBox.curElem .exeSpan { color: var(--curElem-color); }
+
+.exeIcoSpan {
+  display: inline-flex;
+  width: 22px;
+  overflow: hidden;
+  flex: none;
+}
+.ico {
+   height: 16px;
+   filter: brightness(90%) saturate(100%);
+}

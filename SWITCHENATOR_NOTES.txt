@@ -26,8 +26,8 @@ RUNNING NOTES DUMP ON POSSIBLE WORK ON THE SWITCHENATOR PROJECT :
 		- the winapi parts actually is now much more familiar by now .. we already have did winapi in rust for krusty, and we'd have working setup in js to port over, so shouldnt present substantial roadblocks
 		- the icons will prob be somewhat painful as we relied heavily on finding the icon-extractor .. but hopefully we can find some crate or samples for that in rust too (e.g. https://users.rust-lang.org/t/how-to-convert-hicon-to-png/90975/6)
 		- for incr work, we should prob focus on the back/front comm etc and getting a representative window up first to derisk that ..
-			- so first off, get a sjs/tauri setup going, full compilation, rendering/cmds betwn front/back, something to start coding in
-			- re repo setup .. prob upto this, can do on any external test repo, and after this, prob make a second clone of cur switche, and in that do all the extensive changes to move over to rust .. that'll keep a working switche throughout!
+			d- so first off, get a sjs/tauri setup going, full compilation, rendering/cmds betwn front/back, something to start coding in
+			d- re repo setup .. prob upto this, can do on any external test repo, and after this, prob make a second clone of cur switche, and in that do all the extensive changes to move over to rust .. that'll keep a working switche throughout!
 			- then maybe do a minimal mockup of win-dat-cache and renderlist to send over (w mock icons) and get the ui up first .. 
 			- then we can add all the actual winapi calls and the hwnd-maps handling in rust
 			- and after all that we can flesh out the icons caches and icon extraction from files/exes/windows prob in that order
@@ -39,26 +39,33 @@ RUNNING NOTES DUMP ON POSSIBLE WORK ON THE SWITCHENATOR PROJECT :
 		
 		
 	-- associated adventures picked up : 
-		- intend to migrate from sbt to mill .. thought being if I end up having to do any fancy configs etc (and the sample seems to suggest I will indeed), then its prob better to get on mill than try to wrestle with sbt and its configs .. plus there's prob a whole bunch of actual tauri configs etc, so getting on mill and its offering of manageable flexibility would prob be valuable
-			- (sadly though, the sjs-tauri sample build is in sbt .. but even then prob makes sense to try and move to mill for this)
-		- intend to migrate from scala-2 to scala-3 .. no better time than now, and certainly need to get on that anyway
-		- do NOT intend to start on laminar for now .. it'd be cool, but we already have all ui stuff done, no point redoing anything
+		d- intend to migrate from sbt to mill .. thought being if I end up having to do any fancy configs etc (and the sample seems to suggest I will indeed), then its prob better to get on mill than try to wrestle with sbt and its configs .. plus there's prob a whole bunch of actual tauri configs etc, so getting on mill and its offering of manageable flexibility would prob be valuable
+			x- (sadly though, the sjs-tauri sample build is in sbt .. but even then prob makes sense to try and move to mill for this)
+		d- intend to migrate from scala-2 to scala-3 .. no better time than now, and certainly need to get on that anyway
+		x- do NOT intend to start on laminar for now .. it'd be cool, but we already have all ui stuff done, no point redoing anything
 		
-		- also just noting that if we needed to use npm dependencies, we'd have to use some more complexity to get it to work with either sbt or mill, though there are examples on how to get that working .. however, once we move all the winapi stuff out into tauri land, we shouldnt need any npm stuff for our sjs code at all! .. so that should make it easier
-		- in particular, the samples talking about using vite or scalablytyped etc are basically for that .. and the eqv of what we're currently doing in sbt via scalajs-bundler-plugin to collate up our npm dependencies into our sjs output js files
-		- for later reference in git: /lolgab/scalajs-vite-example, pstutz/scala-fullstack/, /keynmol/scalajs-tauri-example, nafg/mill-bundler etc
+		d- also just noting that if we needed to use npm dependencies, we'd have to use some more complexity to get it to work with either sbt or mill, though there are examples on how to get that working .. 
+			d-however, once we move all the winapi stuff out into tauri land, we shouldnt need any npm stuff for our sjs code at all! .. so that should make it easier .. naaah, turns out the tauri apis are npm js, so we'll use that in sjs via scalablytyped !!
+		d- in particular, the samples talking about using vite or scalablytyped etc are basically for that .. and the eqv of what we're currently doing in sbt via scalajs-bundler-plugin to collate up our npm dependencies into our sjs output js files
+		i- for later reference in git: /lolgab/scalajs-vite-example, pstutz/scala-fullstack/, /keynmol/scalajs-tauri-example, nafg/mill-bundler etc
 		
 	-- step by step dumps (prob can delete later)
 		d- 04.01 resume dump .. finish going through mill task and module sections
-		- pull down tauri-sjs sample, pull down mill-sjs sample, get them both to work (hopefully both in scala-3, upgraded if needed)
-			- should be able to ignore the portions with vite or bundler coz we dont need that for this
-			- hmm, could consider converting something simple like kbd-evs-printer or TabsO-tree-opener to mill too
-		- then try and convert the tauri-sjs sample to mill .. will be good exercise getting used to all of mill/scala-3/tauri
+		d- pull down tauri-sjs sample, pull down mill-sjs sample, get them both to work (hopefully both in scala-3, upgraded if needed)
+			d- should be able to ignore the portions with vite or bundler coz we dont need that for this
+			d- hmm, could consider converting something simple like kbd-evs-printer or TabsO-tree-opener to mill too
+		d- then try and convert the tauri-sjs sample to mill .. will be good exercise getting used to all of mill/scala-3/tauri
+		d- prob about right time to get git setups figured out and commit the scaffolded proving-ground projects
 		- then can get back on the actual proj impl steps as outlined above
 		
+	-- so, onto the ramp to full impl in little chunks ..
+		- set up mechanics of win-dat-cache up to renderlist generation .. could mock w test data .. 
+			- or instead of mocking, could just impl the enumwindows .. shouldnt be that bad
 	
 
-	-- 03.31, quick resume-later mind-dump
+
+
+	-- 03.31.y23, quick resume-later mind-dump
 		- we see now that when vscode is open, switche lists a window titled 'Setup' .. its cant be brought to front, and shouldnt be there .. if switche is showing it, its got rect, title, is-vis, is-uncloaked .. so something else is presumably going on .. 
 		- worse.. it looks like trying to do anything with it in switche, like closing or bringing-to-front etc might be causing switche to be stuck at 6%+ cpu usage, presumably meaning a thread is stuck .. not good at all!
 		- found that visual studio comes with a spyxx.exe that gives some details and allows for searching windows by handle which can be found via say process-hacker etc .. its useful utility for reference (as ahk window spy requires viz windows), but it didnt show anything useful either
@@ -69,7 +76,8 @@ RUNNING NOTES DUMP ON POSSIBLE WORK ON THE SWITCHENATOR PROJECT :
 		- (also, just noting, apparently by now, we're far far behind on latest electron, not to mention node, scala2, sbt, node-gyp etc .. so even our cur switche is in need of tlc just to rebuild etc .. so presumably at this point just migrating to tauri might be better option than try to put more work into switche, esp if it involves dealing w winapi or any js)
 
 
-04/25/2022 .. revisit re icons and exe names for UWP/store apps 
+
+04.25.y22 .. revisit re icons and exe names for UWP/store apps 
 
 	- so its been a long standing (mostly minor) issue that UWP windows 10 native apps like Store/Settings/Calculator/Edge etc, as well as any store-installed apps show up in our list under ApplicationFrameHost.exe, and we couldnt get icons to those either
 	- was recently, unrelated, looking at exe locations for one such app, and saw that relatively easily, once the actual exe path is available, one might be able to parse the manifest xml for the app and get at a usable (though prob not the most ideal) logo png asset to use for our purposes
@@ -79,7 +87,7 @@ RUNNING NOTES DUMP ON POSSIBLE WORK ON THE SWITCHENATOR PROJECT :
 	
 	
 
-0510y21 .. on getting switche working over on the laptop
+05.10.y21 .. on getting switche working over on the laptop
 	
 	- prob easiest is to just install node, try and fire up copied over prebuilt proj, else try and rebuild etc .. there was some pain involved w electron builds, node-gyp etc .. for now just want a switche instance running
 	- sooo, copied over the whole thing, and firing up from vbs brought up the whole frontend, shortcuts and all, so clearly electron and winapi querying parts were working, which was awesome .. and this was without even installing node separately(!!).. however, that has the prior sometimes seen aggravating behavior of not actually bringing the windows to front etc .. ughh .. in the old machine reboots fixed those, will try out here .. huh interesting, maybe its just that it doesnt work in remote desktop, but in the laptop (after restart) was working .. ughh 

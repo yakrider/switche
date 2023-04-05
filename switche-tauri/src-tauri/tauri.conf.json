@@ -16,7 +16,25 @@
       "shell": {
         "all": false,
         "open": true
+      },
+      "globalShortcut": {
+        "all": true
+      },
+      "window": {
+        "show": true,
+        "hide": true,
+        "setFocus": true,
+        "startDragging": true
+      },
+      "fs": {
+        "all": true
+      },
+      "process": {
+        "all": true
       }
+    },
+    "systemTray": {
+      "iconPath": "icons/switche128p.ico"
     },
     "bundle": {
       "active": true,
@@ -43,10 +61,12 @@
       {
         "fullscreen": false,
         "resizable": true,
-        "title": "switche-tauri",
-        "width": 600,
-        "height": 900,
-        "decorations": true
+        "title": "Switche - Searchable Task Switcher",
+        "x": 650,
+        "y": 15,
+        "width": 900,
+        "height": 1180,
+        "decorations": false
       }
     ]
   }

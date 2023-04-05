@@ -23,18 +23,21 @@ object switche extends JavaModule {
       def scalaVersion = "3.2.2" // "2.13.10"
       def scalaJSVersion = "1.13.0"
      
-      override def moduleKind = T { ModuleKind.CommonJSModule }
+      //override def moduleKind = T { ModuleKind.CommonJSModule }
+      override def moduleKind = T { ModuleKind.ESModule }
      
       override def ivyDeps = Agg(
          ivy"org.scala-js::scalajs-dom::2.4.0",
-         ivy"com.lihaoyi::scalatags::0.12.0"
+         ivy"com.lihaoyi::scalatags::0.12.0",
+         ivy"com.lihaoyi::upickle::3.0.0",
+         //ivy"com.lihaoyi::ujson::3.0.0"
       )
       
-      override def moduleDeps = Seq(
+      def moduleDeps = Seq(
          scalablytyped.`scalablytyped-module`
       )
       
-      override def scalacOptions = Seq (
+      def scalacOptions = Seq (
          "-deprecation",
          "-feature",
          "-unchecked"
@@ -70,7 +73,7 @@ object switche extends JavaModule {
       // ^^ shouldnt need this now that we're using vite for hot-reload dev server
    }
    def webapp = T {
-      //switche.copyStatics()
+      switche.copyStatics()
       //switche.client.fastLinkJS()
       copyFastLinkOut()
       ()
