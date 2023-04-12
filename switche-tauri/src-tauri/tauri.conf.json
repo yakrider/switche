@@ -7,8 +7,8 @@
     "withGlobalTauri": true
   },
   "package": {
-    "productName": "switche-tauri",
-    "version": "0.1.0"
+    "productName": "switche",
+    "version": "0.2.1"
   },
   "tauri": {
     "allowlist": {
@@ -33,17 +33,12 @@
         "all": true
       }
     },
-    "systemTray": {
-      "iconPath": "icons/switche128p.ico"
-    },
     "bundle": {
       "active": true,
       "icon": [
-        "icons/32x32.png",
-        "icons/128x128.png",
-        "icons/128x128@2x.png",
-        "icons/icon.icns",
-        "icons/icon.ico"
+          "icons/switche.png",
+          "icons/switche.ico",
+          "icons/icon.ico"
       ],
       "identifier": "com.yakrider.switche",
       "shortDescription": "",
@@ -66,8 +61,13 @@
         "y": 15,
         "width": 900,
         "height": 1180,
-        "decorations": false
+        "decorations": false,
+        "visible": true,
+        "skipTaskbar": true
       }
-    ]
+    ],
+    "systemTray": {
+      "iconPath": "icons/icon.ico"
+    }
   }
 }

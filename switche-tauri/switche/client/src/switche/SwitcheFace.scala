@@ -5,7 +5,6 @@ import org.scalajs.dom.{Element, EventTarget, MouseEvent, KeyboardEvent, WheelEv
 import org.scalajs.dom.html.{Div, Span}
 import org.scalajs.dom.{document => doc}
 import scalatags.JsDom.all._
-import switche.SwitcheState.hwndMap
 
 import scala.collection.{IndexedSeq, Map, mutable}
 import scala.scalajs.js
@@ -61,14 +60,13 @@ object StateTs {
 
 object SwitcheFacePage {
    import SwitchePageState._
-   import SwitcheState._
+   import Switche._
    import DomExts._
 
    def getShellPage () = {
       setPageEventHandlers()
       div ( id:="scala-js-root-div", RibbonDisplay.getTopRibbonDiv(), ElemsDisplay.getElemsDiv ) .render
    }
-   //def queuePageUpdate() = { g.window.requestAnimationFrame({t:js.Any => render()}) }  // used spaced render call instead
    // NOTE that the intention now is to always call this via RenderSpacer (spaced or immdt) instead of directly, so the render time can be recorded
    def updatePageElems () : Unit = { //println(s"rendering @${js.Date.now()}")
       // note that although this seems expensive to call rebuild on every render, unchanged cases get diffed and ignored by browser engine keeping it cheap
@@ -156,7 +154,8 @@ object SwitcheFacePage {
 
       triggerHoverLockTimeout()
       if (e.altKey) {
-         if (e.key == "m")  handleReq_CurElemMinimize()
+         if      (e.key == "m")  handleReq_CurElemMinimize()
+         else if (e.key == "F4") handleReq_SwitcheQuit()
          else { } // we'll ignore alt-combos for the searchbox
       }
       else if (e.ctrlKey) {
@@ -202,7 +201,7 @@ object SwitcheFacePage {
 
 object SwitchePageState {
    import SwitcheFaceConfig._
-   import SwitcheState.inGroupedMode
+   import Switche._
 
    // doing recents and grouped elems separately as they literally are different divs (w/ diff styles etc)
    // note that in search mode, both of these containers will be updated with search style elems and search-filtered id-vecs
@@ -223,18 +222,22 @@ object SwitchePageState {
    def idToHwnd (idStr:String) = idStr.split("_") .headOption .flatMap (s => Try(s.toInt).toOption)
 
 
-   def handleReq_SwitcheEscape () = {
+   def handleReq_SwitcheEscape () = { //println("dismissed")
+      isDismissed = true;
       SendMsgToBack.FE_Req_SwitcheEscape()
-      js.timers.setTimeout(500) { // delay is so the cur-elem focus reset happens out of sight after switche window is gone
-         SwitcheState.setDismissed(); SwitchePageState.resetFocus();
-      }
+      // we'll do a delayed focus-reset so the visual flip happens out of sight after switche window is gone
+      js.timers.setTimeout(300) {  SwitchePageState.resetFocus() }
+   }
+   def handleReq_SwitcheQuit () = {
+      SendMsgToBack.FE_Req_SwitcheQuit()
    }
    
    def handleReq_CurElemActivation() = {
       idToHwnd (curElemId) .foreach ( SendMsgToBack.FE_Req_WindowActivate )
       js.timers.setTimeout(500) {
          if (SwitchePageState.inSearchState) { SwitchePageState.exitSearchState() }
-         SwitcheState.setDismissed(); SwitchePageState.resetFocus();
+         isDismissed = true;
+         SwitchePageState.resetFocus();
       }
    }
    def handleReq_CurElemMinimize() = { idToHwnd (curElemId) .foreach ( SendMsgToBack.FE_Req_WindowMinimize ) }
@@ -273,7 +276,7 @@ object SwitchePageState {
       val exeSpan = span (`class`:=s"exeSpan ${elemT.cls} ${grpT.cls}", exeInnerSpan)
       val ySpan = span (`class`:=s"ySpan ${elemT.cls}", yInnerSpan)
       val titleSpan = span (`class`:=s"titleSpan ${elemT.cls}", titleInnerSpan)
-      val ico = IconsManager.getCachedIcon(wde) .map (icoStr => img(`class`:="ico", src:=icoStr)) .getOrElse(span("ico"))
+      val ico = IconsManager.getCachedIcon(wde.icon_cache_idx) .map (icoStr => img(`class`:="ico", src:=icoStr)) .getOrElse(span("ico"))
       val icoSpan = span (`class`:="exeIcoSpan", ico)
       val elem = div (`class`:="elemBox", id:=idStr, tabindex:=0, exeSpan, nbsp(2), ySpan, nbsp(2), icoSpan, nbsp(), titleSpan).render
       //elem.onclick = {ev:MouseEvent => SwitcheState.handleReq_WindowActivation(e.hwnd)}
@@ -287,7 +290,7 @@ object SwitchePageState {
       // this needs the elems table, and a vec to navigate through it
       val elemsMap = mutable.LinkedHashMap[String,OrderedElemsEntry]()
       val cappedRecents = {
-         if (!inGroupedMode) SwitcheState.renderList else SwitcheState.renderList.take(groupedModeTopRecentsCount)
+         if (!inGroupedMode) renderList else renderList.take(groupedModeTopRecentsCount)
       }
       cappedRecents .flatMap(e => hwndMap.get(e.hwnd).map(d => (d, e))) .zipWithIndex .foreach { case ((wde,rle),i) =>
          val id = recentsId (wde.hwnd)
@@ -309,7 +312,7 @@ object SwitchePageState {
          val elemOpt = hwndMap.get(rle.hwnd) .map (wde => makeElemBox (id, wde, rle.y, ElemTs.G, grpT))
          elemOpt .map (elem => GrpIdxdElem (id, elem, grpIdx))
       }
-      SwitcheState.groupedRenderList .zipWithIndex .map { case (ll, gi) => Seq (
+      groupedRenderList .zipWithIndex .map { case (ll, gi) => Seq (
          // we wanted to set the first (if any) in group to group-head type, and rest (if any) to group-tail type (dimmed)
          ll .take(1) .flatMap (rle => getGrpIdxdElem (rle, GrpTs.GH, gi)),
          ll .tail    .flatMap (rle => getGrpIdxdElem (rle, GrpTs.GT, gi))
@@ -351,12 +354,12 @@ object SwitchePageState {
       }
       if (!inGroupedMode) {
          // lets do the simpler case of non-grouped mode
-         val sElems = SwitcheState.renderList .flatMap (e => getSearchMatchRes(e) .flatMap (res => getSearchElem (e, ElemTs.R, GrpTs.NG, res)))
+         val sElems = renderList .flatMap (e => getSearchMatchRes(e) .flatMap (res => getSearchElem (e, ElemTs.R, GrpTs.NG, res)))
          getSearchStateMapAndVec(sElems) match { case (m,v) => recentsElemsMap = m; recentsIdsVec = v }
       } else {
          // in grouped mode, we'll do navs in grouped block, but do simpler eqv match highlighting in dimmed top-recents where available
          // the searchElemsMap idxs need to have not the zipWithIndex, but sequential idxs of only matching elems ..
-         val sElems = SwitcheState.groupedRenderList .map {_ .flatMap { e => getSearchMatchRes(e).map(res => e -> res) } } .flatMap { ll => Seq (
+         val sElems = groupedRenderList .map {_ .flatMap {e => getSearchMatchRes(e).map(res => e -> res) } } .flatMap {ll => Seq (
             ll .take(1) .flatMap { case (e,r) => getSearchElem (e, ElemTs.G, GrpTs.GH, r) },
             ll .tail    .flatMap { case (e,r) => getSearchElem (e, ElemTs.G, GrpTs.GT, r) }
          ) } .flatten
@@ -364,7 +367,7 @@ object SwitchePageState {
 
          // now lets build the recents w similar search-match highlighting as well .. (we wont need nav idxs for it)
          val elemsMap = mutable.LinkedHashMap[String,OrderedElemsEntry]()
-         SwitcheState.renderList .take(groupedModeTopRecentsCount) .zipWithIndex .foreach { case (e,i) =>
+         renderList .take(groupedModeTopRecentsCount) .zipWithIndex .foreach { case (e,i) =>
             getSearchMatchRes(e) .flatMap (res => getSearchElem (e, ElemTs.GR, GrpTs.NG, res)) .foreach { se =>
                elemsMap .put (se.id, OrderedElemsEntry (i, se.elem))
          } }
@@ -435,8 +438,8 @@ object SwitchePageState {
    def getIdfnVecAndMap(elemT:ElemT) = {
       if (elemT == ElemTs.G) { (groupedId _, groupedIdsVec, groupedElemsMap) } else { (recentsId _, recentsIdsVec, recentsElemsMap) }
    }
-   def resetFocus() = {
-      setCurElem(recentsIdsVec.head); focusElem_Next()
+   def resetFocus() = { //println("reset-focus")
+      recentsIdsVec.headOption.foreach(setCurElem); focusElem_Next()
    }
    def resetSearchMatchFocus() : Unit = {
       val (_, idsVec, elemsMap) = getIdfnVecAndMap (if (inGroupedMode) ElemTs.G else ElemTs.R)
@@ -524,7 +527,7 @@ object SwitchePageState {
 object ElemsDisplay {
    import SwitcheFaceConfig._
    import SwitchePageState._
-   import SwitcheState._
+   import Switche._
 
    val elemsDiv = div (id:="elemsDiv").render
    def getElemsDiv = elemsDiv
@@ -537,7 +540,7 @@ object ElemsDisplay {
    }
    def updateElemsDiv () = {
       //updateRenderReadyLists()
-      // todo ^^
+      // ^^ no longer relevant as we get latest built renderlists from backend instead
       val searchedDiv : Div = {
          if (inSearchState) {
             rebuildSearchStateElems()
@@ -560,7 +563,7 @@ object ElemsDisplay {
 
 object RibbonDisplay {
    import SwitcheFaceConfig._
-   import SwitcheState._
+   import Switche._
    val countSpan = span (`class`:="dragSpan").render
    val debugLinks = span ().render
    val searchBox = input (`type`:="text", id:="searchBox", placeholder:="").render
@@ -578,7 +581,6 @@ object RibbonDisplay {
    def debugDisplayMsg (msg:String) = { debugLinks.innerHTML = s"$msg (${js.Date.now().toString})"; }
    def handleRefreshBtnClick() : Unit = {
       // we want to refresh too (as do periodic calls elsewhere), but here we want to also force icons-refresh
-      IconsManager.markCachedIconMappingsStale()
       SendMsgToBack.FE_Req_Refresh()
    }
    def getTopRibbonDiv() = {

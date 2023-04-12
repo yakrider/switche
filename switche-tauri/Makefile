@@ -1,11 +1,14 @@
 
-# The purpose of this Makefile is really mostly to have a collection of cmds to reduce head-scratching when revisiting after extended absences!
+# The purpose of this Makefile is mostly as a repository of cmds to reduce head-scratching when revisiting after extended absences!
 
 dev:
 	pusd src-tauri && cargo tauri dev && popd
 
 run:
 	pushd src-tauri && cargo tauri dev && popd
+
+build:
+	pushd src-tauri && cargo tauri build && popd
 
 lcheck:
 	pushd src-tauri && cargo lcheck && popd

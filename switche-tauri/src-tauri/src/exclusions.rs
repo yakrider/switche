@@ -1,17 +1,11 @@
 
 
-use std::collections::{HashMap, HashSet, LinkedList};
 use std::ops::Deref;
 use std::sync::{Arc, RwLock};
-use std::sync::atomic::{AtomicIsize, AtomicU32, Ordering};
-use std::thread::{sleep, spawn};
-use std::time;
+use std::sync::atomic::{AtomicIsize, Ordering};
+use std::collections::{HashSet};
 
-use grouping_by::GroupingBy;
-use linked_hash_map::LinkedHashMap;
 use once_cell::sync::{Lazy, OnceCell};
-
-use tauri::{Manager, Window, AppHandle, Runtime, Icon};
 
 
 use crate::*;
@@ -43,7 +37,8 @@ impl ExclusionsManager {
 
     pub fn cache_self_hwnd (&self, ss:&SwitcheState) {
         let self_hwnd_res = ss.hwnd_map .read().unwrap() .values() .find ( |&wde|
-            wde.win_text.as_ref() .filter (|s| s.as_str() == "Switche - Searchable Task Switcher") .is_some() && (
+            //wde.win_text.as_ref() .filter (|s| s.as_str() == "Switche - Searchable Task Switcher") .is_some() && (
+            wde.win_text == Some("Switche - Searchable Task Switcher".to_string()) && (
                 wde.exe_path_name.as_ref() .filter (|ep| ep.name.as_str() == "switche.exe") .is_some() ||
                 wde.exe_path_name.as_ref() .filter (|ep| ep.name.as_str() == "msedgewebview2.exe") .is_some()
         ) ) .map (|wde| wde.hwnd) ;
@@ -59,10 +54,10 @@ impl ExclusionsManager {
     pub fn check_self_hwnd (&self, hwnd:Hwnd) -> bool { hwnd == self.self_hwnd() }
 
     pub fn calc_excl_flag (&self, wde:&WinDatEntry) -> bool {
-        self.check_self_hwnd(wde.hwnd) || wde.is_vis == Some(false) ||  wde.is_uncloaked == Some(false) ||
-            wde.win_text.as_ref() .filter (|s| s.is_empty()) .is_some() ||
-            wde.exe_path_name.as_ref() .filter (|p| p.full_path.is_empty()) .is_some() ||
-            wde.exe_path_name.as_ref() .filter (|p| self.filter_exe_match(&p.name)) .is_some()
+        wde.is_vis == Some(false) ||  wde.is_uncloaked == Some(false) ||
+            self.check_self_hwnd(wde.hwnd) || wde.win_text.is_none() || wde.win_text == Some("".to_string()) ||
+            wde.exe_path_name.as_ref() .filter (|p| !p.full_path.is_empty()) .is_none() ||
+            wde.exe_path_name.as_ref() .filter (|p| !self.filter_exe_match(&p.name)) .is_none()
     }
 
     pub fn runtime_should_excl_check (&self, wde:&WinDatEntry) -> bool {
@@ -80,7 +75,7 @@ impl ExclusionsManager {
         EXE_MATCH_SET.read().unwrap().contains(estr)
     }
 
-    pub fn filter_exclusions (&self, render_list: &Vec<WinDatEntry>) -> Vec<WinDatEntry> {
+    pub fn filter_exclusions (&self, _render_list: &Vec<WinDatEntry>) -> Vec<WinDatEntry> {
         // todo
         vec![]
     }
