@@ -11,7 +11,7 @@ use std::thread::{sleep, spawn};
 use std::time::{Duration};
 use std::mem;
 
-// todo recheck whether on no-deadlocks
+// todo recheck built code is not using no-deadlocks
 
 use once_cell::sync::OnceCell;
 use rand::Rng;
@@ -86,7 +86,7 @@ impl IconsManager {
     }
 
     fn make_hwnd_path_pair (wde:&WinDatEntry) -> Option<HwndExePathPair> {
-        wde.icon_override_loc.clone() .or_else ( || {
+        wde.icon_override_loc.to_owned() .flatten() .or_else ( || {
             wde.exe_path_name.as_ref() .map (|p| p.full_path.clone())
         } ) .map (|p| HwndExePathPair { hwnd:wde.hwnd, path:p } )
     }
@@ -245,7 +245,7 @@ impl IconsManager {
             let do_refresh = Some(true) != self.icons_hpp_map.read().unwrap().get(&hpp).map(|icm| !icm.is_stale && icm.cache_idx > 0);
             if !was_past_queried || do_refresh {
                 self.queried_hpp_cache .write().unwrap() .insert(wde.hwnd, hpp.clone());
-                if wde.icon_override_loc.is_none() {
+                if wde.icon_override_loc.is_none() || wde.icon_override_loc == Some(None) {
                     self.queue_hwnd_icon_query (&hpp);
                 } else {
                     self.queue_exe_icon_query (&hpp)

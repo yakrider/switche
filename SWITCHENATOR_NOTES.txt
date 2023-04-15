@@ -37,6 +37,9 @@ RUNNING NOTES DUMP ON POSSIBLE WORK ON THE SWITCHENATOR PROJECT :
 				- and ofc then it becomes meaningful to look at saving/loading configs .. incl for remembering window loc/size, loading excl filters if still necessary, possibly icon overrides if needed, maybe grouping choice, num-recents etc .. maybe eventually even the hotkeys!
 		- anyway .. seems manageable in reasonable time .. gotta get started!
 		
+	-- also, for reference, found this post that gives a rundown of alt-tab filtering, as well as apparently issues w getting full-screen UWP windows:
+		- https://stackoverflow.com/questions/72069771/show-a-list-of-all-alttab-windows-even-full-screen-uwp-windows-and-retrieve
+		
 		
 	-- associated adventures picked up : 
 		d- intend to migrate from sbt to mill .. thought being if I end up having to do any fancy configs etc (and the sample seems to suggest I will indeed), then its prob better to get on mill than try to wrestle with sbt and its configs .. plus there's prob a whole bunch of actual tauri configs etc, so getting on mill and its offering of manageable flexibility would prob be valuable

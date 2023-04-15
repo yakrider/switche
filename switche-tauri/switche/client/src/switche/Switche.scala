@@ -121,8 +121,7 @@ object Switche {
       doc.addEventListener ( "DOMContentLoaded", { (e: dom.Event) =>
          doc.body.appendChild (SwitcheFacePage.getShellPage())
          Switche.setTauriEventListeners()
-
-         js.timers.setTimeout (50 ) { SendMsgToBack.FE_Req_Data_Load() }
+         
          js.timers.setTimeout (300) { SendMsgToBack.FE_Req_Data_Load() }
          // ^^ in case this is cold restart for the backend too, lets give it some time to marshall its data
          

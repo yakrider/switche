@@ -13,7 +13,7 @@ use std::sync::Arc;
 use std::sync::RwLock;
 use std::sync::atomic::{AtomicBool, AtomicIsize, Ordering};
 use std::thread::{sleep, spawn};
-use std::time::{Duration, Instant, SystemTime};
+use std::time::{Duration, SystemTime};
 
 use grouping_by::GroupingBy;
 use once_cell::sync::{Lazy, OnceCell};
@@ -45,12 +45,10 @@ pub struct ExePathName {
 # [ derive (Debug, Default, Eq, PartialEq, Hash, Clone, Serialize, Deserialize) ]
 pub struct WinDatEntry {
     pub hwnd              : Hwnd,
-    pub is_vis            : Option<bool>,
-    pub is_uncloaked      : Option<bool>,
     pub win_text          : Option<String>,
     pub exe_path_name     : Option<ExePathName>,
     pub should_exclude    : Option<bool>,
-    pub icon_override_loc : Option<String>,
+    pub icon_override_loc : Option<Option<String>>,   // the actual value is an option, the wrapping option indicates whether initialized
     //pub icon_cache_idx    : usize,        // <- we'd rather populate this at render-list emission time
 }
 
@@ -61,14 +59,6 @@ pub struct WinDatEntry_FE {
     pub exe_path_name  : Option<ExePathName>,
     pub icon_cache_idx : u32,
 }
-
-
-# [ derive (Debug, Clone, Serialize, Deserialize) ]
-pub struct WinDatEntry_P {
-    pub msg : String,
-    pub wde : WinDatEntry_FE
-}
-
 
 
 
@@ -153,8 +143,11 @@ pub struct Flag (Arc <AtomicBool>);
 
 impl Flag {
     pub fn new (state:bool) -> Flag { Flag ( Arc::new ( AtomicBool::new(state) ) ) }
+
     pub fn set   (&self) { self.0 .store (true,  Ordering::SeqCst) }
     pub fn clear (&self) { self.0 .store (false, Ordering::SeqCst) }
+    pub fn store (&self, state:bool) { self.0 .store (state, Ordering::SeqCst) }
+
     pub fn check    (&self) -> bool { self.0 .load (Ordering::SeqCst) }
     pub fn is_set   (&self) -> bool { true  == self.0 .load (Ordering::SeqCst) }
     pub fn is_clear (&self) -> bool { false == self.0 .load (Ordering::SeqCst) }
@@ -168,8 +161,9 @@ pub struct _SwitcheState {
     pub hwnds_ordered : Arc <RwLock <Vec <Hwnd>>>,
     pub hwnds_acc     : Arc <RwLock <Vec <Hwnd>>>,
 
-    pub cur_call_id  : AtomicIsize,
-    pub is_dismissed : Flag,
+    pub cur_call_id   : AtomicIsize,
+    pub enum_do_light : Flag,
+    pub is_dismissed  : Flag,
 
     pub render_lists_m : RenderReadyListsManager,
     pub icons_m        : IconsManager,
@@ -231,6 +225,7 @@ impl SwitcheState {
                 hwnds_acc      : Arc::new ( RwLock::new (Vec::new())),
 
                 cur_call_id    : AtomicIsize::default(),
+                enum_do_light  : Flag::default(),
                 is_dismissed   : Flag::default(),
 
                 render_lists_m : RenderReadyListsManager::instance(),
@@ -254,68 +249,131 @@ impl SwitcheState {
 
     /*****  win-api windows-enumeration setup and processing  ******/
 
-    fn trigger_enum_windows_query_pending (&self) {
-        static trigger_pending : once_cell::sync::Lazy<Flag> = once_cell::sync::Lazy::new (|| {Flag::default()});
-        if trigger_pending.is_set() {
-            // if already have queued requests, we just ignore it, as it will get done anyway
-        } else {
+    fn trigger_enum_windows_query_pending (&self, do_light:bool) {
+        static trigger_pending : Lazy<Flag> = Lazy::new (|| {Flag::default()});
+        // we'll first update the do_light flag whether we're ready to trigger or not
+        self.enum_do_light.0 .fetch_and (do_light, Ordering::Relaxed);
+        // and if we're not already pending, we'll set it up
+        if !trigger_pending.is_set() {
             trigger_pending.set();
             let ss = self.clone();
             let tp = trigger_pending.clone();
+            // we'll set up a delay to reduce thrashing from bunched up trains of events that the OS often sends
+            let delay = if self.enum_do_light.check() {20} else {100};
             spawn ( move || {
-                sleep (Duration::from_millis(100));
+                sleep (Duration::from_millis(delay));
                 tp.clear();
-                ss.trigger_enum_windows_query_immdt();
+                ss .trigger_enum_windows_query_immdt (ss.enum_do_light.check());
             } );
         }
     }
-    fn trigger_enum_windows_query_immdt (&self) {
-        println!("***** starting new enum-windows query!");
-        let call_id_old = self.cur_call_id.fetch_add (1, Ordering::SeqCst);
+    fn trigger_enum_windows_query_immdt (&self, do_light:bool) {
+        println!("***** starting new enum-windows query! **** (doLight:{:?})",do_light);
+        self.enum_do_light.store(do_light);    // we might be getting called directly, so gotta cache it up for that
+        let call_id_old = self.cur_call_id.fetch_add (1, Ordering::Relaxed);
         *self.hwnds_acc.write().unwrap() = Vec::new();
         // enum windows is blocking, and returns a bool which is false if it fails or either of its callback calls returns false
         // so we'll spawn out this call, and there, we'll wait till its done then trigger cleanup and rendering etc
         let ss = self.clone();
         spawn ( move || unsafe {
-            let t = Instant::now();
+            //let t = Instant::now();
             let res = EnumWindows ( Some(Self::enum_windows_streamed_callback), LPARAM (call_id_old + 1) );
-            let dur = Instant::now().duration_since(t).as_millis();
-            println! ("enum-windows query completed in {dur} ms, with success result: {:?}", res);
+            //let dur = Instant::now().duration_since(t).as_millis();
+            //println! ("enum-windows query completed in {dur} ms, with success result: {:?}", res); // --> 'light' ones now finish < 1ms
             if res == false { return }    // the call could have been superceded by a newer request
-            sleep (Duration::from_millis(50)); // let any pending updates finish .. the actual call with fast cbs is just a few ms!
             ss.post_enum_win_call_cleanup();
         } );
     }
-
 
     pub unsafe extern "system" fn enum_windows_streamed_callback (hwnd:HWND, call_id:LPARAM) -> BOOL {
         let ss = SwitcheState::instance();
         let latest_call_id = ss.cur_call_id.load(Ordering::Relaxed);
         if call_id.0 > latest_call_id {
             println! ("WARNING: got win-api callback w higher call_id than last triggered .. will restart enum-call! !");
-            ss.trigger_enum_windows_query_pending();
+            ss.trigger_enum_windows_query_immdt (ss.enum_do_light.check());
             return BOOL (false as i32)
         } else if call_id.0 < latest_call_id {
             // if we're still getting callbacks with stale call_id, signal that call to stop
             println! ("WARNING: got callbacks @cur-call-id {} from stale cb-id: {} .. ending it!!", latest_call_id, call_id.0);
             return BOOL (false as i32)
         };
-        ss.hwnds_acc .write().unwrap() .push (hwnd.0);
-        ss.process_discovered_hwnd (hwnd.0);
+        let passed = ss.process_discovered_hwnd (hwnd.0, ss.enum_do_light.check());
+        if passed { ss.hwnds_acc .write().unwrap() .push (hwnd.0) }
         BOOL (true as i32)
     }
-    fn process_discovered_hwnd (&self, hwnd:Hwnd) {
-        let mut tmp = WinDatEntry::default(); tmp.hwnd = hwnd;
-        let wde = { self.hwnd_map.read().unwrap().get(&hwnd) .or_else (|| Some(&tmp))
-            .as_ref() .map (|&wde| self.get_updated_dat(&wde)) .unwrap()
-        };
-        self.hwnd_map.write().unwrap() .insert (wde.hwnd, wde);
+
+
+    fn process_discovered_hwnd (&self, hwnd:Hwnd, do_light:bool) -> bool {
+        use win_apis::*;
+
+        if do_light { // for light enum calls, passing condition is to already have excl flag set Some(false) beforehand
+            return self.hwnd_map.read().unwrap() .get(&hwnd) .map (|wde| wde.should_exclude != Some(true)) .is_some();
+        }
+
+        if !check_window_visible   (hwnd)  { return false }
+        if  check_window_cloaked   (hwnd)  { return false }
+        if  check_window_has_owner (hwnd)  { return false }
+        if  check_if_tool_window   (hwnd)  { return false }
+
+        if self.excl_m.check_self_hwnd (hwnd) { return false }
+
+        let mut hmap = self.hwnd_map.write().unwrap();
+
+        if !hmap.contains_key(&hwnd) {
+            let mut tmp = WinDatEntry::default();
+            tmp.hwnd = hwnd;
+            hmap.insert (hwnd,tmp);
+        }
+        let mut wde = hmap.get_mut(&hwnd).unwrap();
+
+        let mut should_emit = false;
+
+        // we'll refresh the title every time this runs
+        let cur_title = Some (get_window_text(wde.hwnd)) .filter (|s| !s.is_empty());
+        if wde.win_text != cur_title { should_emit = true }
+        wde.win_text = cur_title;
+
+        // but only query exe-path if we havent populated it before
+        if wde.exe_path_name.is_none() {
+            should_emit = true;
+            wde.exe_path_name = Self::get_parsed_exe_path_name(wde.hwnd);
+        }
+
+        let excl_flag = Some ( self.excl_m.calc_excl_flag (&wde) );
+        if wde.should_exclude != excl_flag { should_emit = true }
+        wde.should_exclude = excl_flag;
+
+        if wde.should_exclude == Some(false) {
+            if wde.icon_override_loc.is_none() {
+                let ov_loc = Some ( IconPathOverridesManager::get_icon_override_path(&wde) );
+                if wde.icon_override_loc != ov_loc { should_emit = true }
+                wde.icon_override_loc = ov_loc;
+            }
+        }
+        drop(hmap); // clearing out write scope before lenghty calls
+
+        if let Some(wde) = self.hwnd_map.read().unwrap().get(&hwnd) {
+            if wde.should_exclude == Some(false) {
+                self.icons_m .process_found_hwnd_exe_path (wde);
+                if should_emit { self.emit_win_dat_entry (wde) }
+                return true
+        } }
+        return false
     }
-    // todo, prob add something to not show child windows either? .. alt-tab doesnt seem to show child IDE windows
+
+
+    fn get_parsed_exe_path_name(hwnd:Hwnd) -> Option<ExePathName> {
+        let exe_path = win_apis::get_exe_path_name(hwnd);
+        exe_path .map ( |fp| {
+            let name = fp .split(r"\") .last() .unwrap_or_default() .to_string();
+            ExePathName { full_path: fp, name }
+        } )
+    }
 
 
     fn post_enum_win_call_cleanup (&self) {
         // we want to clean up both map entries and any icon-cache mappings for any hwnds that are no longer present
+        self.enum_do_light.set();   // for next call .. since it needs all pending calls to specify light, its init should be light too
         let cur_hwnds_set = self.hwnds_acc.read().unwrap() .iter() .map(|h| *h) .collect::<HashSet<Hwnd>>();
         let dead_hwnds = self.hwnds_ordered.read().unwrap() .iter() .map(|h| *h)
             .filter (|hwnd| !cur_hwnds_set.contains(hwnd)) .collect::<Vec<Hwnd>>();
@@ -328,51 +386,21 @@ impl SwitcheState {
         std::mem::swap (&mut *self.hwnds_ordered.write().unwrap(), &mut *self.hwnds_acc.write().unwrap());
         println!("hwnds:{}, hacc:{}", self.hwnds_ordered.read().unwrap().len(), self.hwnds_acc.read().unwrap().len());
 
-        // lets also find and cache our hwnd if we dont have it cached yet
-        if self.excl_m.self_hwnd() == 0 || !self.hwnd_map.read().unwrap().contains_key (&self.excl_m.self_hwnd()) {
-            self.excl_m.cache_self_hwnd(self)
-        }
         self.emit_render_lists_queued(false);    // we'll queue it as icon upates might tack on more in a bit
     }
 
 
-    fn get_exe_path_name(hwnd:Hwnd) -> Option<ExePathName> {
-        let exe_path = win_apis::get_exe_path_name(hwnd);
-        exe_path .map ( |fp| {
-            let name = fp .split(r"\") .last() .unwrap_or_default() .to_string();
-            ExePathName { full_path: fp, name }
-        } )
+
+
+
+
+    /*****  some support functions  ******/
+
+    pub fn get_self_hwnd(&self) -> Option<Hwnd> {
+        self.app_handle.read().unwrap().as_ref() .iter() .map (|ah| {
+            ah.windows().values() .next() .map (|w| w.hwnd().ok()) .flatten()
+        } ) .flatten() .next() .map (|h| h.0)
     }
-
-
-    fn get_updated_dat (&self, wde:&WinDatEntry) -> WinDatEntry { //println!("updating dat.. {:?}", wde.hwnd);
-        let is_vis = Some (win_apis::check_window_visible (wde.hwnd));
-        let is_uncloaked = is_vis .filter(|&b| b) .map (|_| !win_apis::check_window_cloaked(wde.hwnd));
-        let win_text = is_uncloaked .filter(|&b| b) .map ( |_| win_apis::get_window_text(wde.hwnd));
-        let exe_path_name = if win_text.as_ref().map_or(false, |s| !s.is_empty()) && wde.exe_path_name.is_none() {
-            Self::get_exe_path_name(wde.hwnd)
-        } else { wde.exe_path_name.to_owned() };
-        let mut updated_wde = WinDatEntry {
-            hwnd: wde.hwnd, is_vis, is_uncloaked, win_text, exe_path_name,
-            should_exclude: None, icon_override_loc: None,
-        };
-        updated_wde.should_exclude = Some ( self.excl_m.calc_excl_flag (&updated_wde) );
-        updated_wde.icon_override_loc = updated_wde.should_exclude .filter(|&b| !b)
-            .map (|_| IconPathOverridesManager::get_icon_override_path(wde)) .flatten();
-        if updated_wde.should_exclude != Some(true) {
-            self.icons_m.process_found_hwnd_exe_path(&updated_wde);
-            if &updated_wde != wde {
-                self.emit_win_dat_entry (&updated_wde)
-        } }
-        updated_wde
-    }
-
-
-
-
-
-
-    /*****  common support functions  ******/
 
     fn handle_event__switche_fgnd (&self) {
         println! ("switche self-fgnd report .. refreshing window-list-top icon");
@@ -454,7 +482,6 @@ impl SwitcheState {
             SetWinEventHook( 0x8000, 0x8005, HINSTANCE::default(), Some(Self::win_event_hook_cb), 0, 0, 0);
             SetWinEventHook( 0x800C, 0x800C, HINSTANCE::default(), Some(Self::win_event_hook_cb), 0, 0, 0);
             SetWinEventHook( 0x8017, 0x8018, HINSTANCE::default(), Some(Self::win_event_hook_cb), 0, 0, 0);
-            // todo prob just split these into individual calls instead of ranges
 
             // win32 sends hook events to a thread with a 'message loop', but we wont create any windows here to get window messages,
             //     so we'll just leave a forever waiting GetMessage instead of setting up a msg-loop
@@ -470,8 +497,7 @@ impl SwitcheState {
         id_object: i32, id_child: i32, _id_thread: u32, _event_time: u32
     ) {
         if id_object == 0 && id_child == 0 {
-            //let t = time::SystemTime::now().duration_since(UNIX_EPOCH.e).unwrap().as_millis();
-            //let t = UNIX_EPOCH.elapsed().unwrap().as_millis();
+            //let t = std::time::UNIX_EPOCH.elapsed().unwrap().as_millis();
             //println!("--> {:16} : hook event: 0x{:X}, hwnd:{:?}, id_object: 0x{:4X}", t, event, hwnd, id_object);
             // todo: prob need to figure out actual logging w debug/run switches .. theres samples incl in the other repo
             match event {
@@ -493,10 +519,7 @@ impl SwitcheState {
         }
     }
 
-    // todo: see if makes sense to have gate-keeping setup for each hwnd update (maybe w self-cleaning hashmap of hwnds to time-till-next)?
-    // todo: there's also the thought of a flag to do full vs ordering-only win-enum processing ..
-
-    pub fn stamp (&self) -> u128 { SystemTime::UNIX_EPOCH.elapsed().unwrap().as_millis() }
+    pub fn _stamp (&self) -> u128 { SystemTime::UNIX_EPOCH.elapsed().unwrap().as_millis() }
 
     pub fn proc_win_report__title_changed (&self, hwnd:Hwnd) {
         // first off, if its for something not in renderlist, just ignore it
@@ -506,34 +529,42 @@ impl SwitcheState {
             if wde.win_text.as_ref() == Some(& win_apis::get_window_text(hwnd)) {
                 return
         } }
-        // since we're only gonna update this single hwnd (w/o triggering enum-windows), we can do it asap
+        // we'll fully update this hwnd, but only queue up a light enum-query (only ordering update, no data updates)
         self.hwnd_map.read().unwrap() .get(&hwnd) .map (|wde| self.icons_m.mark_cached_icon_mapping_stale(wde));
-        self.process_discovered_hwnd(hwnd); // this will get this hwnd updated, incl updaing stale marked icons (which get pulled off-thread)
+        // calling processing will get this hwnd updated, incl updating icons if marked stale (which happens off-thread)
+        if self.process_discovered_hwnd (hwnd, false) {
+            self.emit_render_lists_queued (true);
+        }
     }
 
     pub fn proc_win_report__fgnd_hwnd (&self, hwnd:Hwnd) {
-        println!("{:?} fgnd: {:?}",self.stamp(),hwnd);
-        // a new window in fgnd is fine time to trigger a full enum-query (which will do queries for everyone, icons for stale ones)
-        // todo: maybe test out otherwise too .. maybe process/update this hwnd, then do a 'light' enum query only (no full updates)
-        self.hwnd_map.read().unwrap() .get(&hwnd) .map (|wde| {
-            self.icons_m.mark_cached_icon_mapping_stale(wde);
-        });
-        self.trigger_enum_windows_query_pending();     // note that this gate-keeps call swarms and has a 100ms delay
+        //println!("@{:?} fgnd: {:?}",self._stamp(),hwnd);
+        // we'll set its icon to be refreshed, then process it, and queue up a 'light' (ordering only) enum-windows call
+        self.hwnd_map.read().unwrap() .get(&hwnd) .map (|wde| self.icons_m.mark_cached_icon_mapping_stale(wde));
+        if self.process_discovered_hwnd (hwnd, false) {
+            self.trigger_enum_windows_query_pending(true);
+        }
     }
 
     pub fn proc_win_report__obj_shown (&self, hwnd:Hwnd) {
-        self.hwnd_map.read().unwrap() .get(&hwnd) .map ( |wde| {
-            self.icons_m.mark_cached_icon_mapping_stale(wde)
-        } );
-        self.trigger_enum_windows_query_pending();
-        // todo: again .. when mechanism built, could prob make it just do a light enum, but update this hwnd in full (after delay)
+        //println!("@{:?} obj-shown: {:?}",self._stamp(),hwnd);
+        self.hwnd_map.read().unwrap() .get(&hwnd) .map (|wde| self.icons_m.mark_cached_icon_mapping_stale(wde));
+        // ^^ if this was in our list, we'll prime it to have icon refreshed on processing
+        if self.process_discovered_hwnd (hwnd, false) {
+            // we'll queue up an enum call only if it passed procesing checks
+            self.trigger_enum_windows_query_pending(true);
+        } // else can ignore it
     }
 
     pub fn proc_win_report__obj_destroyed (&self, hwnd:Hwnd) {
+        //println!("@{:?} obj-destroyed: {:?}",self._stamp(),hwnd);
         // if we werent even showing this object, we're done, else queue up a enum-trigger
         if self.hwnd_map.read().unwrap() .get(&hwnd) .filter (|wde| wde.should_exclude == Some(false)) .is_some() {
-            self.trigger_enum_windows_query_pending();     // this itself has upto 100ms max delay
-        }
+            // its in our maps, so lets process it, but if processing now rejects it, we should remove it from map
+            if !self.process_discovered_hwnd (hwnd, false) { self.hwnd_map.write().unwrap().remove(&hwnd); }
+            // and a 'light' enum call should take care of ordering changes (whether it is now passing or not)
+            self.trigger_enum_windows_query_pending(true);
+        } // else the destoryed hwnd wasnt even in our list .. we can ignore it
     }
 
 
@@ -543,13 +574,16 @@ impl SwitcheState {
 
     /*****   Front-End Requests handling  ******/
 
+    // note that in prior incarnations, these were somewhat unreliable and we needed repeated spaced out attempts ..
+    // .. however, in this impl, so far things seem to work pretty consistently and without need for delays ..
+
     fn handle_req__window_activate (&self, hwnd:Hwnd) {
         // since this is only for non-self windows, we'll want to dimiss ourselves first
         self.handle_req__switche_dismiss();
         spawn ( move || {
             //sleep (Duration::from_millis(30));
-            win_apis::window_activate(hwnd);
-            sleep (Duration::from_millis(50));
+            //win_apis::window_activate(hwnd);
+            //sleep (Duration::from_millis(50));
             win_apis::window_activate(hwnd);
         } );
     }
@@ -557,10 +591,11 @@ impl SwitcheState {
         let self_hwnd = self.excl_m.self_hwnd();
         spawn ( move || {
             //sleep (Duration::from_millis(30));
-            win_apis::window_activate(hwnd);
-            sleep (Duration::from_millis(50));
+            //win_apis::window_activate(hwnd);
+            //sleep (Duration::from_millis(50));
             win_apis::window_activate(hwnd);
             // after 'showing'some window for a bit, we'll bring back ourselves
+            // the preview duration for this could prob be made configurable
             sleep (Duration::from_millis(1000));
             win_apis::window_activate(self_hwnd);
         } );
@@ -569,24 +604,26 @@ impl SwitcheState {
         spawn ( move || {
             //sleep (Duration::from_millis(30));
             win_apis::window_minimize(hwnd);
-            sleep (Duration::from_millis(60));
-            win_apis::window_minimize(hwnd);
+            //sleep (Duration::from_millis(60));
+            //win_apis::window_minimize(hwnd);
         } );
     }
     fn handle_req__window_close (&self, hwnd:Hwnd) {
         spawn ( move || {
             //sleep (Duration::from_millis(30));
-            win_apis::window_activate(hwnd);
-            sleep (Duration::from_millis(50));
-            win_apis::window_activate(hwnd);
+            //win_apis::window_activate(hwnd);
+            //sleep (Duration::from_millis(50));
+            //win_apis::window_activate(hwnd);
+            // ^^ previously we used to briefly activate the window before closing, ..
+            // .. but not sure if that short preview before closing is worthwile, so disabling that for now
+            // .. prob could be made configurable
 
-            sleep (Duration::from_millis(80));
-            win_apis::window_close(hwnd);
-            sleep (Duration::from_millis(120));
+            //sleep (Duration::from_millis(50));
+            //win_apis::window_close(hwnd);
+            //sleep (Duration::from_millis(120));
             win_apis::window_close(hwnd);
         } );
     }
-
 
     fn self_window_activate (&self) {
         self.is_dismissed.clear();
@@ -597,8 +634,8 @@ impl SwitcheState {
         let self_hwnd = self.excl_m.self_hwnd();
         spawn ( move || {
             //sleep (Duration::from_millis(40));
-            win_apis::window_activate (self_hwnd);
-            sleep (Duration::from_millis(40));
+            //win_apis::window_activate (self_hwnd);
+            //sleep (Duration::from_millis(40));
             win_apis::window_activate (self_hwnd);
         } );
     }
@@ -609,12 +646,42 @@ impl SwitcheState {
         //} );
         let self_hwnd = self.excl_m.self_hwnd();
         spawn ( move || {
+            //sleep (Duration::from_millis(30));
+            //win_apis::window_hide (self_hwnd);
             //sleep (Duration::from_millis(40));
-            win_apis::window_hide (self_hwnd);
-            sleep (Duration::from_millis(40));
             win_apis::window_hide (self_hwnd);
         } );
     }
+    fn _self_window_close (&self) {
+        win_apis::window_close(self.excl_m.self_hwnd());
+    }
+
+    fn handle_req__nth_recent_window_activate (&self, n:usize) {
+        let hwnd = self.render_lists_m.render_list.read().unwrap() .get(n) .map (|e| e.hwnd);
+        //println!("rl;{:?}",self.render_lists_m.render_list.read().unwrap());
+        spawn ( move || {
+            //sleep (Duration::from_millis(40));
+            //hwnd .map ( |hwnd| win_apis::window_activate(hwnd) );
+            //sleep (Duration::from_millis(40));
+            hwnd .map ( |hwnd| win_apis::window_activate(hwnd) );
+        } );
+    }
+
+
+    fn handle_req__switche_dismiss (&self) {
+        // note: this is called both after some window-activation, or after escaping switche w/o explicitly activating other window
+        self.self_window_hide();
+    }
+    fn handle_req__switche_escape (&self) {
+        // this is called specifically upon escape from switche, and we'll want to reactivate last active window before we dismiss
+        self.handle_req__switche_dismiss();
+        self.handle_req__nth_recent_window_activate(0);
+        //self.icons_m.emit_all_icon_entries();
+    }
+    fn handle_req__second_recent_window_activate (&self) {
+        self.handle_req__nth_recent_window_activate(1);
+    }
+    fn handle_req__debug_print (&self) { }
 
 
     fn handle_req__data_load(&self) {
@@ -627,46 +694,16 @@ impl SwitcheState {
         self.emit_render_lists_queued(true);
         // then we'll trigger a refresh too
         self.icons_m.mark_all_cached_icon_mappings_stale();
-        self.trigger_enum_windows_query_pending();    // this will also trigger a renderlist push once the call is done
+        self.trigger_enum_windows_query_pending(false);    // this will also trigger a renderlist push once the call is done
     }
     fn handle_req__refresh (&self) {
         self.icons_m.mark_all_cached_icon_mappings_stale();
-        self.trigger_enum_windows_query_pending()
+        self.trigger_enum_windows_query_pending(false)
     }
     # [ allow (dead_code) ]
     fn handle_req__refresh_idle (&self) {
-        if self.is_dismissed.check() { self.trigger_enum_windows_query_pending() }
+        if self.is_dismissed.check() { self.trigger_enum_windows_query_pending(false) }
     }
-
-    fn handle_req__nth_recent_window_activate (&self, n:usize) {
-        let hwnd = self.render_lists_m.render_list.read().unwrap() .get(n) .map (|e| e.hwnd);
-        //println!("rl;{:?}",self.render_lists_m.render_list.read().unwrap());
-        spawn ( move || {
-            //sleep (Duration::from_millis(40));
-            hwnd .map ( |hwnd| win_apis::window_activate(hwnd) );
-            sleep (Duration::from_millis(40));
-            hwnd .map ( |hwnd| win_apis::window_activate(hwnd) );
-        } );
-    }
-
-
-    fn handle_req__switche_dismiss (&self) {
-        // note: this is called both after some window-activation, or after escaping switche w/o explicitly activating other window
-        self.self_window_hide();
-    }
-
-    fn handle_req__switche_escape (&self) {
-        // this is called specifically upon escape from switche, and we'll want to reactivate last active window before we dismiss
-        self.handle_req__switche_dismiss();
-        self.handle_req__nth_recent_window_activate(0);
-        //self.icons_m.emit_all_icon_entries();
-    }
-
-    fn handle_req__second_recent_window_activate (&self) {
-        self.handle_req__nth_recent_window_activate(1);
-    }
-
-    fn handle_req__debug_print (&self) { }
 
 
 
@@ -715,48 +752,65 @@ impl SwitcheState {
 
     /*****  tauri app-window events setup and handling   ******/
 
-    # [ allow (dead_code) ]
     fn proc_app_window_event__focus (&self) {
         if self.is_dismissed.check() { self.handle_event__switche_fgnd() }
     }
-    # [ allow (dead_code) ]
-    fn proc_app_window_event__blur  (&self) {
+    fn proc_app_window_event__focus_lost (&self) {
         // nothing really .. this doesnt even count as dismissed (which triggers list-cur-elem reset etc)
     }
-    # [ allow (dead_code) ]
-    fn proc_app_window_event__show  (&self) {
-        if self.is_dismissed.check() { self.handle_event__switche_fgnd() }
-    }
-    # [ allow (dead_code) ]
-    fn proc_app_window_event__hide  (&self) {
-        self.is_dismissed.set()
+    fn proc_event_app_ready (&self) {
+        // we want to store a cached value of our hwnd for exclusions-mgr (and general use)
+        if self.excl_m.self_hwnd() == 0 {
+            let self_hwnd = self.get_self_hwnd();
+            self_hwnd .map (|h| SwitcheState::instance().excl_m.store_self_hwnd(h));
+            println! ("App starting .. self-hwnd is : {:?}", self_hwnd );
+        }
     }
 
     fn tauri_window_events_handler (&self, ev:&WindowEvent) {
         match ev {
-            WindowEvent::Focused(true) => { self.proc_app_window_event__focus () }
+            WindowEvent::Focused (true)       => { self.proc_app_window_event__focus () }
+            WindowEvent::Focused (false)      => { self.proc_app_window_event__focus_lost() }
+            WindowEvent::Moved (..)           => { } // todo: useful when want to store window pos/size in configs
+            WindowEvent::Resized (..)         => { }
+            WindowEvent::CloseRequested {..}  => { }
             _ => { }
         }
     }
     pub fn tauri_run_events_handler (&self, _ah:&AppHandle<Wry>, event:RunEvent) {
         match event {
-            //RunEvent::ExitRequested { api,   .. } => { api.prevent_exit() }
-            RunEvent::WindowEvent   { event, .. } => { self.tauri_window_events_handler(&event) }
+            RunEvent::Ready                          => { self.proc_event_app_ready() }
+            RunEvent::WindowEvent   { event, .. }    => { self.tauri_window_events_handler(&event) }
+            //RunEvent::ExitRequested { api,   .. }  => { api.prevent_exit() }
             _ => {}
         }
     }
 
 
+    fn proc_tray_event_show (&self) {
+        //self.app_handle.read().unwrap().as_ref() .map (|ah| ah.windows().get("main").map (|w| {w.show(); w.set_focus();} ) );
+        // ^^ this works but causes an extra alt-up to be left straggling when krusty is running .. annoying
+        //self.handle_event__switche_fgnd();
+        //*
+        if self.is_dismissed.check() || self.excl_m.self_hwnd()!= win_apis::get_fgnd_window() {
+            self.self_window_activate();
+            self.handle_event__switche_fgnd();
+        }// */
+    }
     fn proc_tray_event_quit (&self) {
         self.app_handle.read().unwrap().as_ref() .map (|ah| ah.windows().values() .for_each (|w| { w.close().ok(); }));
         //ah.exit(0)
-        // ^^ looks like closing all windows is enough to let it cleanly exit
+        // ^^ looks like closing all windows is enough to let it exit .. (requires ofc for main event handling to not disable exit-request)
+        //self.get_self_hwnd() .iter() .for_each (|hwnd| self.self_window_close())
+
+    }
+    fn proc_tray_event_restart (&self) {
+        //self.app_handle.read().unwrap().as_ref() .map (|ah| ah.restart());
+        self.app_handle.read().unwrap().as_ref() .map (|ah| tauri::api::process::restart(&ah.env()));
+        // ^^ neither of these work .. seems to be ignored ,. maybe some unexposed permissions issue
     }
     fn proc_tray_event_left_click (&self) {
-        if self.is_dismissed.check() || Some(self.excl_m.self_hwnd()) != win_apis::get_fgnd_window() {
-            self.self_window_activate();
-            self.handle_event__switche_fgnd();
-        }
+        self.proc_tray_event_show()
     }
     fn proc_tray_event_right_click (&self) {
         // nothign to do to bring up the menu?
@@ -766,7 +820,9 @@ impl SwitcheState {
     }
     fn proc_tray_event_menu_click (&self, _ah:&AppHandle<Wry>, menu_id:String) {
         match menu_id.as_str() {
-            "quit" => { self.proc_tray_event_quit() }
+            "show"    => { self.proc_tray_event_show() }
+            "quit"    => { self.proc_tray_event_quit() }
+            "restart" => { self.proc_tray_event_restart() }
             _ => { }
         }
     }
@@ -797,7 +853,7 @@ impl SwitcheState {
     pub fn proc_hot_key__scroll_down (&self) {
         // we'll ensure the app window is up, then let the frontend deal w it
         self.emit_backend_notice (Backend_Notice::hotkey_req__scroll_down);
-        if self.is_dismissed.check() || Some(self.excl_m.self_hwnd()) != win_apis::get_fgnd_window() {
+        if self.is_dismissed.check() || self.excl_m.self_hwnd() != win_apis::get_fgnd_window() {
             self.self_window_activate();
             self.handle_event__switche_fgnd();
         }
@@ -805,7 +861,7 @@ impl SwitcheState {
     pub fn proc_hot_key__scroll_up (&self) {
         // again, we'll ensure the app window is up, then let the frontend deal w it
         self.emit_backend_notice (Backend_Notice::hotkey_req__scroll_up);
-        if self.is_dismissed.check() || Some(self.excl_m.self_hwnd()) != win_apis::get_fgnd_window() {
+        if self.is_dismissed.check() || self.excl_m.self_hwnd() != win_apis::get_fgnd_window() {
             self.self_window_activate();
             self.handle_event__switche_fgnd()
         }
@@ -931,7 +987,7 @@ impl SwitcheState {
             render_pending.set();
             let ss = self.clone();
             spawn ( move || {
-                sleep (Duration::from_millis(200));
+                sleep (Duration::from_millis(100));
                 render_pending.clear();
                 ss.emit_render_lists_immdt(do_forced.check());
                 do_forced.clear();
@@ -980,7 +1036,7 @@ impl RenderReadyListsManager {
             let ge = self.grp_sorting_map.read().unwrap() .get(exe_path) .copied(); // split to end read scope
             ge .iter() .for_each (|ge| self.update_entry (exe_path, *ge, perc_idx))
         }
-    } // todo: recheck the not updating while not dismissed .. doesnt seem to be working .. prob the is_dismissed isnt staying synced
+    }
 
     fn grl_cmp_ext (&self, po:&Option<&String> ) -> Option<f32> {
         po.as_ref() .map (|&p| self.grp_sorting_map.read().unwrap().get(p).copied()) .flatten() .map (|gse| gse.mean_perc_idx)
@@ -989,11 +1045,11 @@ impl RenderReadyListsManager {
     fn recalc_render_ready_lists (&self, ss:&SwitcheState) -> (Vec<RenderListEntry>, Vec<Vec<RenderListEntry>>) {
 
         let em = ExclusionsManager::instance();
-        let is_dismissed = ss.is_dismissed.check();     // local copy so we're not repeatedly doing atomic-reads in the filt_rlp loop below
+        let is_dismissed = ss.is_dismissed.check();     // local copy to avoid guarded accesses in a loop
         let hwnds = ss.hwnds_ordered.read().unwrap();
-        let hwnd_map = ss.hwnd_map.read().unwrap();     // borrowed to extend lifetime beyond single statement
+        let hwnd_map = ss.hwnd_map.read().unwrap();
         let filt_wdes = hwnds .iter() .flat_map (|h| hwnd_map.get(h))
-            .filter (|wde| !em.runtime_should_excl_check(wde)) .collect::<Vec<_>>();
+            .filter (|&wde| !em.runtime_should_excl_check(wde)) .collect::<Vec<&_>>();
         let filt_rlp = filt_wdes .iter() .enumerate() .map ( |(i,wde)| {
             // we'll also register these while we're creating the RLEs
             let fp = wde.exe_path_name .as_ref() .map (|p| &p.full_path);
@@ -1017,7 +1073,7 @@ impl RenderReadyListsManager {
             // note ^^ that unwrap is ok because it would fail only for NaN
         } );
         let grpd_render_list = grpd_render_list_builder .into_iter() .map (|(_,rlev)| rlev) .collect::<Vec<Vec<RenderListEntry>>>();
-        println!("render-ready-list recalc -- rl:{:?}", filt_rl.len() );
+        println!("render-ready-list recalc -- rl:{:?}", filt_rl.len() ); println!();
         ( filt_rl, grpd_render_list )
     }
 
@@ -1025,11 +1081,6 @@ impl RenderReadyListsManager {
         let (rl, grl) = self.recalc_render_ready_lists (ss);
         *self.render_list.write().unwrap() = rl;
         *self.grpd_render_list.write().unwrap() = grl;
-    }
-
-    pub fn _quick_reorder_rrl__nth_activation (&self, _n:u32) {
-        // basically since requerying and updating order lists appears slower than our fastest hotkey re=invocations, we'll kick it beforehand
-        // .. huh .. consider if this would be gone if we impld the quick-reorder .. so keep it till then?
     }
 
 

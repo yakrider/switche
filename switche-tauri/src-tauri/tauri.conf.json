@@ -21,9 +21,11 @@
         "all": true
       },
       "window": {
+        "close": true,
         "show": true,
         "hide": true,
         "setFocus": true,
+        "setAlwaysOnTop": true,
         "startDragging": true
       },
       "fs": {
@@ -44,7 +46,7 @@
       "shortDescription": "",
       "longDescription": "",
       "resources": [],
-      "targets": "all"
+      "targets": "app"
     },
     "security": {
       "csp": null
@@ -62,7 +64,8 @@
         "width": 900,
         "height": 1180,
         "decorations": false,
-        "visible": true,
+        "focus": false,
+        "visible": false,
         "skipTaskbar": true
       }
     ],

@@ -20,21 +20,6 @@ object SwitcheFaceConfig {
    def clearedElem (e:dom.Element) = { e.innerHTML = ""; e }
 }
 
-object DomExts {
-   @js.native trait ElementWithClosest extends js.Object {
-      def closest(selector:String): Element = js.native
-   }
-   implicit class ElementExtender (val elem:Element) extends AnyVal {
-      def closest(selector:String):Option[Element] = Option(elem.asInstanceOf[ElementWithClosest].closest(selector))
-   }
-   implicit class EventTargetExtender (val target:EventTarget) extends AnyVal {
-      def closest(selector:String):Option[Element] = { target match {
-         case elem:Element => Option(elem.closest(selector))
-         case _ => None
-   } } }
-   // todo : check if these ^^ are still needed given the newer sjs
-
-}
 
 // some type defs for the various modes and states for various ui sections
 sealed abstract class GrpT (val cls:String)
@@ -61,7 +46,6 @@ object StateTs {
 object SwitcheFacePage {
    import SwitchePageState._
    import Switche._
-   import DomExts._
 
    def getShellPage () = {
       setPageEventHandlers()
@@ -90,7 +74,12 @@ object SwitcheFacePage {
    }
    def procMouse_Click (e:MouseEvent) = {
       triggerHoverLockTimeout()
-      e.target.closest(".elemBox").foreach(_=>handleReq_CurElemActivation())
+      //e.target.closest(".elemBox").foreach(_=>handleReq_CurElemActivation())
+      Some(e.target) .filter(_.isInstanceOf[Element]) .flatMap { e =>
+         Option ( e.asInstanceOf[Element] .closest(".elemBox") )  // can return a null so wrapping into option
+      } .foreach ( _ => handleReq_CurElemActivation())
+      // ^^ we dont actually need the closest, we're just filtering by whether closest can find an elemBox in its ancestors
+      // .. this makes it such that in rows the mouse click is active while elsewhere in empty body it is not!
    }
    def procMouse_AuxClick (e:MouseEvent) = { //println (s"got auxclick, btn:${e.button}")
       if (e.button == 1) {
@@ -107,18 +96,23 @@ object SwitcheFacePage {
    }
    def procMouse_MiddleClick (e:MouseEvent) = { //println("got middle click!")
       triggerHoverLockTimeout(); e.preventDefault(); e.stopPropagation()
-      e.target.closest(".elemBox").foreach(_=>handleReq_CurElemClose())
+      //e.target.closest(".elemBox").foreach(_=>handleReq_CurElemClose())
+      Some(e.target) .filter(_.isInstanceOf[Element]) .flatMap { e =>
+         Option ( e.asInstanceOf[Element] .closest(".elemBox") )  // can return a null so wrapping into option
+      } .foreach ( _ => handleReq_CurElemClose())
+      // ^^ we dont actually need the closest, we're just filtering by whether closest can find an elemBox in its ancestors
+      // .. this makes it such that in rows the mouse click is active while elsewhere in empty body it is not!
    }
    def procMouse_RightClick (e:MouseEvent) = {
       // eventually could consider supporting more native right-click+wheel global combo here
       // but for now, we're using ahk to send separate hotkeys for right-mouse + wheel-down and enc scroll, so can use this for closing windows
-      triggerHoverLockTimeout()
-      //e.target.closest(".elemBox").foreach(_=>handleReq_CurElemClose())
+      triggerHoverLockTimeout(); e.preventDefault(); e.stopPropagation()
+      //handleReq_CurElemClose()
       // ^ disabling, as middle click seems to gets used exclusively, and right click mostly only seems to trigger accidentally
    }
    def procMouse_ContextMenu (e:MouseEvent) = { //println (s"got context menu click, btn:${e.button}")
       // this fires separately from the auxclick 2 report on right-click
-      //e.preventDefault(); e.stopPropagation()
+      triggerHoverLockTimeout(); e.preventDefault(); e.stopPropagation()
    }
    def procMouse_Up (e:MouseEvent) = {
       if (e.button == 1) {procMouse_MiddleClick(e)}
@@ -130,7 +124,10 @@ object SwitcheFacePage {
    } }
    def procMouse_Enter (e:MouseEvent) = {
       // NOTE: this is deprecated in favor of directly setting mouse-enter in the div boxes
-      e.target.closest(".elemBox") .foreach {e => handleMouseEnter (e.asInstanceOf[Div]) }
+      //handleMouseEnter ( e.target.asInstanceOf[Element].closest(".elemBox").asInstanceOf[Div] )
+      Some(e.target) .filter(_.isInstanceOf[Element]) .flatMap { e =>
+         Option ( e .asInstanceOf[Element] .closest(".elemBox") .asInstanceOf[Div] )
+      } .foreach (handleMouseEnter)
    }
    def capturePhaseKeyupHandler (e:KeyboardEvent) = { //printKeyDebugInfo(e,"up")
       // note: escape can cause app hide, and when doing that, we dont want that to leak outside app, hence on keyup
