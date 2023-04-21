@@ -1,18 +1,15 @@
-
+#![allow(non_upper_case_globals)]
 
 use std::ffi::{c_void};
 use std::mem::size_of;
+use std::sync::{Arc, Mutex, RwLock};
+use once_cell::sync::Lazy;
 
 use windows::core::PSTR;
 use windows::Win32::Foundation::{BOOL, CloseHandle, HANDLE, HWND, LPARAM, WPARAM};
 use windows::Win32::Graphics::Dwm::{DwmGetWindowAttribute, DWMWA_CLOAKED};
 use windows::Win32::System::Threading::{OpenProcess, PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION, QueryFullProcessImageNameA};
-use windows::Win32::UI::WindowsAndMessaging::{
-    GetForegroundWindow, GetWindowPlacement, ShowWindow, GetWindowTextW, IsWindowVisible, GetAncestor,
-    GetWindowThreadProcessId, PostMessageA, SetForegroundWindow, ShowWindowAsync, GetWindowLongW, WINDOWPLACEMENT,
-    WM_CLOSE, SW_HIDE, SW_MAXIMIZE, SW_MINIMIZE, SW_RESTORE, SW_SHOW, SW_SHOWMINIMIZED,
-    WS_CHILD, GWL_STYLE, GA_ROOTOWNER, WS_EX_TOOLWINDOW, GWL_EXSTYLE
-};
+use windows::Win32::UI::WindowsAndMessaging::{GetForegroundWindow, GetWindowPlacement, ShowWindow, GetWindowTextW, IsWindowVisible, GetAncestor, GetWindowThreadProcessId, PostMessageA, SetForegroundWindow, ShowWindowAsync, GetWindowLongW, WINDOWPLACEMENT, WM_CLOSE, SW_HIDE, SW_MAXIMIZE, SW_MINIMIZE, SW_RESTORE, SW_SHOW, SW_SHOWMINIMIZED, WS_CHILD, GWL_STYLE, GA_ROOTOWNER, WS_EX_TOOLWINDOW, GWL_EXSTYLE, EnumChildWindows};
 
 
 use crate::*;
@@ -48,34 +45,6 @@ pub fn get_fgnd_window () -> Hwnd { unsafe {
     GetForegroundWindow().0 as Hwnd
 } }
 
-pub fn get_window_text (hwnd:Hwnd) -> String { unsafe {
-    const MAX_LEN : usize = 512;
-    let mut lpstr = [0u16; MAX_LEN];
-    let copied_len = GetWindowTextW (HWND(hwnd), &mut lpstr);
-    String::from_utf16_lossy (&lpstr[..(copied_len as _)])
-    // ^^ todo: see if makes sense to do all string work everywhere with cow instead of cloned strings
-} }
-
-
-
-pub fn get_exe_path_name (hwnd:Hwnd) -> Option<String> { unsafe {
-    const MAX_LEN : usize = 1024;
-    let mut pid : u32 = 0;
-    let _ = GetWindowThreadProcessId (HWND(hwnd), Some(&mut pid));
-    let handle = OpenProcess (PROCESS_QUERY_LIMITED_INFORMATION, BOOL::from(false), pid);
-    let mut lpstr = [0u8; MAX_LEN];
-    let mut lpdwsize = MAX_LEN as u32;
-    if handle.is_err() { return None }
-    let _ = QueryFullProcessImageNameA ( HANDLE (handle.as_ref().unwrap().0), PROCESS_NAME_WIN32, PSTR::from_raw(lpstr.as_mut_ptr()), &mut lpdwsize );
-    handle .iter() .for_each ( |h| { CloseHandle(*h); } );
-    PSTR::from_raw (lpstr.as_mut_ptr()) .to_string() .ok()
-} }
-
-
-
-
-
-
 
 
 pub fn window_activate (hwnd:Hwnd) { unsafe { println!("winapi activate {:?}",hwnd);
@@ -91,6 +60,8 @@ pub fn window_activate (hwnd:Hwnd) { unsafe { println!("winapi activate {:?}",hw
     //keybd_event (0, 0, KEYBD_EVENT_FLAGS::default(), 0);
     SetForegroundWindow (HWND(hwnd));
 } }
+
+
 
 pub fn window_hide (hwnd:Hwnd) { unsafe { println!("winapi hide {:?}",hwnd);
     ShowWindow (HWND(hwnd), SW_HIDE);
@@ -109,6 +80,60 @@ pub fn window_close (hwnd:Hwnd) { unsafe { println!("winapi close {:?}",hwnd);
 } }
 
 
+
+pub fn get_window_text (hwnd:Hwnd) -> String { unsafe {
+    const MAX_LEN : usize = 512;
+    let mut lpstr = [0u16; MAX_LEN];
+    let copied_len = GetWindowTextW (HWND(hwnd), &mut lpstr);
+    String::from_utf16_lossy (&lpstr[..(copied_len as _)])
+    // ^^ todo: see if makes sense to do all string work everywhere with cow instead of cloned strings
+} }
+
+
+
+pub fn get_hwnd_exe_path (hwnd:Hwnd) -> Option<String> { unsafe {
+    let mut pid : u32 = 0;
+    let _ = GetWindowThreadProcessId (HWND(hwnd), Some(&mut pid));
+    get_pid_exe_path (pid)
+} }
+fn get_pid_exe_path (pid:u32) -> Option<String> { unsafe {
+    const MAX_LEN : usize = 1024;
+    let handle = OpenProcess (PROCESS_QUERY_LIMITED_INFORMATION, BOOL::from(false), pid);
+    let mut lpstr = [0u8; MAX_LEN];
+    let mut lpdwsize = MAX_LEN as u32;
+    if handle.is_err() { return None }
+    let _ = QueryFullProcessImageNameA ( HANDLE (handle.as_ref().unwrap().0), PROCESS_NAME_WIN32, PSTR::from_raw(lpstr.as_mut_ptr()), &mut lpdwsize );
+    handle .iter() .for_each ( |h| { CloseHandle(*h); } );
+    PSTR::from_raw (lpstr.as_mut_ptr()) .to_string() .ok()
+} }
+
+pub fn get_uwp_hwnd_exe_path (hwnd:Hwnd) -> Option<String> { unsafe {
+    let mut frame_host_pid : u32 = 0;
+    let _ = GetWindowThreadProcessId (HWND(hwnd), Some(&mut frame_host_pid));  //println!("fh-pid--{:?}",(frame_host_pid));
+    let uwp_pid = get_child_windows (hwnd) .iter() .map (|cwh| {
+        let mut pid = 0u32;
+        let _ = GetWindowThreadProcessId (HWND(*cwh), Some(&mut pid));  //println!("uwp-pid{:?}",(pid));
+        pid
+    } ) .filter (|pid| *pid != frame_host_pid) .collect::<Vec<u32>>();
+    uwp_pid .first() .and_then (|&pid| get_pid_exe_path(pid))
+} }
+
+// we'll use a static rwlocked vec to store child-windows from callbacks, and a mutex to ensure only one child-windows call is active
+static child_windows_lock : Lazy < Arc <Mutex <()>>> = Lazy::new (|| Arc::new ( Mutex::new(())));
+static child_windows : Lazy <Arc <RwLock <Vec <Hwnd>>>> = Lazy::new (|| Arc::new ( RwLock::new (vec!()) ) );
+
+pub fn get_child_windows (hwnd:Hwnd) -> Vec<isize> { unsafe {
+    let lock = child_windows_lock.lock().unwrap();
+    EnumChildWindows ( HWND(hwnd), Some(enum_child_windows_cb), LPARAM::default() );
+    let cws = child_windows.read().unwrap().clone();
+    *child_windows.write().unwrap() = vec!();
+    drop(lock);
+    cws
+} }
+pub unsafe extern "system" fn enum_child_windows_cb (hwnd:HWND, _:LPARAM) -> BOOL {
+    child_windows.write().unwrap().push(hwnd.0);
+    BOOL (true as i32)
+}
 
 
 

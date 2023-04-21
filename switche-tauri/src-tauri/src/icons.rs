@@ -11,8 +11,6 @@ use std::thread::{sleep, spawn};
 use std::time::{Duration};
 use std::mem;
 
-// todo recheck built code is not using no-deadlocks
-
 use once_cell::sync::OnceCell;
 use rand::Rng;
 use windows::Win32::Foundation::HWND;
@@ -24,7 +22,7 @@ use crate::*;
 
 
 #[derive (Debug, Default, Eq, PartialEq, Hash, Clone)]
-struct HwndExePathPair { hwnd:Hwnd, path:String }
+struct HwndExePathPair { hwnd:Hwnd, path:String, is_uwp:bool }
 // todo ^^ prob could make this hold just the hash of path all throughout this module
 
 #[derive (Debug, Default, Eq, PartialEq, Hash, Copy, Clone)]
@@ -86,9 +84,9 @@ impl IconsManager {
     }
 
     fn make_hwnd_path_pair (wde:&WinDatEntry) -> Option<HwndExePathPair> {
-        wde.icon_override_loc.to_owned() .flatten() .or_else ( || {
-            wde.exe_path_name.as_ref() .map (|p| p.full_path.clone())
-        } ) .map (|p| HwndExePathPair { hwnd:wde.hwnd, path:p } )
+        wde.exe_path_name.as_ref() .map (|p| p.full_path.clone()) .map (|p| {
+            HwndExePathPair { hwnd:wde.hwnd, path:p, is_uwp: wde.is_uwp_app == Some(true) }
+        } )
     }
 
     pub fn get_cached_icon_idx (&self, wde:&WinDatEntry) -> Option<usize> {
@@ -127,13 +125,19 @@ impl IconsManager {
 
     fn queue_hwnd_icon_query (&self, hpp:&HwndExePathPair) {
         //println!("hwnd icon query: {:?} : {:?}", &hpp.hwnd, &hpp.path.clone().split(r"\").last());
+
+        // UWP apps dont seem to hang at hwnd icon query winapi calls, but we shouldnt get here anyway as they have separate handling now
+        if hpp.is_uwp { return }
+
         let icmgr = self.clone();
         let hppc = hpp.clone();
         spawn ( move || unsafe {
-            let ico_str = icon_extractor::extract_hwnd_icon (HWND(hppc.hwnd));
+            let ico_str = icon_extractor::extract_hwnd_icon (HWND(hppc.hwnd)) .or_else (|| icon_extractor::get_default_icon());
             ico_str .map (|s| icmgr.icon_string_callback (&hppc, s, true));
         } );
-        // todo : prob should find a way of imposing timeout w/o spawning hanging threads willy nilly (or at least reap these threads)?
+
+        // we'll also set up a watch thread as some of the extract-icon calls dont seem to ever return from winapi calls
+        // Note: although it looks like we're gonna just let piles of threads hang, w/ the UWP extraction impld, that shouldn't happen anymore
         let icmgr = self.clone();
         let hppc = hpp.clone();
         spawn ( move || {
@@ -145,24 +149,28 @@ impl IconsManager {
     fn queue_exe_icon_query (&self, hpp:&HwndExePathPair) {
         let icmgr = self.clone();
         let hppc = hpp.clone();
-        spawn ( move || { unsafe {
+        spawn ( move || unsafe {
             let delay = rand::thread_rng().gen_range(10..80);
             sleep (Duration::from_millis(delay));   // randomized so multiple fallbacks on same exe dont race together
             let was_past_queried = icmgr.queried_exe_cache.read().unwrap().contains(&hppc.path);
             if !was_past_queried {
                 icmgr.queried_exe_cache .write().unwrap() .insert (hppc.path.clone());
-                let ico_str = icon_extractor::extract_exe_path_icon (hppc.path.clone());
+                let ico_str = if hppc.is_uwp {
+                    icon_extractor::extract_uwp_app_icon (&hppc.path)
+                } else {
+                    icon_extractor::extract_exe_path_icon (&hppc.path)
+                }  .or_else (|| icon_extractor::get_default_icon());
                 ico_str .map (|s| icmgr.icon_string_callback (&hppc, s, false));
             } else {
-                // so we prob came here after failing hwnd query, but the exe was already queried, and hopefully has a cached icon ..
-                // .. so lets get the icm for the hwnd updated w that (.. thats where the flag to mark stale live)
+                // if multiple hwnds for same app get queued, because of random delay and cache checking the second one might end up here
+                // so hopefully we have a cached icon and we can populate its icm with it
                 let cache_idx_opt = icmgr.icons_exe_map .read().unwrap() .get(&hppc.path) .copied();
                 if let Some(cache_idx) = cache_idx_opt {
                     icmgr.handle_icon_cache_mapping_update (cache_idx, false, false, &hppc);
-                } else { println!("WARNING: exe icon lookup was queried but nothing in cache!")
+                } else { println!("WARNING: exe icon lookup says prior-queried but nothing in cache!")
                     // means we tried the exe query and failed .. nothing to do as thats prob not gonna change
                 }
-        } } } );
+        } } );
     }
 
     fn icon_string_callback (&self, hpp:&HwndExePathPair, icon_str:String, is_from_hwnd:bool) {
@@ -245,7 +253,7 @@ impl IconsManager {
             let do_refresh = Some(true) != self.icons_hpp_map.read().unwrap().get(&hpp).map(|icm| !icm.is_stale && icm.cache_idx > 0);
             if !was_past_queried || do_refresh {
                 self.queried_hpp_cache .write().unwrap() .insert(wde.hwnd, hpp.clone());
-                if wde.icon_override_loc.is_none() || wde.icon_override_loc == Some(None) {
+                if wde.is_uwp_app != Some(true) {
                     self.queue_hwnd_icon_query (&hpp);
                 } else {
                     self.queue_exe_icon_query (&hpp)
@@ -261,24 +269,6 @@ impl IconsManager {
 
 
 
-pub struct IconPathOverridesManager ;
-
-impl IconPathOverridesManager {
-
-    pub fn instance() -> IconPathOverridesManager {
-        // todo update this later
-        IconPathOverridesManager
-    }
-
-    pub fn get_icon_override_path (_wde:&WinDatEntry) -> Option<String> {
-        // todo .. or remove if we dont need this anymore
-        None
-    }
-
-}
-
-
-
 
 
 
@@ -286,22 +276,22 @@ pub mod icon_extractor {
 
     use std::io::{Cursor};
     use std::mem;
+    use std::path::{Path, PathBuf};
 
     use image::{ImageOutputFormat, RgbaImage};
     use base64::Engine;
     use base64::engine::general_purpose::STANDARD;
-    //use base64::write::{EncoderStringWriter, EncoderWriter};
 
     use windows::Win32::Foundation::{HINSTANCE, HWND, LPARAM, WPARAM};
-    use windows::Win32::UI::WindowsAndMessaging::{
-        DestroyIcon, GCL_HICON, GCL_HICONSM, GetClassLongPtrA, GetIconInfo, HICON,
-        ICON_BIG, ICON_SMALL, ICON_SMALL2, ICONINFO, SendMessageA, WM_GETICON
-    };
     use windows::Win32::Graphics::Gdi::{BITMAP, DeleteObject, GetBitmapBits, GetObjectW, HGDIOBJ};
     use windows::Win32::UI::Shell::{ExtractAssociatedIconA};
+    use windows::Win32::UI::WindowsAndMessaging::{
+        DestroyIcon, GCL_HICON, GetClassLongPtrW, GetIconInfo, HICON, ICON_BIG, ICON_SMALL, ICON_SMALL2,
+        ICONINFO, IDI_APPLICATION, LoadIconW, SendMessageA, WM_GETICON
+    };
 
 
-    pub unsafe fn extract_exe_path_icon (exe_path:String) -> Option<String> {
+    pub unsafe fn extract_exe_path_icon (exe_path:&String) -> Option<String> {
         //println!("exe-ico-ext-- {:?}", exe_path.split(r"\").last());
         let mut path_arr = [0u8; 128];
         path_arr[.. exe_path.len()] .copy_from_slice (exe_path.as_bytes());
@@ -315,11 +305,75 @@ pub mod icon_extractor {
         if hicon.is_invalid() { hicon = HICON ( SendMessageA ( hwnd, WM_GETICON, WPARAM (ICON_SMALL2 as usize), LPARAM(0) ) .0 ) }
         if hicon.is_invalid() { hicon = HICON ( SendMessageA ( hwnd, WM_GETICON, WPARAM (ICON_SMALL  as usize), LPARAM(0) ) .0 ) }
         if hicon.is_invalid() { hicon = HICON ( SendMessageA ( hwnd, WM_GETICON, WPARAM (ICON_BIG    as usize), LPARAM(0) ) .0 ) }
-        if hicon.is_invalid() { hicon = HICON ( GetClassLongPtrA ( hwnd, GCL_HICONSM ) as isize ) }
-        if hicon.is_invalid() { hicon = HICON ( GetClassLongPtrA ( hwnd, GCL_HICON   ) as isize ) }
+        if hicon.is_invalid() { hicon = HICON ( GetClassLongPtrW ( hwnd, GCL_HICON ) as isize ) }
+        //if hicon.is_invalid() { hicon = HICON ( GetClassLongPtrW ( hwnd, GCL_HICONSM ) as isize ) }
+
+        hicon_to_base64_str(hicon)
+    }
+    pub unsafe fn get_default_icon () -> Option<String> {
+        // IDI_APPLICATION pulls the default system 'application' icon as fallback
+        let hicon = LoadIconW (HINSTANCE(0), IDI_APPLICATION) .unwrap_or_default();
         hicon_to_base64_str(hicon)
     }
 
+    pub unsafe fn extract_uwp_app_icon (exe_path:&String) -> Option<String> {
+        let ico = get_uwp_app_ico_path(exe_path) .and_then (|ip| png_file_to_base64_str(ip));
+        //println! ("uwp-ico-str: {:?}", ico);
+        ico
+    }
+
+    pub unsafe fn get_uwp_app_ico_path (exe_path:&String) -> Option<PathBuf> {
+        if let Some(ip) = get_uwp_manifest_ico_path (exe_path) {
+        if let Some(ico_stem) = ip.file_stem().map(|s| s.to_str()).flatten() {
+            let ico_path = ip.parent() .map ( |ipp| {
+                std::fs::read_dir(ipp) .ok() .map ( |res| {
+                    res .flat_map (|e| e.ok()) .map (|e| e.path()) .filter (|p| {
+                        p.file_name() .filter (|f| f.to_string_lossy().contains(ico_stem)) .is_some()
+                    }) .next()
+                }) .flatten()
+            }) .flatten();
+            //println! ("uwp-app-ico-path: {:?}", ico_path);
+            return ico_path;
+        } }
+        None
+    }
+
+    pub unsafe fn get_uwp_manifest_ico_path (exe_path:&String) -> Option<PathBuf> {
+        let exe_path = Path::new (exe_path);
+        let manifest = exe_path.parent().map(|p| p.join("AppxManifest.xml"));
+        let mut buf = Vec::new();
+        let mut ico_path : Option<String> = None;
+        let mut is_logo_tag : bool = false;
+        use quick_xml::events::Event::*;
+        manifest .filter (|mf| mf.exists()) .iter() .for_each (|mf| {
+            quick_xml::reader::Reader::from_file(mf) .ok() .iter_mut() .for_each ( |reader| {
+                loop {
+                    match reader.read_event_into(&mut buf) {
+                        Err (e) => panic!("Error at position {}: {:?}", reader.buffer_position(), e),
+                        Ok (Eof) => break,
+                        Ok (Start (ref e)) => {
+                            if reader.decoder() .decode (e.name().as_ref()) .ok() .filter (|s| s=="Logo").is_some() {
+                                is_logo_tag = true
+                        } },
+                        Ok (Text (ref txt)) => {
+                            if is_logo_tag {
+                                ico_path = reader.decoder() .decode(txt) .map (|c| c.to_string()) .ok();
+                                break;
+                        } },
+                        _ => (),
+            } } } )
+        } );
+        ico_path .map (|p| exe_path.parent().map(|ep| ep.clone().join(p))) .flatten()
+    }
+
+
+    unsafe fn png_file_to_base64_str (ico:PathBuf) -> Option<String> {
+        image::open (ico.as_path()) .map (|img| {
+            let mut buf = Cursor::new(vec![0u8]);
+            img .write_to (&mut buf, ImageOutputFormat::Png) .expect("png write error");
+            Some ( format! ("data:image/png;base64,{}",  STANDARD.encode(&buf.into_inner()) ) )
+        } ) .ok() .flatten()
+    }
 
 
     unsafe fn hicon_to_base64_str (hicon: HICON) -> Option<String> {
@@ -357,17 +411,6 @@ pub mod icon_extractor {
         let img = RgbaImage::from_vec (bmp.bmWidth as u32, bmp.bmHeight as u32, buf).unwrap();
 
         // and finally, we can convert that to base64 string and return that
-        //
-        //let mut enc = EncoderStringWriter::new (&STANDARD);  // base64 encoder to directly write png encode img data into
-        ////enc.write_all(&*buf).unwrap();
-        //enc.into_inner()
-        //
-        //let mut enc = EncoderWriter::new (&mut buf, &STANDARD);
-        //img .write_to (&mut enc, ImageOutputFormat::Png) .expect("hicon to png error");
-        //String::from_utf8_lossy(enc.into_inner()).into()
-        //
-        // ^^ base64 encoders no longer seem to be writable directly from image (since image now requires a seekable Cursor)
-        // ..  so we'll have to allocate and write the final output into yet another buffer .. oh well
         let mut buf = Cursor::new(vec![0u8]);
         img .write_to (&mut buf, ImageOutputFormat::Png) .expect("hicon to png error");
         Some ( format! ("data:image/png;base64,{}",  STANDARD.encode(&buf.into_inner()) ) )
@@ -376,4 +419,15 @@ pub mod icon_extractor {
 
 }
 
+#[cfg(test)]
+mod test {
+    #[test]
+    fn calculator_manifest_test () { unsafe {
+        let calc_loc = r"C:\Program Files\WindowsApps\Microsoft.WindowsCalculator_11.2210.0.0_x64__8wekyb3d8bbwe\CalculatorApp.exe".to_string();
+        assert_ne! (crate::icon_extractor::get_uwp_manifest_ico_path (&calc_loc), None);
+        assert_ne! (crate::icon_extractor::get_uwp_app_ico_path (&calc_loc), None);
+        assert_ne! (crate::icon_extractor::extract_uwp_app_icon (&calc_loc), None);
 
+    } }
+
+}

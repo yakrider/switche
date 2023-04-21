@@ -46,9 +46,9 @@ pub struct ExePathName {
 pub struct WinDatEntry {
     pub hwnd              : Hwnd,
     pub win_text          : Option<String>,
+    pub is_uwp_app        : Option<bool>,
     pub exe_path_name     : Option<ExePathName>,
     pub should_exclude    : Option<bool>,
-    pub icon_override_loc : Option<Option<String>>,   // the actual value is an option, the wrapping option indicates whether initialized
     //pub icon_cache_idx    : usize,        // <- we'd rather populate this at render-list emission time
 }
 
@@ -167,7 +167,6 @@ pub struct _SwitcheState {
 
     pub render_lists_m : RenderReadyListsManager,
     pub icons_m        : IconsManager,
-    pub excl_m         : ExclusionsManager,
 
     app_handle : Arc <RwLock < Option <AppHandle<Wry>>>>,
 
@@ -194,6 +193,7 @@ struct GroupSortingEntry {
 # [ derive ( ) ]
 pub struct _RenderReadyListsManager {
     //switche_state_r  : &'a SwitcheState,
+    self_hwnd        : AtomicIsize,
     grp_sorting_map  : Arc <RwLock <HashMap <String, GroupSortingEntry>>>,
     render_list      : Arc <RwLock <Vec <RenderListEntry>>>,
     grpd_render_list : Arc <RwLock <Vec <Vec <RenderListEntry>>>>,
@@ -207,7 +207,6 @@ impl Deref for RenderReadyListsManager {
     type Target = _RenderReadyListsManager;
     fn deref (&self) -> &Self::Target { &self.0 }
 }
-
 
 
 
@@ -230,11 +229,10 @@ impl SwitcheState {
 
                 render_lists_m : RenderReadyListsManager::instance(),
                 icons_m        : IconsManager::instance(),
-                excl_m         : ExclusionsManager::instance(),
 
                 app_handle     : Arc::new ( RwLock::new (None)),
             } ) );
-            // lets do some init for the newly created singleton
+            // lets do some init for the new instance
             ss.setup_win_event_hooks();
             ss
         } ) .clone()
@@ -315,7 +313,7 @@ impl SwitcheState {
         if  check_window_has_owner (hwnd)  { return false }
         if  check_if_tool_window   (hwnd)  { return false }
 
-        if self.excl_m.check_self_hwnd (hwnd) { return false }
+        if self.render_lists_m.check_self_hwnd (hwnd) { return false }
 
         let mut hmap = self.hwnd_map.write().unwrap();
 
@@ -336,20 +334,20 @@ impl SwitcheState {
         // but only query exe-path if we havent populated it before
         if wde.exe_path_name.is_none() {
             should_emit = true;
-            wde.exe_path_name = Self::get_parsed_exe_path_name(wde.hwnd);
+            wde.exe_path_name = get_hwnd_exe_path(wde.hwnd) .and_then (|s| Self::parse_exe_path(s));
+            if wde.exe_path_name .iter() .find (|ep| ep.name.as_str() == "ApplicationFrameHost.exe") .is_some() {
+                wde.is_uwp_app = Some(true);
+                wde.exe_path_name = get_uwp_hwnd_exe_path(wde.hwnd) .and_then (|s| Self::parse_exe_path(s));
+                //println!("{:?}",(wde.exe_path_name));
+            } else {
+                wde.is_uwp_app = Some(false);
+            }
         }
 
-        let excl_flag = Some ( self.excl_m.calc_excl_flag (&wde) );
+        let excl_flag = Some ( self.render_lists_m.calc_excl_flag (&wde) );
         if wde.should_exclude != excl_flag { should_emit = true }
         wde.should_exclude = excl_flag;
 
-        if wde.should_exclude == Some(false) {
-            if wde.icon_override_loc.is_none() {
-                let ov_loc = Some ( IconPathOverridesManager::get_icon_override_path(&wde) );
-                if wde.icon_override_loc != ov_loc { should_emit = true }
-                wde.icon_override_loc = ov_loc;
-            }
-        }
         drop(hmap); // clearing out write scope before lenghty calls
 
         if let Some(wde) = self.hwnd_map.read().unwrap().get(&hwnd) {
@@ -362,12 +360,9 @@ impl SwitcheState {
     }
 
 
-    fn get_parsed_exe_path_name(hwnd:Hwnd) -> Option<ExePathName> {
-        let exe_path = win_apis::get_exe_path_name(hwnd);
-        exe_path .map ( |fp| {
-            let name = fp .split(r"\") .last() .unwrap_or_default() .to_string();
-            ExePathName { full_path: fp, name }
-        } )
+    fn parse_exe_path (exe_path:String) -> Option<ExePathName> {
+        let name = exe_path .split(r"\") .last() .unwrap_or_default() .to_string();
+        if name.is_empty() { None } else { Some (ExePathName { full_path: exe_path, name }) }
     }
 
 
@@ -396,7 +391,7 @@ impl SwitcheState {
 
     /*****  some support functions  ******/
 
-    pub fn get_self_hwnd(&self) -> Option<Hwnd> {
+    pub fn extract_self_hwnd (&self) -> Option<Hwnd> {
         self.app_handle.read().unwrap().as_ref() .iter() .map (|ah| {
             ah.windows().values() .next() .map (|w| w.hwnd().ok()) .flatten()
         } ) .flatten() .next() .map (|h| h.0)
@@ -548,12 +543,37 @@ impl SwitcheState {
 
     pub fn proc_win_report__obj_shown (&self, hwnd:Hwnd) {
         //println!("@{:?} obj-shown: {:?}",self._stamp(),hwnd);
+
+        // first off, if this was in our list, we'll prime it to have icon refreshed on processing
         self.hwnd_map.read().unwrap() .get(&hwnd) .map (|wde| self.icons_m.mark_cached_icon_mapping_stale(wde));
-        // ^^ if this was in our list, we'll prime it to have icon refreshed on processing
-        if self.process_discovered_hwnd (hwnd, false) {
+
+        // Note: now it turns out that even after uwp hwnds are 'shown', apparently it takes a bit for their app pids to spin up
+        // .. so we'll have to queue things up, but in some cases, it took 2+ secs for apps to be ready w the pid/title etc
+        // .. and thats too long to wait regularly, so we'll set up staged rechecks that unfold if needed
+        fn should_recheck_uwp (hwnd:Hwnd, ss:&SwitcheState) -> bool {
+            ss.hwnd_map.read().unwrap().get(&hwnd) .filter (|wde|
+                wde.is_uwp_app == Some(true) && wde.exe_path_name.is_none()
+            ) .is_some()
+        }
+        fn attempt_hwnd_processing (hwnd:Hwnd, ss:&SwitcheState) -> bool {
+            let hwnd_proc_check = ss.process_discovered_hwnd(hwnd, false);
             // we'll queue up an enum call only if it passed procesing checks
-            self.trigger_enum_windows_query_pending(true);
-        } // else can ignore it
+            if hwnd_proc_check { ss.trigger_enum_windows_query_pending(true) }
+            hwnd_proc_check
+        }
+        // now we can do the initial processing attempt and set up the rest
+        if !attempt_hwnd_processing (hwnd, &self) && should_recheck_uwp (hwnd, &self) {
+            let ss = self.clone();
+            spawn ( move || {
+                let mut n_trials = 5;
+                while should_recheck_uwp (hwnd, &ss) && n_trials > 0 {
+                    n_trials -= 1;
+                    sleep(Duration::from_millis(500));
+                    attempt_hwnd_processing (hwnd, &ss);
+                }
+            } );
+        }
+
     }
 
     pub fn proc_win_report__obj_destroyed (&self, hwnd:Hwnd) {
@@ -581,18 +601,12 @@ impl SwitcheState {
         // since this is only for non-self windows, we'll want to dimiss ourselves first
         self.handle_req__switche_dismiss();
         spawn ( move || {
-            //sleep (Duration::from_millis(30));
-            //win_apis::window_activate(hwnd);
-            //sleep (Duration::from_millis(50));
             win_apis::window_activate(hwnd);
         } );
     }
     fn handle_req__window_peek (&self, hwnd:Hwnd) {
-        let self_hwnd = self.excl_m.self_hwnd();
+        let self_hwnd = self.render_lists_m.self_hwnd();
         spawn ( move || {
-            //sleep (Duration::from_millis(30));
-            //win_apis::window_activate(hwnd);
-            //sleep (Duration::from_millis(50));
             win_apis::window_activate(hwnd);
             // after 'showing'some window for a bit, we'll bring back ourselves
             // the preview duration for this could prob be made configurable
@@ -602,25 +616,11 @@ impl SwitcheState {
     }
     fn handle_req__window_minimize (&self, hwnd:Hwnd) {
         spawn ( move || {
-            //sleep (Duration::from_millis(30));
             win_apis::window_minimize(hwnd);
-            //sleep (Duration::from_millis(60));
-            //win_apis::window_minimize(hwnd);
         } );
     }
     fn handle_req__window_close (&self, hwnd:Hwnd) {
         spawn ( move || {
-            //sleep (Duration::from_millis(30));
-            //win_apis::window_activate(hwnd);
-            //sleep (Duration::from_millis(50));
-            //win_apis::window_activate(hwnd);
-            // ^^ previously we used to briefly activate the window before closing, ..
-            // .. but not sure if that short preview before closing is worthwile, so disabling that for now
-            // .. prob could be made configurable
-
-            //sleep (Duration::from_millis(50));
-            //win_apis::window_close(hwnd);
-            //sleep (Duration::from_millis(120));
             win_apis::window_close(hwnd);
         } );
     }
@@ -631,11 +631,8 @@ impl SwitcheState {
         //    ah.get_window("main") .iter() .for_each (|wh| { wh.show(); wh.set_focus(); } )
         //});
         // ^^ doing this via tauri seems less reliable, and it seems to inject some alt-key events .. so we'll do it outselves!
-        let self_hwnd = self.excl_m.self_hwnd();
+        let self_hwnd = self.render_lists_m.self_hwnd();
         spawn ( move || {
-            //sleep (Duration::from_millis(40));
-            //win_apis::window_activate (self_hwnd);
-            //sleep (Duration::from_millis(40));
             win_apis::window_activate (self_hwnd);
         } );
     }
@@ -644,25 +641,18 @@ impl SwitcheState {
         //self.app_handle .read().unwrap() .iter().for_each (|ah| {
         //    ah.get_window("main") .iter() .for_each (|wh| { wh.hide(); } )
         //} );
-        let self_hwnd = self.excl_m.self_hwnd();
+        let self_hwnd = self.render_lists_m.self_hwnd();
         spawn ( move || {
-            //sleep (Duration::from_millis(30));
-            //win_apis::window_hide (self_hwnd);
-            //sleep (Duration::from_millis(40));
             win_apis::window_hide (self_hwnd);
         } );
     }
     fn _self_window_close (&self) {
-        win_apis::window_close(self.excl_m.self_hwnd());
+        win_apis::window_close(self.render_lists_m.self_hwnd());
     }
 
     fn handle_req__nth_recent_window_activate (&self, n:usize) {
         let hwnd = self.render_lists_m.render_list.read().unwrap() .get(n) .map (|e| e.hwnd);
-        //println!("rl;{:?}",self.render_lists_m.render_list.read().unwrap());
         spawn ( move || {
-            //sleep (Duration::from_millis(40));
-            //hwnd .map ( |hwnd| win_apis::window_activate(hwnd) );
-            //sleep (Duration::from_millis(40));
             hwnd .map ( |hwnd| win_apis::window_activate(hwnd) );
         } );
     }
@@ -676,7 +666,8 @@ impl SwitcheState {
         // this is called specifically upon escape from switche, and we'll want to reactivate last active window before we dismiss
         self.handle_req__switche_dismiss();
         self.handle_req__nth_recent_window_activate(0);
-        //self.icons_m.emit_all_icon_entries();
+        // this is also a good time to do a full query to keep things in sync if any weird events etc have falled through the cracks
+        self.trigger_enum_windows_query_pending(false);
     }
     fn handle_req__second_recent_window_activate (&self) {
         self.handle_req__nth_recent_window_activate(1);
@@ -760,10 +751,9 @@ impl SwitcheState {
     }
     fn proc_event_app_ready (&self) {
         // we want to store a cached value of our hwnd for exclusions-mgr (and general use)
-        if self.excl_m.self_hwnd() == 0 {
-            let self_hwnd = self.get_self_hwnd();
-            self_hwnd .map (|h| SwitcheState::instance().excl_m.store_self_hwnd(h));
-            println! ("App starting .. self-hwnd is : {:?}", self_hwnd );
+        if self.render_lists_m.self_hwnd() == 0 {
+            self.extract_self_hwnd() .map (|h| self.render_lists_m.store_self_hwnd(h));
+            println! ("App starting .. self-hwnd is : {:?}", self.render_lists_m.self_hwnd() );
         }
     }
 
@@ -790,12 +780,10 @@ impl SwitcheState {
     fn proc_tray_event_show (&self) {
         //self.app_handle.read().unwrap().as_ref() .map (|ah| ah.windows().get("main").map (|w| {w.show(); w.set_focus();} ) );
         // ^^ this works but causes an extra alt-up to be left straggling when krusty is running .. annoying
-        //self.handle_event__switche_fgnd();
-        //*
-        if self.is_dismissed.check() || self.excl_m.self_hwnd()!= win_apis::get_fgnd_window() {
+        if self.is_dismissed.check() || self.render_lists_m.self_hwnd()!= win_apis::get_fgnd_window() {
             self.self_window_activate();
             self.handle_event__switche_fgnd();
-        }// */
+        }
     }
     fn proc_tray_event_quit (&self) {
         self.app_handle.read().unwrap().as_ref() .map (|ah| ah.windows().values() .for_each (|w| { w.close().ok(); }));
@@ -853,7 +841,7 @@ impl SwitcheState {
     pub fn proc_hot_key__scroll_down (&self) {
         // we'll ensure the app window is up, then let the frontend deal w it
         self.emit_backend_notice (Backend_Notice::hotkey_req__scroll_down);
-        if self.is_dismissed.check() || self.excl_m.self_hwnd() != win_apis::get_fgnd_window() {
+        if self.is_dismissed.check() || self.render_lists_m.self_hwnd() != win_apis::get_fgnd_window() {
             self.self_window_activate();
             self.handle_event__switche_fgnd();
         }
@@ -861,7 +849,7 @@ impl SwitcheState {
     pub fn proc_hot_key__scroll_up (&self) {
         // again, we'll ensure the app window is up, then let the frontend deal w it
         self.emit_backend_notice (Backend_Notice::hotkey_req__scroll_up);
-        if self.is_dismissed.check() || self.excl_m.self_hwnd() != win_apis::get_fgnd_window() {
+        if self.is_dismissed.check() || self.render_lists_m.self_hwnd() != win_apis::get_fgnd_window() {
             self.self_window_activate();
             self.handle_event__switche_fgnd()
         }
@@ -1014,12 +1002,43 @@ impl RenderReadyListsManager {
         static INSTANCE: OnceCell <RenderReadyListsManager> = OnceCell::new();
         INSTANCE .get_or_init ( ||
             RenderReadyListsManager ( Arc::new ( _RenderReadyListsManager {
-                grp_sorting_map        : Arc::new(RwLock::new(Default::default())),
-                render_list            : Arc::new(RwLock::new(Default::default())),
-                grpd_render_list       : Arc::new(RwLock::new(Default::default())),
+                self_hwnd         : AtomicIsize::default(),
+                grp_sorting_map   : Arc::new(RwLock::new(Default::default())),
+                render_list       : Arc::new(RwLock::new(Default::default())),
+                grpd_render_list  : Arc::new(RwLock::new(Default::default())),
             } ) )
         ) .clone()
     }
+
+    // --- rendering exclusions ---
+
+    pub fn store_self_hwnd (&self, hwnd:Hwnd) { self.self_hwnd.store (hwnd, Ordering::Relaxed) }
+    pub fn self_hwnd (&self) -> Hwnd { self.self_hwnd.load(Ordering::Relaxed) }
+    pub fn check_self_hwnd (&self, hwnd:Hwnd) -> bool { hwnd == self.self_hwnd() }
+
+    pub fn calc_excl_flag (&self, wde:&WinDatEntry) -> bool {
+        //wde.is_vis == Some(false) ||  wde.is_uncloaked == Some(false) ||    // already covered during enum-filtering
+        self.check_self_hwnd(wde.hwnd) || wde.win_text.is_none() ||
+            wde.exe_path_name.as_ref() .filter (|p| !p.full_path.is_empty()) .is_none() ||
+            wde.exe_path_name.as_ref() .filter (|p| !self.filter_exe_match(&p.name)) .is_none()
+    }
+    pub fn runtime_should_excl_check (&self, wde:&WinDatEntry) -> bool {
+        wde.should_exclude .unwrap_or_else ( move || self.calc_excl_flag(wde) )
+    }
+
+    fn filter_exe_match (&self, estr:&String) -> bool {
+        // we'll set up some default exclusions here, but if we need more, prob should setup loading via configs etc
+        static EXE_MATCH_SET : Lazy <RwLock <HashSet <String>>> = Lazy::new ( || {
+            let mut m = HashSet::new();
+            m.insert ("WDADesktopService.exe".to_string());
+            RwLock::new(m)
+        } );
+        EXE_MATCH_SET.read().unwrap().contains(estr)
+    }
+
+
+
+    // --- groups ordering registry ----
 
     fn update_entry (&self, exe_path:&String, ge:GroupSortingEntry, perc_idx:f32) {
         let mean_perc_idx = (ge.mean_perc_idx * ge.seen_count as f32 + perc_idx) / (ge.seen_count + 1) as f32;
@@ -1038,18 +1057,20 @@ impl RenderReadyListsManager {
         }
     }
 
+
+
+    // --- render lists calculations ---
+
     fn grl_cmp_ext (&self, po:&Option<&String> ) -> Option<f32> {
         po.as_ref() .map (|&p| self.grp_sorting_map.read().unwrap().get(p).copied()) .flatten() .map (|gse| gse.mean_perc_idx)
     }
 
     fn recalc_render_ready_lists (&self, ss:&SwitcheState) -> (Vec<RenderListEntry>, Vec<Vec<RenderListEntry>>) {
-
-        let em = ExclusionsManager::instance();
         let is_dismissed = ss.is_dismissed.check();     // local copy to avoid guarded accesses in a loop
         let hwnds = ss.hwnds_ordered.read().unwrap();
         let hwnd_map = ss.hwnd_map.read().unwrap();
         let filt_wdes = hwnds .iter() .flat_map (|h| hwnd_map.get(h))
-            .filter (|&wde| !em.runtime_should_excl_check(wde)) .collect::<Vec<&_>>();
+            .filter (|&wde| !self.runtime_should_excl_check(wde)) .collect::<Vec<&_>>();
         let filt_rlp = filt_wdes .iter() .enumerate() .map ( |(i,wde)| {
             // we'll also register these while we're creating the RLEs
             let fp = wde.exe_path_name .as_ref() .map (|p| &p.full_path);
@@ -1084,6 +1105,8 @@ impl RenderReadyListsManager {
     }
 
 
-
-
 }
+
+
+
+

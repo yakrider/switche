@@ -114,8 +114,9 @@ object Switche {
 
    var renderList : Seq[RenderListEntry] = Seq()
    var groupedRenderList : Seq[Seq[RenderListEntry]] = Seq()
-   
-   
+
+   val iconsCache = mutable.HashMap[Int,String]()
+  
    
    def main (args: Array[String]): Unit = {
       doc.addEventListener ( "DOMContentLoaded", { (e: dom.Event) =>
@@ -129,6 +130,16 @@ object Switche {
          //js.timers.setInterval(30*1000) { SendMsgToBack.FE_Req_Refresh() }
          
       } )
+   }
+   
+   
+   def getCachedIcon (iid:Int) : Option[String] = { iconsCache.get(iid) }
+   def updateIconCache (iid:Int, ico_str:String): Unit = { iconsCache.update (iid, ico_str) }
+   def deleteCachedIcon (iid:Int): Unit = { iconsCache.remove(iid); }
+   
+   def printIconCaches() = {
+      println (s"Printing icon caches.. (${iconsCache.size}):");
+      iconsCache.foreach(println)
    }
    
 
@@ -158,7 +169,7 @@ object Switche {
    }
   
    def setTauriEventListeners() : Unit = {
-      // todo : the unlisten fns returned by these prob needs to be stored and used to unlisten during unmount (e.g. page refresh?)
+      // todo : the unlisten fns returned by these prob could be stored and used to unlisten during unmount (e.g. page refresh?)
       TauriEvent .listen ( "backend_notice",            backendNoticeListener _      )
       TauriEvent .listen ( "updated_render_list",       updateListener_RenderList _  )
       TauriEvent .listen ( "updated_win_dat_entry",     updateListener_WinDatEntry _ )
@@ -199,7 +210,7 @@ object Switche {
    def updateListener_IconEntry (e:BackendPacket) : Unit = {
       println (s"got icon entry: ${e.payload}");
       val ep:IconEntry_P = upickle.default.read[IconEntry_P](e.payload)
-      IconsManager.updateIconCache (ep.ico_id, ep.ico_str);
+      updateIconCache (ep.ico_id, ep.ico_str);
    }
    
    def backendNoticeListener (e:BackendPacket) : Unit = {
@@ -241,21 +252,4 @@ object RenderSpacer {
 
 }
 
-
-
-object IconsManager {
-   import scala.collection.mutable
-
-   private val iconsCache = mutable.HashMap[Int,String]()
-   
-   def getCachedIcon (iid:Int) : Option[String] = { iconsCache.get(iid) }
-   def updateIconCache (iid:Int, ico_str:String): Unit = { iconsCache.update (iid, ico_str) }
-   def deleteCachedIcon (iid:Int): Unit = { iconsCache.remove(iid); }
-   
-   def printIconCaches() = {
-      println (s"Printing icon caches.. (${iconsCache.size}):");
-      iconsCache.foreach(println)
-   }
-
-}
 

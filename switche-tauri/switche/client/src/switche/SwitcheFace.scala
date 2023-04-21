@@ -158,8 +158,7 @@ object SwitcheFacePage {
       else if (e.ctrlKey) {
          if      (e.key == " ")  handleReq_CurElemActivation()
          else if (e.key == "g")  handleReq_GroupModeToggle()
-         else if (e.key == "t")  SendMsgToBack.FE_Req_Switch_TabsOutliner()   // t for tabs (but is two hand key)
-         else if (e.key == "c")  SendMsgToBack.FE_Req_Switch_TabsOutliner()   // c for chrome-tabs .. we'll see which we use more
+         else if (e.key == "o")  SendMsgToBack.FE_Req_Switch_TabsOutliner()   // o for tabs-Outliner
          else if (e.key == "w")  handleReq_CurElemClose()
          else if (e.key == "v")  handleReq_CurElemPeek()
          //else if (e.key == "r") RibbonDisplay.handleRefreshBtnClick()  // ctrl-r is not available for us because of the way we overload it in ahk remapping
@@ -273,7 +272,7 @@ object SwitchePageState {
       val exeSpan = span (`class`:=s"exeSpan ${elemT.cls} ${grpT.cls}", exeInnerSpan)
       val ySpan = span (`class`:=s"ySpan ${elemT.cls}", yInnerSpan)
       val titleSpan = span (`class`:=s"titleSpan ${elemT.cls}", titleInnerSpan)
-      val ico = IconsManager.getCachedIcon(wde.icon_cache_idx) .map (icoStr => img(`class`:="ico", src:=icoStr)) .getOrElse(span("ico"))
+      val ico = Switche.getCachedIcon(wde.icon_cache_idx) .map (icoStr => img(`class`:="ico", src:=icoStr)) .getOrElse(span("ico"))
       val icoSpan = span (`class`:="exeIcoSpan", ico)
       val elem = div (`class`:="elemBox", id:=idStr, tabindex:=0, exeSpan, nbsp(2), ySpan, nbsp(2), icoSpan, nbsp(), titleSpan).render
       //elem.onclick = {ev:MouseEvent => SwitcheState.handleReq_WindowActivation(e.hwnd)}
