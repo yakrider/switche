@@ -47,7 +47,9 @@ pub struct WinDatEntry {
     pub hwnd              : Hwnd,
     pub win_text          : Option<String>,
     pub is_uwp_app        : Option<bool>,
+    pub is_exe_queried    : bool,
     pub exe_path_name     : Option<ExePathName>,
+    pub uwp_icon_path     : Option<String>,
     pub should_exclude    : Option<bool>,
     //pub icon_cache_idx    : usize,        // <- we'd rather populate this at render-list emission time
 }
@@ -127,8 +129,9 @@ impl Backend_Event {
 
 #[derive (Debug, Eq, PartialEq, Hash, Clone, Serialize, Deserialize)]
 pub struct FrontendRequest {
-    req  : String,
-    hwnd : Option<i32>
+    req    : String,
+    hwnd   : Option<i32>,
+    params : Vec<String>,
 }
 
 
@@ -332,13 +335,21 @@ impl SwitcheState {
         wde.win_text = cur_title;
 
         // but only query exe-path if we havent populated it before
-        if wde.exe_path_name.is_none() {
-            should_emit = true;
+        if !wde.is_exe_queried {
+            should_emit = true; wde.is_exe_queried = true;
             wde.exe_path_name = get_hwnd_exe_path(wde.hwnd) .and_then (|s| Self::parse_exe_path(s));
-            if wde.exe_path_name .iter() .find (|ep| ep.name.as_str() == "ApplicationFrameHost.exe") .is_some() {
+            if wde.exe_path_name .iter() .find (|ep| ep.name.as_str() == "ApplicationFrameHost.exe") .is_some() { //dbg!(hwnd);
                 wde.is_uwp_app = Some(true);
-                wde.exe_path_name = get_uwp_hwnd_exe_path(wde.hwnd) .and_then (|s| Self::parse_exe_path(s));
-                //println!("{:?}",(wde.exe_path_name));
+                //wde.exe_path_name = get_uwp_hwnd_exe_path(wde.hwnd) .and_then (|s| Self::parse_exe_path(s));
+                //dbg!(&wde.exe_path_name);
+                //if hwnd==133930 { dbg!(get_package_path_from_hwnd(hwnd)); }
+                //let path = get_package_path_from_hwnd(hwnd);
+                //if wde.exe_path_name.is_none() {
+                    if let Some(pkg_path) = get_package_path_from_hwnd(hwnd).as_ref() { //dbg!(&pkg_path);
+                        if let Some(mfp) = uwp_processing::get_uwp_manifest_parse(pkg_path) {
+                            wde.exe_path_name = Self::parse_exe_path(mfp.exe.to_string_lossy().into());
+                            wde.uwp_icon_path = Some(mfp.ico.to_string_lossy().into());
+                } } //}
             } else {
                 wde.is_uwp_app = Some(false);
             }
@@ -346,7 +357,7 @@ impl SwitcheState {
 
         let excl_flag = Some ( self.render_lists_m.calc_excl_flag (&wde) );
         if wde.should_exclude != excl_flag { should_emit = true }
-        wde.should_exclude = excl_flag;
+        wde.should_exclude = excl_flag;   if hwnd==657422 {dbg!(wde);};
 
         drop(hmap); // clearing out write scope before lenghty calls
 
@@ -379,7 +390,7 @@ impl SwitcheState {
         });
         // and we'll swap out the live order-list with the readied accumulator to make the new ordering current
         std::mem::swap (&mut *self.hwnds_ordered.write().unwrap(), &mut *self.hwnds_acc.write().unwrap());
-        println!("hwnds:{}, hacc:{}", self.hwnds_ordered.read().unwrap().len(), self.hwnds_acc.read().unwrap().len());
+        //println!("hwnds:{}, hacc:{}", self.hwnds_ordered.read().unwrap().len(), self.hwnds_acc.read().unwrap().len());
 
         self.emit_render_lists_queued(false);    // we'll queue it as icon upates might tack on more in a bit
     }
@@ -398,7 +409,7 @@ impl SwitcheState {
     }
 
     fn handle_event__switche_fgnd (&self) {
-        println! ("switche self-fgnd report .. refreshing window-list-top icon");
+        //println! ("switche self-fgnd report .. refreshing window-list-top icon");
         self.is_dismissed.clear();
         // the idea below is that to keep icons mostly updated, we do icon-refresh for a window when it comes to fgnd ..
         // however, when switche is brought to fgnd, recent changes in the topmost window might not be updated yet .. so we'll trigger that here
@@ -409,23 +420,27 @@ impl SwitcheState {
         } );
     }
 
-    fn activate_matching_window (&self, exe:Option<String>, title:Option<String>) {
+    fn activate_matching_window (&self, exe:Option<&str>, title:Option<&str>) {
         let hwnd_map = self.hwnd_map.read().unwrap();
-        let hwnd : Option<Hwnd> = self.render_lists_m.render_list.read().unwrap() .iter() .map ( |rle| {
+        let top2 : Vec<Hwnd> = self.render_lists_m.render_list.read().unwrap() .iter() .map ( |rle| {
             //let hwnd = rle.hwnd;
             hwnd_map .get (&rle.hwnd)
         } ) .flatten() .filter ( |wde|
-            ( exe.is_none()   || exe.as_ref() == wde.exe_path_name.as_ref().map(|p| &p.name) ) &&
-            ( title.is_none() || title == wde.win_text )
-        ) .next() .map (|wde| wde.hwnd);
+            ( exe.is_none()   || exe .filter (|&p| wde.exe_path_name.as_ref().filter(|_p| _p.name.as_str() == p).is_some()).is_some() ) &&
+            ( title.is_none() || title .filter (|&t| wde.win_text.as_ref().filter(|_t| _t.as_str() == t).is_some()).is_some() )
+        ) .take(2) .map (|wde| wde.hwnd) .collect::<Vec<_>>();
         // if we found the hwnd, if its not already active, activate it, else switch to next window
-        if hwnd.is_none() {
+        if top2.first().is_none() {
             // didnt find anything, so do nothing
-        } else if hwnd == self.render_lists_m.render_list.read().unwrap().first().map(|rle| rle.hwnd) {
-            // found it, its already at top, so toggle to the second top window instead
-            self.handle_req__second_recent_window_activate()
-        } else { // aight, found it, and its not top, switch to it
-            hwnd .iter() .for_each (|&hwnd| self.handle_req__window_activate(hwnd))
+        } else if top2.first() != self.render_lists_m.render_list.read().unwrap().first().map(|rle| rle.hwnd).as_ref() {
+            // found it, and its not top, switch to it
+            top2 .first() .map (|&hwnd| self.handle_req__window_activate(hwnd));
+        } else if top2.get(1).is_some() && top2.get(1) != self.render_lists_m.render_list.read().unwrap().first().map(|rle| rle.hwnd).as_ref() {
+            // first was already on top, but there's a second one matching, so lets switch to that (so toggling effect on matching)
+            top2 .get(1) .map (|&hwnd| self.handle_req__window_activate(hwnd));
+        } else {
+            // found it, its already at top, and there are no other matches, so toggle to the second top window instead
+            self.handle_req__second_recent_window_activate();
         }
     }
 
@@ -598,11 +613,9 @@ impl SwitcheState {
     // .. however, in this impl, so far things seem to work pretty consistently and without need for delays ..
 
     fn handle_req__window_activate (&self, hwnd:Hwnd) {
-        // since this is only for non-self windows, we'll want to dimiss ourselves first
+        // this call is only for non-self windows .. we'll want to dimiss ourselves
+        spawn ( move || { win_apis::window_activate(hwnd) } );
         self.handle_req__switche_dismiss();
-        spawn ( move || {
-            win_apis::window_activate(hwnd);
-        } );
     }
     fn handle_req__window_peek (&self, hwnd:Hwnd) {
         let self_hwnd = self.render_lists_m.self_hwnd();
@@ -615,14 +628,13 @@ impl SwitcheState {
         } );
     }
     fn handle_req__window_minimize (&self, hwnd:Hwnd) {
-        spawn ( move || {
-            win_apis::window_minimize(hwnd);
-        } );
+        spawn ( move || { win_apis::window_minimize(hwnd) } );
+    }
+    fn handle_req__window_maximize (&self, hwnd:Hwnd) {
+        spawn ( move || { win_apis::window_maximize(hwnd) } );
     }
     fn handle_req__window_close (&self, hwnd:Hwnd) {
-        spawn ( move || {
-            win_apis::window_close(hwnd);
-        } );
+        spawn ( move || { win_apis::window_close(hwnd) } );
     }
 
     fn self_window_activate (&self) {
@@ -699,12 +711,13 @@ impl SwitcheState {
 
 
     pub fn handle_frontend_request (&self, r:&FrontendRequest) {
-        println! ("received front-end request : {:?}", r);
+        //println! ("received front-end request : {:?}", r);
 
         match r.req.as_str() {
             "fe_req_window_activate"      => { r.hwnd .map (|h| self.handle_req__window_activate (h as Hwnd) ); }
             "fe_req_window_peek"          => { r.hwnd .map (|h| self.handle_req__window_peek     (h as Hwnd) ); }
             "fe_req_window_minimize"      => { r.hwnd .map (|h| self.handle_req__window_minimize (h as Hwnd) ); }
+            "fe_req_window_maximize"      => { r.hwnd .map (|h| self.handle_req__window_maximize (h as Hwnd) ); }
             "fe_req_window_close"         => { r.hwnd .map (|h| self.handle_req__window_close    (h as Hwnd) ); }
 
             "fe_req_data_load"            => { self.handle_req__data_load()      }
@@ -713,13 +726,15 @@ impl SwitcheState {
             "fe_req_switche_quit"         => { self.proc_tray_event_quit()       }
             "fe_req_debug_print"          => { self.handle_req__debug_print()    }
 
-            // for some backend global hotkeys, we might have frontend hotkeys keys set too
-            "fe_req_switch_tabs_last"     => { self.proc_hot_key__switch_last()          }
+            "fe_req_switch_tabs_last"    => { self.proc_hot_key__switch_last()  }
+
             "fe_req_switch_tabs_outliner" => { self.proc_hot_key__switch_tabs_outliner() }
             "fe_req_switch_notepad_pp"    => { self.proc_hot_key__switch_notepad_pp()    }
             "fe_req_switch_ide"           => { self.proc_hot_key__switch_ide()           }
-            "fe_req_switch_winamp"        => { self.proc_hot_key__switch_winamp()        }
+            "fe_req_switch_music"         => { self.proc_hot_key__switch_music()         }
             "fe_req_switch_browser"       => { self.proc_hot_key__switch_browser()       }
+
+            "fe_req_activate_matching"    => { self.activate_matching_window (r.params.first().map(|s| s.as_str()), r.params.get(1).map(|s| s.as_str())) }
 
             _ => { println! ("unrecognized frontend cmd: {}", r.req) }
         }
@@ -753,7 +768,7 @@ impl SwitcheState {
         // we want to store a cached value of our hwnd for exclusions-mgr (and general use)
         if self.render_lists_m.self_hwnd() == 0 {
             self.extract_self_hwnd() .map (|h| self.render_lists_m.store_self_hwnd(h));
-            println! ("App starting .. self-hwnd is : {:?}", self.render_lists_m.self_hwnd() );
+            //println! ("App starting .. self-hwnd is : {:?}", self.render_lists_m.self_hwnd() );
         }
     }
 
@@ -856,23 +871,23 @@ impl SwitcheState {
     }
     pub fn proc_hot_key__scroll_end (&self) {
         // this requires activating the current elem in frontend, so we'll just send a msg over
-        self.emit_backend_notice (Backend_Notice::hotkey_req__scroll_end);
+        if !self.is_dismissed.is_set() { self.emit_backend_notice (Backend_Notice::hotkey_req__scroll_end) }
     }
 
 
     pub fn proc_hot_key__switch_last          (&self)  { self.handle_req__second_recent_window_activate() }
-    pub fn proc_hot_key__switch_tabs_outliner (&self)  { self.activate_matching_window ( Some("chrome.exe".into()), Some("Tabs Outliner".into()) ) }
-    pub fn proc_hot_key__switch_notepad_pp    (&self)  { self.activate_matching_window ( Some("notepad++.exe".into()), None ) }
-    pub fn proc_hot_key__switch_ide           (&self)  { self.activate_matching_window ( Some("idea64.exe".into()), None ) }
-    pub fn proc_hot_key__switch_winamp        (&self)  { self.activate_matching_window ( Some("winamp.exe".into()), None ) }
-    pub fn proc_hot_key__switch_browser       (&self)  { self.activate_matching_window ( Some("chrome.exe".into()), None ) }
+    pub fn proc_hot_key__switch_tabs_outliner (&self)  { self.activate_matching_window ( Some("chrome.exe"),    Some("Tabs Outliner") ) }
+    pub fn proc_hot_key__switch_notepad_pp    (&self)  { self.activate_matching_window ( Some("notepad++.exe"), None ) }
+    pub fn proc_hot_key__switch_ide           (&self)  { self.activate_matching_window ( Some("idea64.exe"),    None ) }
+    pub fn proc_hot_key__switch_music         (&self)  { self.activate_matching_window ( Some("MusicBee.exe"),  None ) }
+    pub fn proc_hot_key__switch_browser       (&self)  { self.activate_matching_window ( Some("chrome.exe"),    None ) }
 
 
     pub fn setup_global_shortcuts (&self, ah:&AppHandle<Wry>) {
         use tauri::GlobalShortcutManager;
         let mut gsm = ah.global_shortcut_manager();
         // todo: can update these to prob printout/notify an err msg when cant register global hotkey
-        let ss = self.clone();  let _ = gsm.register ( "Super+F12",       move || ss.proc_hot_key__invoke()               );
+        //let ss = self.clone();  let _ = gsm.register ( "Super+F12",       move || ss.proc_hot_key__invoke()               );
         let ss = self.clone();  let _ = gsm.register ( "Super+F12",       move || ss.proc_hot_key__scroll_down()          );
         let ss = self.clone();  let _ = gsm.register ( "Super+Shift+F12", move || ss.proc_hot_key__scroll_up()            );
         let ss = self.clone();  let _ = gsm.register ( "F15",             move || ss.proc_hot_key__invoke()               );
@@ -883,7 +898,7 @@ impl SwitcheState {
         let ss = self.clone();  let _ = gsm.register ( "Ctrl+Alt+F20",    move || ss.proc_hot_key__switch_tabs_outliner() );
         let ss = self.clone();  let _ = gsm.register ( "Ctrl+Alt+F21",    move || ss.proc_hot_key__switch_notepad_pp()    );
         let ss = self.clone();  let _ = gsm.register ( "Ctrl+Alt+F22",    move || ss.proc_hot_key__switch_ide()           );
-        let ss = self.clone();  let _ = gsm.register ( "Ctrl+Alt+F23",    move || ss.proc_hot_key__switch_winamp()        );
+        let ss = self.clone();  let _ = gsm.register ( "Ctrl+Alt+F23",    move || ss.proc_hot_key__switch_music()        );
         let ss = self.clone();  let _ = gsm.register ( "Ctrl+Alt+F24",    move || ss.proc_hot_key__switch_browser()       );
 
     }
@@ -904,7 +919,7 @@ impl SwitcheState {
                 exe_path_name: wde.exe_path_name.clone(),
                 icon_cache_idx: self.icons_m.get_cached_icon_idx(wde).unwrap_or(0) as u32,
         };
-        println! ("** wde-update for hwnd {:8} : ico-idx: {:?}, {:?}", pl.hwnd, pl.icon_cache_idx, pl.exe_path_name.as_ref().map(|p|p.name.clone()));
+        //println! ("** wde-update for hwnd {:8} : ico-idx: {:?}, {:?}", pl.hwnd, pl.icon_cache_idx, pl.exe_path_name.as_ref().map(|p|p.name.clone()));
         self.app_handle.read().unwrap() .iter().for_each ( |ah| {
             serde_json::to_string(&pl) .map ( |pl| {
                 ah.emit_all::<String> (Backend_Event::updated_win_dat_entry.str(), pl )
@@ -913,7 +928,7 @@ impl SwitcheState {
     }
 
     pub fn emit_icon_entry (&self, ie:&IconEntry) {
-        println! ("** icon-update for icon-id: {:?}", ie.ico_id);
+        //println! ("** icon-update for icon-id: {:?}", ie.ico_id);
         self.app_handle .read().unwrap() .iter() .for_each ( |ah| {
             serde_json::to_string(ie) .map (|pl| {
                 ah.emit_all::<String> ( Backend_Event::updated_icon_entry.str(), pl )
@@ -926,7 +941,7 @@ impl SwitcheState {
         let pl = BackendNotice_Pl { msg: notice.str().to_string() };
         self.app_handle.read().unwrap() .iter() .for_each ( |ah| {
             serde_json::to_string(&pl) .map ( |pl| {
-                println!("sending backend notice: {}", &pl);
+                //println!("sending backend notice: {}", &pl);
                 ah.emit_all::<String> ( Backend_Event::backend_notice.str(), pl ) .or_else(|_| Err("emit failure"))
             } ) .or_else (|err| { Err(err) }) .err() .iter().for_each (|err| println!("render-list emit failed: {}", err));
         } )
@@ -1094,7 +1109,7 @@ impl RenderReadyListsManager {
             // note ^^ that unwrap is ok because it would fail only for NaN
         } );
         let grpd_render_list = grpd_render_list_builder .into_iter() .map (|(_,rlev)| rlev) .collect::<Vec<Vec<RenderListEntry>>>();
-        println!("render-ready-list recalc -- rl:{:?}", filt_rl.len() ); println!();
+        //println!("render-ready-list recalc -- rl:{:?}", filt_rl.len() ); println!();
         ( filt_rl, grpd_render_list )
     }
 

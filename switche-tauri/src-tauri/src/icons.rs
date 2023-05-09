@@ -84,9 +84,14 @@ impl IconsManager {
     }
 
     fn make_hwnd_path_pair (wde:&WinDatEntry) -> Option<HwndExePathPair> {
-        wde.exe_path_name.as_ref() .map (|p| p.full_path.clone()) .map (|p| {
-            HwndExePathPair { hwnd:wde.hwnd, path:p, is_uwp: wde.is_uwp_app == Some(true) }
-        } )
+        let ico_path = if wde.is_uwp_app != Some(true) {
+            if let Some(p) = wde.exe_path_name.as_ref() { Some(&p.full_path) } else { None }
+        } else {
+            if let Some(p) = wde.uwp_icon_path.as_ref() { Some(p) } else { None }
+        };
+        if let Some(p) = ico_path {
+            Some ( HwndExePathPair { hwnd:wde.hwnd, path:p.to_string(), is_uwp: wde.is_uwp_app == Some(true) } )
+        } else { None }
     }
 
     pub fn get_cached_icon_idx (&self, wde:&WinDatEntry) -> Option<usize> {
@@ -132,7 +137,7 @@ impl IconsManager {
         let icmgr = self.clone();
         let hppc = hpp.clone();
         spawn ( move || unsafe {
-            let ico_str = icon_extractor::extract_hwnd_icon (HWND(hppc.hwnd)) .or_else (|| icon_extractor::get_default_icon());
+            let ico_str = icon_extraction::extract_hwnd_icon (HWND(hppc.hwnd)) .or_else (|| icon_extraction::get_default_icon());
             ico_str .map (|s| icmgr.icon_string_callback (&hppc, s, true));
         } );
 
@@ -156,10 +161,13 @@ impl IconsManager {
             if !was_past_queried {
                 icmgr.queried_exe_cache .write().unwrap() .insert (hppc.path.clone());
                 let ico_str = if hppc.is_uwp {
-                    icon_extractor::extract_uwp_app_icon (&hppc.path)
+                    icon_extraction::extract_png_icon (hppc.path.as_str())
+                    //if let Some(mfp) = uwp_processing::get_uwp_manifest_parse(&hppc.path) {
+                    //    icon_extraction::extract_png_icon(&mfp.ico)
+                    //}
                 } else {
-                    icon_extractor::extract_exe_path_icon (&hppc.path)
-                }  .or_else (|| icon_extractor::get_default_icon());
+                    icon_extraction::extract_exe_path_icon (&hppc.path)
+                }  .or_else (|| icon_extraction::get_default_icon());
                 ico_str .map (|s| icmgr.icon_string_callback (&hppc, s, false));
             } else {
                 // if multiple hwnds for same app get queued, because of random delay and cache checking the second one might end up here
@@ -241,8 +249,8 @@ impl IconsManager {
             ss .emit_icon_entry ( &IconEntry { ico_id: iid, ico_str: ico.clone() } );
         } );
         // this should only happen on reload etc, fine time to dump out icons and mappings for examination too
-        self.icons_hpp_map .read().unwrap() .iter().for_each(|(hpp,icm)| println!("{:?}, {:?}", icm, hpp));
-        self.icons_exe_map  .read().unwrap() .iter().for_each(|(exe,idx)| println!("{:?}, {:?}", idx, exe));
+        //self.icons_hpp_map .read().unwrap() .iter().for_each(|(hpp,icm)| println!("{:?}, {:?}", icm, hpp));
+        //self.icons_exe_map  .read().unwrap() .iter().for_each(|(exe,idx)| println!("{:?}, {:?}", idx, exe));
     }
 
 
@@ -268,15 +276,82 @@ impl IconsManager {
 
 
 
+pub(crate) mod uwp_processing {
+    use std::path::{Path, PathBuf};
+
+    pub struct ManifestParse { pub(crate) ico:PathBuf, pub(crate) exe:PathBuf }
+
+    pub fn get_uwp_manifest_parse (exe_path:&String) -> Option<ManifestParse> {
+        fn append_manifest_path (p:&Path) -> PathBuf { p.join("AppxManifest.xml") }
+        let exe_path = Path::new (exe_path);
+        let mut manifest = exe_path.parent().map(|p| append_manifest_path(p));
+        if manifest.as_ref().filter(|mf| mf.exists()).is_none() {
+            manifest = Some (append_manifest_path (exe_path));
+        }
+        let mut buf = Vec::new();
+        let mut ico_path : Option<String> = None;
+        let mut app_path : Option<String> = None;
+        let mut is_logo_tag : bool = false;
+        use quick_xml::events::Event::*;
+        manifest.as_ref() .filter (|mf| mf.exists()) .iter() .for_each (|mf| {
+            quick_xml::reader::Reader::from_file(mf) .ok() .iter_mut() .for_each ( |reader| {
+                loop {
+                    match reader.read_event_into(&mut buf) {
+                        Err (e) => { eprintln!("Error at position {}: {:?}", reader.buffer_position(), e); break; },
+                        Ok (Eof) => break,
+                        Ok (Start (ref e)) => {
+                            reader.decoder() .decode (e.name().as_ref()) .ok() .iter() .for_each (|tag| {
+                            if      tag == "Logo" { is_logo_tag = true }
+                            else if tag == "Application"  {
+                                app_path = e.attributes() .filter (|a| a.as_ref().ok() .filter (|a| a.key.as_ref() == "Executable".as_bytes()).is_some())
+                                    .flatten() .next() .map (|a| String::from_utf8_lossy(&a.value).into_owned());
+                            }
+                        } ) },
+                        Ok (Text (ref txt)) => {
+                            if is_logo_tag {
+                                ico_path = reader.decoder() .decode(txt) .map (|c| c.to_string()) .ok();
+                                is_logo_tag = false;
+                            }
+                        },
+                        _ => (),
+                    }
+                    if ico_path.is_some() && app_path.is_some() { break }
+            } } )
+        } );
+        fn get_checked_file_path (file:&PathBuf) -> Option<PathBuf> {
+            if let Some(stem) = file.file_stem() .map(|s| s.to_str()).flatten() {
+                file.parent() .map ( |pp| {
+                    std::fs::read_dir(pp) .ok() .map ( |res| {
+                        res .flat_map (|e| e.ok()) .map (|e| e.path()) .filter (|p| {
+                            p.file_name() .filter (|f| f.to_string_lossy().contains(stem)) .is_some()
+                        }) .next()
+                    }) .flatten()
+                }) .flatten()
+            } else { None }
+        }
+        fn get_full_path (rel_path:&String, manifest:&PathBuf) -> Option<PathBuf> {
+            if let Some (mpp) = manifest.parent() { Some (mpp.join(rel_path)) }
+            else { None }
+        }
+        if let Some(mf) = manifest.as_ref() {
+        if let (Some(ico), Some(exe)) = (ico_path, app_path) { //dbg!((&ico, &exe));
+        if let (Some(ico), Some(exe)) = ( get_full_path(&ico,&mf), get_full_path(&exe,&mf) ) {
+        if let (Some(ico), Some(exe)) = ( get_checked_file_path(&ico), Some(exe) ) { //dbg! ((&ico,&exe));
+            return Some ( ManifestParse {ico, exe} );
+        } } } }
+        None
+    }
+
+
+}
 
 
 
 
-pub mod icon_extractor {
-
+pub(crate) mod icon_extraction {
     use std::io::{Cursor};
     use std::mem;
-    use std::path::{Path, PathBuf};
+    use std::path::PathBuf;
 
     use image::{ImageOutputFormat, RgbaImage};
     use base64::Engine;
@@ -289,7 +364,6 @@ pub mod icon_extractor {
         DestroyIcon, GCL_HICON, GetClassLongPtrW, GetIconInfo, HICON, ICON_BIG, ICON_SMALL, ICON_SMALL2,
         ICONINFO, IDI_APPLICATION, LoadIconW, SendMessageA, WM_GETICON
     };
-
 
     pub unsafe fn extract_exe_path_icon (exe_path:&String) -> Option<String> {
         //println!("exe-ico-ext-- {:?}", exe_path.split(r"\").last());
@@ -315,59 +389,18 @@ pub mod icon_extractor {
         let hicon = LoadIconW (HINSTANCE(0), IDI_APPLICATION) .unwrap_or_default();
         hicon_to_base64_str(hicon)
     }
-
-    pub unsafe fn extract_uwp_app_icon (exe_path:&String) -> Option<String> {
-        let ico = get_uwp_app_ico_path(exe_path) .and_then (|ip| png_file_to_base64_str(ip));
-        //println! ("uwp-ico-str: {:?}", ico);
-        ico
+    /*
+    pub unsafe fn extract_uwp_app_icon (exe_path:&String) -> Option<String> { dbg!(exe_path);
+        if let Some(mfp) = super::uwp_processing::get_uwp_manifest_parse (exe_path) {
+            png_file_to_base64_str (&mfp.ico)
+        } else { None }
+    } // */
+    pub unsafe fn extract_png_icon (png_path:&str) -> Option<String> {
+        if let Some(p) = png_path.try_into().ok() { png_file_to_base64_str (&p) }
+        else { None }
     }
 
-    pub unsafe fn get_uwp_app_ico_path (exe_path:&String) -> Option<PathBuf> {
-        if let Some(ip) = get_uwp_manifest_ico_path (exe_path) {
-        if let Some(ico_stem) = ip.file_stem().map(|s| s.to_str()).flatten() {
-            let ico_path = ip.parent() .map ( |ipp| {
-                std::fs::read_dir(ipp) .ok() .map ( |res| {
-                    res .flat_map (|e| e.ok()) .map (|e| e.path()) .filter (|p| {
-                        p.file_name() .filter (|f| f.to_string_lossy().contains(ico_stem)) .is_some()
-                    }) .next()
-                }) .flatten()
-            }) .flatten();
-            //println! ("uwp-app-ico-path: {:?}", ico_path);
-            return ico_path;
-        } }
-        None
-    }
-
-    pub unsafe fn get_uwp_manifest_ico_path (exe_path:&String) -> Option<PathBuf> {
-        let exe_path = Path::new (exe_path);
-        let manifest = exe_path.parent().map(|p| p.join("AppxManifest.xml"));
-        let mut buf = Vec::new();
-        let mut ico_path : Option<String> = None;
-        let mut is_logo_tag : bool = false;
-        use quick_xml::events::Event::*;
-        manifest .filter (|mf| mf.exists()) .iter() .for_each (|mf| {
-            quick_xml::reader::Reader::from_file(mf) .ok() .iter_mut() .for_each ( |reader| {
-                loop {
-                    match reader.read_event_into(&mut buf) {
-                        Err (e) => panic!("Error at position {}: {:?}", reader.buffer_position(), e),
-                        Ok (Eof) => break,
-                        Ok (Start (ref e)) => {
-                            if reader.decoder() .decode (e.name().as_ref()) .ok() .filter (|s| s=="Logo").is_some() {
-                                is_logo_tag = true
-                        } },
-                        Ok (Text (ref txt)) => {
-                            if is_logo_tag {
-                                ico_path = reader.decoder() .decode(txt) .map (|c| c.to_string()) .ok();
-                                break;
-                        } },
-                        _ => (),
-            } } } )
-        } );
-        ico_path .map (|p| exe_path.parent().map(|ep| ep.clone().join(p))) .flatten()
-    }
-
-
-    unsafe fn png_file_to_base64_str (ico:PathBuf) -> Option<String> {
+    unsafe fn png_file_to_base64_str (ico:&PathBuf) -> Option<String> {
         image::open (ico.as_path()) .map (|img| {
             let mut buf = Cursor::new(vec![0u8]);
             img .write_to (&mut buf, ImageOutputFormat::Png) .expect("png write error");
@@ -424,10 +457,11 @@ mod test {
     #[test]
     fn calculator_manifest_test () { unsafe {
         let calc_loc = r"C:\Program Files\WindowsApps\Microsoft.WindowsCalculator_11.2210.0.0_x64__8wekyb3d8bbwe\CalculatorApp.exe".to_string();
-        assert_ne! (crate::icon_extractor::get_uwp_manifest_ico_path (&calc_loc), None);
-        assert_ne! (crate::icon_extractor::get_uwp_app_ico_path (&calc_loc), None);
-        assert_ne! (crate::icon_extractor::extract_uwp_app_icon (&calc_loc), None);
-
+        let mfp = crate::uwp_processing::get_uwp_manifest_parse (&calc_loc);
+        assert! (mfp.is_some());
+        if let Some(ico_path) = mfp.as_ref() .map(|mfp| mfp.ico.to_string_lossy()) {
+            assert! (crate::icon_extraction::extract_png_icon (&ico_path.as_ref()).is_some());
+        }
     } }
 
 }

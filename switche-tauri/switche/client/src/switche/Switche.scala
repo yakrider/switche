@@ -11,6 +11,8 @@ import scala.scalajs.js.annotation.JSGlobal
 import org.scalajs.dom
 import org.scalajs.dom.{KeyboardEvent, document => doc}
 
+import scala.scalajs.js.JSConverters.JSRichIterableOnce
+
 // this is to allow invoke returned Promise[_] to be converted/treated as Future[_]
 import scala.scalajs.js.Thenable.Implicits._
 
@@ -62,12 +64,14 @@ trait BackendPacket extends js.Object {
 trait front_end_req extends js.Object {
    var req : String = js.native
    var hwnd : Int = js.native
+   var params : js.Array[String] = js.native
 }
 object front_end_req {
-   def apply (_req:String, _hwnd:Option[Int]=None) : front_end_req = {
+   def apply (_req:String, _hwnd:Option[Int]=None, _params:Seq[String]=Seq()) : front_end_req = { println((_req, _hwnd, _params))
       val jdl = js.Dynamic.literal().asInstanceOf[front_end_req]
       jdl.req  = _req
       _hwnd .foreach (v => jdl.hwnd = v)     // only set if available, else shouldnt be in json at all
+      jdl.params = _params.toJSArray
       jdl
    }
 }
@@ -83,6 +87,7 @@ object SendMsgToBack {
    def FE_Req_WindowActivate (hwnd:Int) = send ( front_end_req ( "fe_req_window_activate", Some(hwnd) ) )
    def FE_Req_WindowPeek     (hwnd:Int) = send ( front_end_req ( "fe_req_window_peek",     Some(hwnd) ) )
    def FE_Req_WindowMinimize (hwnd:Int) = send ( front_end_req ( "fe_req_window_minimize", Some(hwnd) ) )
+   def FE_Req_WindowMaximize (hwnd:Int) = send ( front_end_req ( "fe_req_window_maximize", Some(hwnd) ) )
    def FE_Req_WindowClose    (hwnd:Int) = send ( front_end_req ( "fe_req_window_close",    Some(hwnd) ) )
    
    def FE_Req_Data_Load       () = send ( front_end_req ( "fe_req_data_load"        ) )
@@ -93,11 +98,22 @@ object SendMsgToBack {
    def FE_Req_DebugPrint      () = send ( front_end_req ( "fe_req_debug_print"      ) )
    
    def FE_Req_Switch_Last         () = send ( front_end_req ( "fe_req_switch_tabs_last"     ) )
+   
    def FE_Req_Switch_TabsOutliner () = send ( front_end_req ( "fe_req_switch_tabs_outliner" ) )
    def FE_Req_Switch_NotepadPP    () = send ( front_end_req ( "fe_req_switch_notepad_pp"    ) )
    def FE_Req_Switch_IDE          () = send ( front_end_req ( "fe_req_switch_ide"           ) )
-   def FE_Req_Switch_Winamp       () = send ( front_end_req ( "fe_req_switch_winamp"        ) )
+   def FE_Req_Switch_Music        () = send ( front_end_req ( "fe_req_switch_music"         ) )
    def FE_Req_Switch_Browser      () = send ( front_end_req ( "fe_req_switch_browser"       ) )
+   
+   //def FE_Req_Switch_TabsOutliner () = send_FE_Req_Activate_Matching ( "chrome.exe", "Tabs Outliner" )
+   //def FE_Req_Switch_NotepadPP    () = send_FE_Req_Activate_Matching ( "notepad++.exe" )
+   //def FE_Req_Switch_IDE          () = send_FE_Req_Activate_Matching ( "idea64.exe"    )
+   //def FE_Req_Switch_Music        () = send_FE_Req_Activate_Matching ( "MusicBee.exe"  )
+   //def FE_Req_Switch_Browser      () = send_FE_Req_Activate_Matching ( "chrome.exe"    )
+   
+   def send_FE_Req_Activate_Matching (exe:String, title:String = "") = {
+      send ( front_end_req ( "fe_req_activate_matching", _hwnd = None, _params = Seq(exe, title).filterNot(_.isEmpty) ) )
+   }
 }
 
 
@@ -111,12 +127,15 @@ object Switche {
    var inElectronDevMode = false;
    var inGroupedMode = true;
    var isDismissed = false;
+   var scrollEnd_disarmed = false;
 
    var renderList : Seq[RenderListEntry] = Seq()
    var groupedRenderList : Seq[Seq[RenderListEntry]] = Seq()
 
    val iconsCache = mutable.HashMap[Int,String]()
   
+   def scrollEnd_arm()    = { scrollEnd_disarmed = false }
+   def scrollEnd_disarm() = { scrollEnd_disarmed = true }
    
    def main (args: Array[String]): Unit = {
       doc.addEventListener ( "DOMContentLoaded", { (e: dom.Event) =>
@@ -152,20 +171,25 @@ object Switche {
       // (unless ofc we started tracking if switche is topmost, in which case, we could resetFocus upon invoke if not-topmost .. meh)
       procHotkey_ScrollDown()
    }
-   def procHotkey_ScrollDown() = { println(s"scroll-down-- dism:$isDismissed")
+   def procHotkey_ScrollDown() = {
       SwitchePageState.triggerHoverLockTimeout()
+      scrollEnd_arm();
       if (isDismissed) { SwitchePageState.resetFocus(); isDismissed = false; }
       else { SwitchePageState.focusElem_Next() }
    }
    def procHotkey_ScrollUp() = {
       SwitchePageState.triggerHoverLockTimeout()
+      scrollEnd_arm();
       if (isDismissed) { SwitchePageState.focusElem_Bottom(); isDismissed = false; }
       else { SwitchePageState.focusElem_Prev() }
    }
    def procHotkey_ScrollEnd() = {
       SwitchePageState.triggerHoverLockTimeout()
       // note below that a scroll-end only has meaning if we're scrolling (and hence already active)
-      if (!isDismissed) { SwitchePageState.handleReq_CurElemActivation(); isDismissed = true; }
+      if (!isDismissed && !scrollEnd_disarmed) {
+         isDismissed = true
+         SwitchePageState.handleReq_CurElemActivation()
+      } else { scrollEnd_arm(); }
    }
   
    def setTauriEventListeners() : Unit = {
@@ -178,7 +202,7 @@ object Switche {
    }
    
    def updateListener_RenderList  (e:BackendPacket) : Unit = {
-      println ("received render_list")
+      //println ("received render_list")
       val ep:RenderList_P = upickle.default.read[RenderList_P](e.payload);
       //println(ee.payload); println (ep.rl)
       renderList = ep.rl;  groupedRenderList = ep.grl
@@ -208,7 +232,7 @@ object Switche {
    }
    
    def updateListener_IconEntry (e:BackendPacket) : Unit = {
-      println (s"got icon entry: ${e.payload}");
+      //println (s"got icon entry: ${e.payload}");
       val ep:IconEntry_P = upickle.default.read[IconEntry_P](e.payload)
       updateIconCache (ep.ico_id, ep.ico_str);
    }
