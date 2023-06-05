@@ -173,23 +173,31 @@ object Switche {
    }
    def procHotkey_ScrollDown() = {
       SwitchePageState.triggerHoverLockTimeout()
-      scrollEnd_arm();
-      if (isDismissed) { SwitchePageState.resetFocus(); isDismissed = false; }
+      if (isDismissed || scrollEnd_disarmed) {
+         SwitchePageState.resetFocus()
+         isDismissed = false; scrollEnd_arm()
+      }
       else { SwitchePageState.focusElem_Next() }
    }
    def procHotkey_ScrollUp() = {
       SwitchePageState.triggerHoverLockTimeout()
-      scrollEnd_arm();
-      if (isDismissed) { SwitchePageState.focusElem_Bottom(); isDismissed = false; }
+      if (isDismissed || scrollEnd_disarmed) {
+         SwitchePageState.resetFocus()
+         isDismissed = false; scrollEnd_arm()
+      }
       else { SwitchePageState.focusElem_Prev() }
    }
    def procHotkey_ScrollEnd() = {
       SwitchePageState.triggerHoverLockTimeout()
       // note below that a scroll-end only has meaning if we're scrolling (and hence already active)
       if (!isDismissed && !scrollEnd_disarmed) {
-         isDismissed = true
+         isDismissed = true; scrollEnd_disarm()
          SwitchePageState.handleReq_CurElemActivation()
-      } else { scrollEnd_arm(); }
+      }
+   }
+   def procBkndEvent_fgndLost() = {
+      SwitchePageState.resetFocus()
+      scrollEnd_disarm()
    }
   
    def setTauriEventListeners() : Unit = {
@@ -241,10 +249,11 @@ object Switche {
       println (s"got backend_notice payload: ${e.payload}")
       val ep:BackendNotice_P = upickle.default.read[BackendNotice_P](e.payload);
       ep.msg match {
-         case "hotkey_req__app_invoke"  =>  procHotkey_Invoke()
-         case "hotkey_req__scroll_down" =>  procHotkey_ScrollDown()
-         case "hotkey_req__scroll_up"   =>  procHotkey_ScrollUp()
-         case "hotkey_req__scroll_end"  =>  procHotkey_ScrollEnd()
+         case "hotkey_req__app_invoke"   =>  procHotkey_Invoke()
+         case "hotkey_req__scroll_down"  =>  procHotkey_ScrollDown()
+         case "hotkey_req__scroll_up"    =>  procHotkey_ScrollUp()
+         case "hotkey_req__scroll_end"   =>  procHotkey_ScrollEnd()
+         case "switche_event__fgnd_lost" =>  procBkndEvent_fgndLost()
          case _ => { }
       }
    }

@@ -82,6 +82,7 @@ pub enum Backend_Notice {
     hotkey_req__scroll_down,
     hotkey_req__scroll_up,
     hotkey_req__scroll_end,
+    switche_event__fgnd_lost,
 }
 impl Backend_Notice {
     fn str (&self) -> &str { self.as_ref() }
@@ -167,6 +168,7 @@ pub struct _SwitcheState {
     pub cur_call_id   : AtomicIsize,
     pub enum_do_light : Flag,
     pub is_dismissed  : Flag,
+    pub is_fgnd       : Flag,
 
     pub render_lists_m : RenderReadyListsManager,
     pub icons_m        : IconsManager,
@@ -229,6 +231,7 @@ impl SwitcheState {
                 cur_call_id    : AtomicIsize::default(),
                 enum_do_light  : Flag::default(),
                 is_dismissed   : Flag::default(),
+                is_fgnd        : Flag::default(),
 
                 render_lists_m : RenderReadyListsManager::instance(),
                 icons_m        : IconsManager::instance(),
@@ -410,7 +413,7 @@ impl SwitcheState {
 
     fn handle_event__switche_fgnd (&self) {
         //println! ("switche self-fgnd report .. refreshing window-list-top icon");
-        self.is_dismissed.clear();
+        self.is_dismissed.clear(); self.is_fgnd.set();
         // the idea below is that to keep icons mostly updated, we do icon-refresh for a window when it comes to fgnd ..
         // however, when switche is brought to fgnd, recent changes in the topmost window might not be updated yet .. so we'll trigger that here
         let rleo = self .render_lists_m.render_list.read().unwrap() .first() .copied();
@@ -550,9 +553,14 @@ impl SwitcheState {
     pub fn proc_win_report__fgnd_hwnd (&self, hwnd:Hwnd) {
         //println!("@{:?} fgnd: {:?}",self._stamp(),hwnd);
         // we'll set its icon to be refreshed, then process it, and queue up a 'light' (ordering only) enum-windows call
+        // plus, we'll update self-fgnd state if either this is self hwnd, or if its a valid renderable hwnd coming to fgnd
         self.hwnd_map.read().unwrap() .get(&hwnd) .map (|wde| self.icons_m.mark_cached_icon_mapping_stale(wde));
         if self.process_discovered_hwnd (hwnd, false) {
             self.trigger_enum_windows_query_pending(true);
+            if self.is_fgnd.is_set() { self.emit_backend_notice (Backend_Notice::switche_event__fgnd_lost) }
+            self.is_fgnd.clear()
+        } else if self.render_lists_m.check_self_hwnd(hwnd) {
+            self.is_fgnd.set()
         }
     }
 
@@ -678,7 +686,7 @@ impl SwitcheState {
         // this is called specifically upon escape from switche, and we'll want to reactivate last active window before we dismiss
         self.handle_req__switche_dismiss();
         self.handle_req__nth_recent_window_activate(0);
-        // this is also a good time to do a full query to keep things in sync if any weird events etc have falled through the cracks
+        // this is also a good time to do a full query to keep things in sync if any weird events etc have fallen through the cracks
         self.trigger_enum_windows_query_pending(false);
     }
     fn handle_req__second_recent_window_activate (&self) {
@@ -711,7 +719,7 @@ impl SwitcheState {
 
 
     pub fn handle_frontend_request (&self, r:&FrontendRequest) {
-        //println! ("received front-end request : {:?}", r);
+        println! ("received front-end request : {:?}", r);
 
         match r.req.as_str() {
             "fe_req_window_activate"      => { r.hwnd .map (|h| self.handle_req__window_activate (h as Hwnd) ); }
@@ -870,8 +878,10 @@ impl SwitcheState {
         }
     }
     pub fn proc_hot_key__scroll_end (&self) {
-        // this requires activating the current elem in frontend, so we'll just send a msg over
-        if !self.is_dismissed.is_set() { self.emit_backend_notice (Backend_Notice::hotkey_req__scroll_end) }
+        // this requires activating the current elem in frontend, so we'll just send a msg over to frontend
+        if self.is_dismissed.is_clear() {
+            self.emit_backend_notice (Backend_Notice::hotkey_req__scroll_end)
+        }
     }
 
 
@@ -941,7 +951,7 @@ impl SwitcheState {
         let pl = BackendNotice_Pl { msg: notice.str().to_string() };
         self.app_handle.read().unwrap() .iter() .for_each ( |ah| {
             serde_json::to_string(&pl) .map ( |pl| {
-                //println!("sending backend notice: {}", &pl);
+                println!("sending backend notice: {}", &pl);
                 ah.emit_all::<String> ( Backend_Event::backend_notice.str(), pl ) .or_else(|_| Err("emit failure"))
             } ) .or_else (|err| { Err(err) }) .err() .iter().for_each (|err| println!("render-list emit failed: {}", err));
         } )
