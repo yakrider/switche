@@ -61,6 +61,7 @@ object SwitcheFacePage {
       //println (s"key:${e.key}, code:${e.keyCode}, ev:${evType}, ctrl:${e.ctrlKey}, modCtrl:${e.getModifierState("Control")}, modCaps:${e.getModifierState("CapsLock")}")
       println (s"key:${e.key}, code:${e.keyCode}, ev:${evType}, ctrl:${e.ctrlKey}, alt:${e.altKey}")
    }
+   
    def setPageEventHandlers() = {
       // reminder here.. capture phase means its just going down from top level to target, after that bubble phase goes from target upwards
       // intercepting here at the 'capture' phase allows us to use e.stopPropagation() to prevent event from ever reaching target
@@ -73,6 +74,7 @@ object SwitcheFacePage {
       doc.addEventListener ("keydown",     capturePhaseKeydownHandler _, useCapture=true)
       //dom.document.addEventListener ("mouseenter", procMouse_Enter _, useCapture=true) // done from element for efficiency
    }
+   
    def procMouse_Click (e:MouseEvent) = {
       triggerHoverLockTimeout()
       //e.target.closest(".elemBox").foreach(_=>handleReq_CurElemActivation())
@@ -130,6 +132,7 @@ object SwitcheFacePage {
          Option ( e .asInstanceOf[Element] .closest(".elemBox") .asInstanceOf[Div] )
       } .foreach (handleMouseEnter)
    }
+   
    def capturePhaseKeyupHandler (e:KeyboardEvent) = {    //printKeyDebugInfo(e,"up")
       // note: escape can cause app hide, and when doing that, we dont want that to leak outside app, hence on keyup
       if (inSearchState) { // && RibbonDisplay.searchBox.value.nonEmpty) {
@@ -138,8 +141,11 @@ object SwitcheFacePage {
          if (e.key == "Escape")  handleReq_SwitcheEscape()
       }
    }
+   
    val modifierKeys = Set("Meta","Alt","Control","Shift")
+   
    def capturePhaseKeydownHandler (e:KeyboardEvent) = {    printKeyDebugInfo(e,"down")
+      
       var doStopProp = true
       @inline def setupSearchbox (doPassthrough:Boolean) = {
          doStopProp = modifierKeys.contains(e.key) || (!doPassthrough && !inSearchState)
@@ -166,58 +172,81 @@ object SwitcheFacePage {
       //
       // .. potentially all this would also make krusty a bit cleaner .. and ofc make switche a lot more stand-alone capable
       //
+      // todo .. should consider ways to make up/down nav to work during alt-tab usage ..
+      // - best again to only spend time on it after doing native alt-tab impl here instead of w krusty (to avoid wasted effort)
+      // - if doing as is, prob could impl alt-j/i/k/,/u/m to left/right/top/btm/pgup/pgdn explicitly here ..
+      //    .. and disable them from activating l/o/n/i/m/b via just alt on F1 usage, and maybe make eqv of ctrl-alt-hotkey instead?
       
       triggerHoverLockTimeout()
+      
+      // first, keys that are enabled for both normal and  search-state, and with or without alt/ctrl etc :
+      if      (e.key == "Enter")      handleReq_CurElemActivation()
+      else if (e.key == "Escape")    {/*handleEscapeKeyDown()*/}      // moved to keyup as dont want its keyup leaking outside app if we use it hide app
+      else if (e.key == "F5")        dom.window.location.reload()
+      // scroll/invoke hotkeys nav
+      else if (e.key == "F1")         focusElem_Next()   // note: not really needed, registered as global hotkey, set electron to forwards it as a call
+      else if (e.key == "F2")         focusElem_Prev()
+      else if (e.key == "F16")        { scrollEnd_arm();  if (e.shiftKey) focusElem_Prev() else focusElem_Next(); }
+      else if (e.key == "F17")        { scrollEnd_arm();  if (e.shiftKey) focusElem_Next() else focusElem_Prev(); }
+      else if (e.key == "Tab")        { scrollEnd_arm();  if (e.shiftKey) focusElem_Prev() else focusElem_Next(); }
+      // arrow nav
+      else if (e.key == "ArrowUp")    focusElem_Prev()
+      else if (e.key == "ArrowDown")  focusElem_Next()
+      else if (e.key == "PageUp")     focusElem_Top()
+      else if (e.key == "PageDown")   focusElem_Bottom()
+
+      else if (!inSearchState) {
+         // these are enabled in normal mode but disabled in search-state (with or without alt)
+         if      (e.key == " ")              handleReq_CurElemActivation()
+         // arrow group-nav
+         else if (e.key == "ArrowLeft")      focusGroup_Prev()
+         else if (e.key == "ArrowRight")     focusGroup_Next()
+          // for other keys while not in search-state, we'll activate search-state and let it propagate to searchbox
+         else if (!e.altKey) { setupSearchbox (doPassthrough = true) } // for search state
+      }
+      else if (!e.altKey) { setupSearchbox (doPassthrough = true) } // for non-search state
+      
+      // global ctrl hotkeys
       if (e.ctrlKey) {
-         if      (e.key == " ")  handleReq_CurElemActivation()
+         if      (e.key == "r")  RibbonDisplay.handleRefreshBtnClick()   // note: ctrl-r for refresh is not available w krusty (due to l2 overloading)
+         else if (e.key == "f")  RibbonDisplay.handleRefreshBtnClick()   // so we'll also allow ctrl-f for 'fresh'.. meh
          else if (e.key == "g")  handleReq_GroupModeToggle()
          else if (e.key == "w")  handleReq_CurElemClose()
          else if (e.key == "v")  handleReq_CurElemPeek()
          else if (e.key == "z")  handleReq_CurElemMinimize()
          else if (e.key == "x")  handleReq_CurElemMaximize()
-         //else if (e.key == "r") RibbonDisplay.handleRefreshBtnClick()  // ctrl-r is not available for us because of the way we overload it in ahk remapping
-         else if (e.key == "f")  RibbonDisplay.handleRefreshBtnClick()   // so instead of ^, we'll use f for 'fresh'.. meh
+         // ^^ note that some of these e.g. z/x are awkward but worth doing it that way to keep them left handed (to work well w krusty l2)
          else { setupSearchbox (doPassthrough = true) }
       }
-      else {
-         // these are enabled for both normal and  search-state, and with or without alt
-         if      (e.key == "F1")         focusElem_Next()         // note: not really needed, registered as global hotkey, set electron to forwards it as a call
-         else if (e.key == "F2")         focusElem_Prev()
-         else if (e.key == "F16")        { scrollEnd_arm();  if (e.shiftKey) focusElem_Prev() else focusElem_Next(); }
-         else if (e.key == "F17")        { scrollEnd_arm();  if (e.shiftKey) focusElem_Next() else focusElem_Prev(); }
-         else if (e.key == "Tab")        { scrollEnd_arm();  if (e.shiftKey) focusElem_Prev() else focusElem_Next(); }
-         else if (e.key == "ArrowDown")  focusElem_Next()
-         else if (e.key == "ArrowUp")    focusElem_Prev()
-         else if (e.key == "PageUp")     focusElem_Top()
-         else if (e.key == "PageDown")   focusElem_Bottom()
-         else if (e.key == "Enter")      handleReq_CurElemActivation()
-         else if (e.key == "Escape")    {/*handleEscapeKeyDown()*/}      // moved to keyup as dont want its keyup leaking outside app if we use it hide app
-         else if (e.key == "F5")        dom.window.location.reload()
-
-         else if (!inSearchState) {
-            // these are enabled in normal mode but disabled in search-state
-            if      (e.key == " ")           handleReq_CurElemActivation()
-            else if (e.key == "ArrowRight")  focusGroup_Next()
-            else if (e.key == "ArrowLeft")   focusGroup_Prev()
-            // for other keys while not in search-state, we'll activate search-state and let it propagate to searchbox
-            else if (!e.altKey) { setupSearchbox (doPassthrough = true) } // for search state
-         }  else if (!e.altKey) { setupSearchbox (doPassthrough = true) } // for non-search state
-         
-         if (e.altKey) { // special handling ONLY for alt keys (the above apply whether alt or not)
-            if      (e.key == "F4") { handleReq_SwitcheQuit()                    }
-            else if (e.key == "l" ) { SendMsgToBack.FE_Req_Switch_Last()         }
-            else if (e.key == "o" ) { SendMsgToBack.FE_Req_Switch_TabsOutliner() }
-            else if (e.key == "n" ) { SendMsgToBack.FE_Req_Switch_NotepadPP()    }
-            else if (e.key == "i" ) { SendMsgToBack.FE_Req_Switch_IDE()          }
-            else if (e.key == "m" ) { SendMsgToBack.FE_Req_Switch_Music()       }
-            else if (e.key == "b" ) { SendMsgToBack.FE_Req_Switch_Browser()      }
-            //else if (e.key == " ")  { scrollEnd_disarm(); setupSearchbox (doPassthrough = false); }
-            // ^^ cant do alt-space as in windows OS intercepts it before it reaches the browser .. so we'll set up alternatives:
-            else if (e.key == "s")  { scrollEnd_disarm(); setupSearchbox (doPassthrough = false); }
-            else if (e.key == "k")  { scrollEnd_disarm(); setupSearchbox (doPassthrough = false); }
-            else { } // we'll ignore alt-combos for the searchbox
+      
+      // global alt (and alt-ctrl) hotkeys
+      if (e.altKey) { // special handling ONLY for alt keys (the above apply whether alt or not)
+         if (e.ctrlKey || e.shiftKey) {
+            val key = e.key.toLowerCase()
+            // ^^ ctrl works if not w/ krusty, but else we need shift (as caps-as-ctrl for some of these maps to arrow keys)
+            if      (key == "l" ) { SendMsgToBack.FE_Req_Switch_Last()         }
+            else if (key == "o" ) { SendMsgToBack.FE_Req_Switch_TabsOutliner() }
+            else if (key == "n" ) { SendMsgToBack.FE_Req_Switch_NotepadPP()    }
+            else if (key == "i" ) { SendMsgToBack.FE_Req_Switch_IDE()          }
+            else if (key == "m" ) { SendMsgToBack.FE_Req_Switch_Music()        }
+            else if (key == "b" ) { SendMsgToBack.FE_Req_Switch_Browser()      }
          }
+         // krusty eqv nav for alt (to support alt tab usage) (note that some of these will overlap the alt-ctrl(/shift above)
+         else if (e.key == "i")  focusElem_Prev()
+         else if (e.key == ",")  focusElem_Next()
+         else if (e.key == "u")  focusElem_Top()
+         else if (e.key == "m")  focusElem_Bottom()
+         else if (e.key == "j")  focusGroup_Prev()
+         else if (e.key == "k")  focusGroup_Next()
+         // alt-specific hotkeys
+         else if (e.key == "F4") { handleReq_SwitcheQuit() }
+         //else if (e.key == " ")  { scrollEnd_disarm(); setupSearchbox (doPassthrough = false); }
+         // ^^ cant do alt-space as in windows OS intercepts it before it reaches the browser .. so we'll set up alternatives:
+         else if (e.key == "s")  { scrollEnd_disarm(); setupSearchbox (doPassthrough = false); }
+         else if (e.key == "l")  { scrollEnd_disarm(); setupSearchbox (doPassthrough = false); }
+         else { } // we'll ignore alt-combos for the searchbox
       }
+      
       eventPassthroughGuarded()
       // ^^ basically all key-down events other than for propagation to searchbox should end here!!
    }
