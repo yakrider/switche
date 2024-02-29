@@ -1,9 +1,8 @@
 package switche
 
 import org.scalajs.dom
-import org.scalajs.dom.{Element, EventTarget, MouseEvent, KeyboardEvent, WheelEvent}
+import org.scalajs.dom.{Element, EventTarget, HTMLElement, KeyboardEvent, MouseEvent, WheelEvent, window, document => doc}
 import org.scalajs.dom.html.{Div, Span}
-import org.scalajs.dom.{document => doc}
 import scalatags.JsDom.all._
 
 import scala.collection.{IndexedSeq, Map, mutable}
@@ -59,7 +58,7 @@ object SwitcheFacePage {
    }
    def printKeyDebugInfo (e:KeyboardEvent, evType:String) = {
       //println (s"key:${e.key}, code:${e.keyCode}, ev:${evType}, ctrl:${e.ctrlKey}, modCtrl:${e.getModifierState("Control")}, modCaps:${e.getModifierState("CapsLock")}")
-      println (s"key:${e.key}, code:${e.keyCode}, ev:${evType}, ctrl:${e.ctrlKey}, alt:${e.altKey}")
+      println (s"key:${e.key}, code:${e.keyCode}, ev:${evType}, ctrl:${e.ctrlKey}, alt:${e.altKey}, shift:${e.shiftKey}")
    }
    
    def setPageEventHandlers() = {
@@ -70,13 +69,15 @@ object SwitcheFacePage {
       doc.addEventListener ("auxclick",    procMouse_AuxClick _)
       doc.addEventListener ("mouseup",     procMouse_Up _)
       doc.addEventListener ("wheel",       procMouse_Wheel _)
-      doc.addEventListener ("keyup",       capturePhaseKeyupHandler _, useCapture=true)
-      doc.addEventListener ("keydown",     capturePhaseKeydownHandler _, useCapture=true)
+      doc.addEventListener ("keyup",       capturePhaseKeyUpHandler _, useCapture=true)
+      doc.addEventListener ("keydown",     capturePhaseKeyDownHandler _, useCapture=true)
+      //doc.addEventListener ("keypress",    capturePhaseKeyPressHandler _, useCapture=true)
       //dom.document.addEventListener ("mouseenter", procMouse_Enter _, useCapture=true) // done from element for efficiency
    }
    
    def procMouse_Click (e:MouseEvent) = {
       triggerHoverLockTimeout()
+      scrollEnd_disarm()
       //e.target.closest(".elemBox").foreach(_=>handleReq_CurElemActivation())
       Some(e.target) .filter(_.isInstanceOf[Element]) .flatMap { e =>
          Option ( e.asInstanceOf[Element] .closest(".elemBox") )  // can return a null so wrapping into option
@@ -109,7 +110,9 @@ object SwitcheFacePage {
    def procMouse_RightClick (e:MouseEvent) = {
       // eventually could consider supporting more native right-click+wheel global combo here
       // but for now, we're using ahk to send separate hotkeys for right-mouse + wheel-down and enc scroll, so can use this for closing windows
-      triggerHoverLockTimeout(); e.preventDefault(); e.stopPropagation()
+      triggerHoverLockTimeout()
+      //scrollEnd_disarm()
+      e.preventDefault(); e.stopPropagation()
       //handleReq_CurElemClose()
       // ^ disabling, as middle click seems to gets used exclusively, and right click mostly only seems to trigger accidentally
    }
@@ -121,9 +124,14 @@ object SwitcheFacePage {
       if (e.button == 1) {procMouse_MiddleClick(e)}
    }
    def procMouse_Wheel (e:WheelEvent) = {
+      e.preventDefault()
       if (verifyActionRepeatSpacing(20d)) {  // enforced spacing (in ms) between consecutive mouse scroll action handling
          triggerHoverLockTimeout(); //scrollEnd_arm();
-         if (e.deltaY > 0 || e.deltaX > 0) { focusElem_Next() } else { focusElem_Prev() }
+         if (e.deltaY > 0 || e.deltaX > 0) {
+            if (e.ctrlKey) focusGroup_Next() else  focusElem_Next()
+         } else {
+            if (e.ctrlKey) focusGroup_Prev() else focusElem_Prev()
+         }
    } }
    def procMouse_Enter (e:MouseEvent) = {
       // NOTE: this is deprecated in favor of directly setting mouse-enter in the div boxes
@@ -133,7 +141,7 @@ object SwitcheFacePage {
       } .foreach (handleMouseEnter)
    }
    
-   def capturePhaseKeyupHandler (e:KeyboardEvent) = {    //printKeyDebugInfo(e,"up")
+   def capturePhaseKeyUpHandler (e:KeyboardEvent) = {    printKeyDebugInfo(e,"up")
       // note: escape can cause app hide, and when doing that, we dont want that to leak outside app, hence on keyup
       if (inSearchState) { // && RibbonDisplay.searchBox.value.nonEmpty) {
          handle_SearchModeKeyup(e)   // let it recalc matches if necessary etc
@@ -142,24 +150,28 @@ object SwitcheFacePage {
       }
    }
    
-   val modifierKeys = Set("Meta","Alt","Control","Shift")
+   //val modifierKeys = Set ("Meta","Alt","Control","Shift")
+   val passthroughKeys = Set ("MediaPlayPause","MediaTrackNext","MediaTrackPrevious","AudioVolumeUp","AudioVolumeDown")
+   val searchBoxCtrlKeys = Set ("ArrowLeft","ArrowRight","Delete","Backspace", "a", "x", "c", "v", "z", "y")
+   val searchBoxExclKeys = Set ("Meta","Alt","Control","Shift", "AudioVolumeUp","AudioVolumeDown")
    
-   def capturePhaseKeydownHandler (e:KeyboardEvent) = {    printKeyDebugInfo(e,"down")
+   def capturePhaseKeyDownHandler (e:KeyboardEvent) = {    printKeyDebugInfo(e,"down")
       
-      var doStopProp = true
+      var (doStopProp, preventDefault) = (true, false);
       @inline def setupSearchbox (doPassthrough:Boolean) = {
-         doStopProp = modifierKeys.contains(e.key) || (!doPassthrough && !inSearchState)
-         if (!modifierKeys.contains(e.key)) { inSearchState = true; activateSearchBox() }
+         doStopProp = searchBoxExclKeys.contains(e.key) || (!doPassthrough && !inSearchState)
+         if (!searchBoxExclKeys.contains(e.key)) { inSearchState = true; activateSearchBox() }
       }
-      @inline def eventPassthroughGuarded() = {
-         if (doStopProp) { e.stopPropagation(); e.preventDefault(); }
+      @inline def eventPassthroughGuarded() = { println(s"doStopProp=$doStopProp")
+         if (preventDefault) { e.preventDefault() }
+         if (!passthroughKeys.contains(e.key) && doStopProp) { e.stopPropagation(); e.preventDefault(); }
       }
       // ^^ setup here is to allow propagation only to some selective cases that need to go to search-box
       
       // todo: wth .. this is ridiculous .. the alt-tab repl via krusty-to-switche is non-viable long run ..
       // .. so doesnt make sense to keep fiddling with this to get all niggles there smoothed .. (besides needing crap on krusty)
       // .. this should just directly be impld in code here .. just add a kbd hook if want alt-tab handling
-      // .. and until there's config, could setup some combo to toggle that .. at which point we can hook/unhook
+      // .. and until there's config, could setup some combo to toggle that .. at which poiqnt we can hook/unhook
       // besides .. really intend to have that anyway, so doesnt make sense to waste time in round-about stuff
       //
       // todo: ^^ however .. even after direct alt-tab handling would have similar issue? nah we'd get events on alt dn/up ..
@@ -172,55 +184,93 @@ object SwitcheFacePage {
       //
       // .. potentially all this would also make krusty a bit cleaner .. and ofc make switche a lot more stand-alone capable
       //
-      // todo .. should consider ways to make up/down nav to work during alt-tab usage ..
-      // - best again to only spend time on it after doing native alt-tab impl here instead of w krusty (to avoid wasted effort)
-      // - if doing as is, prob could impl alt-j/i/k/,/u/m to left/right/top/btm/pgup/pgdn explicitly here ..
+      // d-todo .. should consider ways to make up/down nav to work during alt-tab usage ..
+      // d- best again to only spend time on it after doing native alt-tab impl here instead of w krusty (to avoid wasted effort)
+      // d- if doing as is, prob could impl alt-j/i/k/,/u/m to left/right/top/btm/pgup/pgdn explicitly here ..
       //    .. and disable them from activating l/o/n/i/m/b via just alt on F1 usage, and maybe make eqv of ctrl-alt-hotkey instead?
+      //    .. hmm also exclude ctrl-f or eqv from bringing up search? .. might not be possible?
+      //
+      // todo .. also, when/if doing the full kbd hook impl, should also add a passthrough listener for alt-esc ..
+      // - this is coz there's still no decent way to track/listen-to the effects of alt-esc and trigger a window query ..
+      //    .. in theory, could substitute for that now in krusty, but not clear if worthwhile doing that
+      // - (and for ref, the effects of not having this yet, is the typical case where after doing alt-esc and then closing the next
+      //    .. up window, which surprisingly enough seems to be done frequently, switche brings up the alt-esc'd window instead of
+      //    .. whatever should've been in the next-up list, coz the window list hasnt been updated yet)
+      // - (hmm, which means at least for that particular usecase, maybe could trigger a quick requery on hearing window close ??
+      //    .. could do that, and although there's a bunch of phantom-window close evs, maybe wouldnt be too bad if we filtered those
+      //    .. evs w having to be in cur active list to trigger a requery .. yeah, prob a much cleaner/better solution!)
+      // -- huh, none of this seems to be the issue ..
+      //    - a light requery already gets trigggered on alt-esc, that even seems to get the list updated
+      //    - yet when closing the then-top window, the supposed alt-escd to last guy come back up to top in query
+      //    - meaning, presumably the OS internal alt-tab z order list itself is out of sync? huh
+      //    - and really, can only think thatd be the case (other htan OS internal issues itself) is if on alt-esc we are already
+      //       somehow artificially updating our internal z list, and so gets overwritten on next enum call .. hmm
+      // -- yup, this is nothing to do w swtiche .. its just a core windows behavior ..
+      //    - afterall switche isnt diong anything to bring up another window upon some window closing away
+      //       and to verify ofc, even w switche killed, the same behavior still continues
+      //
+      
+      
+      // todo: consider changing the whole if-maze below to a match on tuple (searchState, ctrlKey, altKey, key)
+      // .. ^^ but prob pointless cleaning this up before we actually do impl for switche native alt-tab handling
       
       triggerHoverLockTimeout()
       
       // first, keys that are enabled for both normal and  search-state, and with or without alt/ctrl etc :
-      if      (e.key == "Enter")      handleReq_CurElemActivation()
+      if      (e.key == "Enter")     handleReq_CurElemActivation()
       else if (e.key == "Escape")    {/*handleEscapeKeyDown()*/}      // moved to keyup as dont want its keyup leaking outside app if we use it hide app
       else if (e.key == "F5")        dom.window.location.reload()
       // scroll/invoke hotkeys nav
       else if (e.key == "F1")         focusElem_Next()   // note: not really needed, registered as global hotkey, set electron to forwards it as a call
+      else if (e.key == "F15")        focusElem_Next()   // note: not really needed, registered as global hotkey, set electron to forwards it as a call
       else if (e.key == "F2")         focusElem_Prev()
+      // ^^ these are regular invocation (not using alt-tab or rht-srcoll, so we dont arm scroll-end activation
       else if (e.key == "F16")        { scrollEnd_arm();  if (e.shiftKey) focusElem_Prev() else focusElem_Next(); }
       else if (e.key == "F17")        { scrollEnd_arm();  if (e.shiftKey) focusElem_Next() else focusElem_Prev(); }
-      else if (e.key == "Tab")        { scrollEnd_arm();  if (e.shiftKey) focusElem_Prev() else focusElem_Next(); }
-      // arrow nav
+      // ^^ these are always for scroll type nav, so even w/o alt, we'll arm scroll-end .. (e.g. from krusty alt-tab mapping)
+      else if (e.key == "Tab")        { if (e.shiftKey) focusElem_Prev() else focusElem_Next(); }
+      // ^^ tab w/o alt should be regular next-nav, but w/o arming scroll-end .. (and w/ alt, shouldnt get here w krusty impl)
+      // arrow nav :
       else if (e.key == "ArrowUp")    focusElem_Prev()
       else if (e.key == "ArrowDown")  focusElem_Next()
       else if (e.key == "PageUp")     focusElem_Top()
       else if (e.key == "PageDown")   focusElem_Bottom()
 
+      else if (e.key == " ") {
+            if (e.ctrlKey || !inSearchState)    handleReq_CurElemActivation()
+            else { setupSearchbox (doPassthrough = true) }
+      }
+
       else if (!inSearchState) {
          // these are enabled in normal mode but disabled in search-state (with or without alt)
-         if      (e.key == " ")              handleReq_CurElemActivation()
-         // arrow group-nav
-         else if (e.key == "ArrowLeft")      focusGroup_Prev()
+         if      (e.key == "ArrowLeft")      focusGroup_Prev()
          else if (e.key == "ArrowRight")     focusGroup_Next()
           // for other keys while not in search-state, we'll activate search-state and let it propagate to searchbox
-         else if (!e.altKey) { setupSearchbox (doPassthrough = true) } // for search state
+         else if (!e.altKey) { setupSearchbox (doPassthrough = true) } // in non-search state
       }
-      else if (!e.altKey) { setupSearchbox (doPassthrough = true) } // for non-search state
+      else if (!e.altKey) { setupSearchbox (doPassthrough = true) } // in search state
+      
       
       // global ctrl hotkeys
       if (e.ctrlKey) {
+         preventDefault = true
          if      (e.key == "r")  RibbonDisplay.handleRefreshBtnClick()   // note: ctrl-r for refresh is not available w krusty (due to l2 overloading)
          else if (e.key == "f")  RibbonDisplay.handleRefreshBtnClick()   // so we'll also allow ctrl-f for 'fresh'.. meh
          else if (e.key == "g")  handleReq_GroupModeToggle()
          else if (e.key == "w")  handleReq_CurElemClose()
-         else if (e.key == "v")  handleReq_CurElemPeek()
-         else if (e.key == "z")  handleReq_CurElemMinimize()
-         else if (e.key == "x")  handleReq_CurElemMaximize()
+         else if (e.key == "p")  handleReq_CurElemPeek()
+         //else if (e.key == "z")  handleReq_CurElemMinimize()    // disabled to allow for use in search-box instead
+         //else if (e.key == "x")  handleReq_CurElemMaximize()
          // ^^ note that some of these e.g. z/x are awkward but worth doing it that way to keep them left handed (to work well w krusty l2)
+         else if (searchBoxCtrlKeys.contains(e.key)) { preventDefault = false }
+         // ^^ we want a few keys to have natural ctrl-combo action .. e.g left-right arrows, delete/bksp, ctr-a/x/c/v/z/y
          else { setupSearchbox (doPassthrough = true) }
       }
       
+      
       // global alt (and alt-ctrl) hotkeys
       if (e.altKey) { // special handling ONLY for alt keys (the above apply whether alt or not)
+         preventDefault = true
          if (e.ctrlKey || e.shiftKey) {
             val key = e.key.toLowerCase()
             // ^^ ctrl works if not w/ krusty, but else we need shift (as caps-as-ctrl for some of these maps to arrow keys)
@@ -242,10 +292,14 @@ object SwitcheFacePage {
          else if (e.key == "F4") { handleReq_SwitcheQuit() }
          //else if (e.key == " ")  { scrollEnd_disarm(); setupSearchbox (doPassthrough = false); }
          // ^^ cant do alt-space as in windows OS intercepts it before it reaches the browser .. so we'll set up alternatives:
-         else if (e.key == "s")  { scrollEnd_disarm(); setupSearchbox (doPassthrough = false); }
-         else if (e.key == "l")  { scrollEnd_disarm(); setupSearchbox (doPassthrough = false); }
          else { } // we'll ignore alt-combos for the searchbox
       }
+      
+      if (scrollEnd_armed || e.altKey) {
+         if (e.key == "s" || e.key == "l")  {
+            e.preventDefault(); scrollEnd_disarm();
+            setupSearchbox (doPassthrough = false);
+      } }
       
       eventPassthroughGuarded()
       // ^^ basically all key-down events other than for propagation to searchbox should end here!!
@@ -271,6 +325,8 @@ object SwitchePageState {
    var isHoverLocked = false; var lastActionStamp = 0d;
    // ^^ hover-lock flag locks-out mouseover, and is intended to be set (w small timeout) while mouse scrolling/clicks etc
    // .. and that prevents mouse jiggles from screwing up any in-preogress mouse scrolls, clicks, key-nav etc
+   var isFreshRendered = true;
+   // ^^ mouse-enter retriggers after repaint w/o mouse movement, so we'll use this flag to ignore the first event after repaint
 
 
    def recentsId (hwnd:Int) = s"${hwnd}_r"
@@ -279,7 +335,7 @@ object SwitchePageState {
 
 
    def handleReq_SwitcheEscape () = { //println("dismissed")
-      isDismissed = true;
+      scrollEnd_disarm(); setDismissed()
       SendMsgToBack.FE_Req_SwitcheEscape()
       // we'll do a delayed focus-reset so the visual flip happens out of sight after switche window is gone
       js.timers.setTimeout(300) {  SwitchePageState.resetFocus() }
@@ -289,8 +345,8 @@ object SwitchePageState {
    }
    
    def handleReq_CurElemActivation() : Unit = {
+      scrollEnd_disarm(); setDismissed()
       idToHwnd (curElemId) .foreach ( SendMsgToBack.FE_Req_WindowActivate )
-      isDismissed = true;
       js.timers.setTimeout(300) {   // again, small delay to avoid visible change
          if (SwitchePageState.inSearchState) { SwitchePageState.exitSearchState() }
          SwitchePageState.resetFocus()
@@ -302,8 +358,9 @@ object SwitchePageState {
    def handleReq_CurElemPeek()     = { idToHwnd (curElemId) .foreach ( SendMsgToBack.FE_Req_WindowPeek     ) }
    
 
-   def handleMouseEnter (elem:Div) = {
-      if (!isHoverLocked) { setCurElemHighlight(elem) }
+   def handleMouseEnter (elem:Div) = { println("mouse enter!")
+      if (!isHoverLocked && !isFreshRendered) { setCurElemHighlight(elem) }
+      isFreshRendered = false
    }
    def handleHoverLockTimeout (kickerStamp:Double) = {
       if (lastActionStamp == kickerStamp) { isHoverLocked = false }
@@ -433,9 +490,13 @@ object SwitchePageState {
       }
    }
 
-   def activateSearchBox () = { RibbonDisplay.searchBox.focus() }
+   def activateSearchBox () = {
+      RibbonDisplay.searchBox.disabled = false;
+      RibbonDisplay.searchBox.focus()
+   }
    def exitSearchState() = {
-      inSearchState = false; RibbonDisplay.searchBox.value = ""; RibbonDisplay.searchBox.blur();
+      inSearchState = false; RibbonDisplay.searchBox.value = "";
+      RibbonDisplay.blurSearchBox()
       RenderSpacer.immdtRender()
    }
 
@@ -495,7 +556,7 @@ object SwitchePageState {
    def getIdfnVecAndMap(elemT:ElemT) = {
       if (elemT == ElemTs.G) { (groupedId _, groupedIdsVec, groupedElemsMap) } else { (recentsId _, recentsIdsVec, recentsElemsMap) }
    }
-   def resetFocus() = { //println("reset-focus")
+   def resetFocus() = { println("reset-focus")
       recentsIdsVec.headOption.foreach(setCurElem); focusElem_Next()
    }
    def resetSearchMatchFocus() : Unit = {
@@ -614,6 +675,9 @@ object ElemsDisplay {
       } }
       clearedElem(elemsDiv) .appendChild (searchedDiv.render)
       reSyncCurFocusIdAfterRebuild()
+      //triggerHoverLockTimeout()     // coz newly built elems seem to get the first mouse-enter w/o any mouse movement
+      // ^^ gaah that makes ui a bit janky, so we moved to using a special first-render-after-repaint flag
+      isFreshRendered = true
    }
 }
 
@@ -623,11 +687,24 @@ object RibbonDisplay {
    import Switche._
    val countSpan = span (`class`:="dragSpan").render
    val debugLinks = span ().render
+   val armedIndicator = span (`class`:="armedIndicator", "").render   // content is set in css
    val searchBox = input (`type`:="text", id:="searchBox", placeholder:="").render
+   def blurSearchBox() = {
+      //searchBox.blur()
+      //Try { doc.activeElement.asInstanceOf[HTMLElement] } .toOption .foreach(_.blur())
+      //Option (doc.querySelector(s".curElem")) .flatMap (e => Try { e.asInstanceOf[HTMLElement] }.toOption) .foreach(_.blur())
+      //window.focus()
+      //countSpan.focus()
+      
+      // gaah .. in theory, any of ^^ these should work, and they do remove the blinking cursor from there ..
+      // however, in our particular case, we had added text cursor highlight in windows, and that seems to persist even w/o focus!
+      // .. so we'll just disable the whole searchbox instead .. oh well
+      searchBox.disabled = true
+   }
    // note: ^^ all key handling is now done at doc level capture phase (which selectively allows char updates etc to filter down to searchBox)
    def updateCountsSpan () : Unit = {
       val count = renderList.length
-      clearedElem(countSpan) .appendChild ( span ( nbsp(3), s"($count) ※", nbsp(3) ).render )
+      clearedElem(countSpan) .appendChild ( span ( nbsp(3), s"($count)", nbsp(2), " ※ ", nbsp(2) ).render )
    }
    def updateDebugLinks() : Unit = {
       clearElem(debugLinks)
@@ -640,13 +717,17 @@ object RibbonDisplay {
       // we want to refresh too (as do periodic calls elsewhere), but here we want to also force icons-refresh
       SendMsgToBack.FE_Req_Refresh()
    }
+   def setArmedIndicator_On  () = { armedIndicator.classList.add("armed") }
+   def setArmedIndicator_Off () = { armedIndicator.classList.remove("armed") }
+   
    def getTopRibbonDiv() = {
       val reloadLink = a (href:="#", "Reload", onclick:={(e:MouseEvent) => g.window.location.reload()} )
       val refreshLink = a (href:="#", "Refresh", onclick:={(e:MouseEvent) => handleRefreshBtnClick()} )
       val groupModeLink = a (href:="#", "ToggleGrouping", onclick:={(e:MouseEvent) => handleReq_GroupModeToggle()} )
       //val dragSpot = span (style:="-webkit-app-region:drag", nbsp(3), "※", nbsp(3)) // combined with count instead
       div ( id:="top-ribbon",
-         nbsp(0), reloadLink, nbsp(4), refreshLink, nbsp(4), groupModeLink, countSpan, debugLinks, nbsp(4), searchBox
+         nbsp(0), reloadLink, nbsp(4), refreshLink, nbsp(4), groupModeLink,
+         countSpan, armedIndicator, debugLinks, nbsp(2), searchBox
       ).render
    }
 }

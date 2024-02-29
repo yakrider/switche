@@ -19,6 +19,7 @@
   --exe-color: #bbc18f;
   --yspan-color: #5c9d4d;
   --dim-color: grey;
+  --armed-color: #ff8080;
 }
 
 body {
@@ -44,6 +45,10 @@ body {
   -webkit-app-region: drag;
   cursor: move;   /* doesnt show up due to -webkit-app-region bug in win-os, at least in this electron version */
 }
+
+.armedIndicator { font-weight: bold; font-size: 14px; color: var(--dim-color); }
+.armedIndicator:before { content: "Ⓐ"; }
+.armedIndicator.armed { color: var(--armed-color); }
 
 #searchBox {
   background: var(--background-color);

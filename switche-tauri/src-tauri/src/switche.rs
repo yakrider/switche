@@ -26,7 +26,7 @@ use windows::Win32::UI::Accessibility::{HWINEVENTHOOK, SetWinEventHook};
 use windows::Win32::UI::WindowsAndMessaging::{
     EnumWindows, EVENT_OBJECT_CLOAKED, EVENT_OBJECT_CREATE, EVENT_OBJECT_DESTROY, EVENT_OBJECT_FOCUS,
     EVENT_OBJECT_HIDE, EVENT_OBJECT_NAMECHANGE, EVENT_OBJECT_SHOW, EVENT_OBJECT_UNCLOAKED,
-    EVENT_SYSTEM_FOREGROUND, EVENT_SYSTEM_MINIMIZEEND, GetMessageW, MSG};
+    EVENT_SYSTEM_FOREGROUND, EVENT_SYSTEM_MINIMIZESTART, EVENT_SYSTEM_MINIMIZEEND, GetMessageW, MSG};
 
 use crate::*;
 
@@ -263,7 +263,7 @@ impl SwitcheState {
             let ss = self.clone();
             let tp = trigger_pending.clone();
             // we'll set up a delay to reduce thrashing from bunched up trains of events that the OS often sends
-            let delay = if self.enum_do_light.check() {20} else {100};
+            let delay = 10 + if self.enum_do_light.check() {20} else {100};
             spawn ( move || {
                 sleep (Duration::from_millis(delay));
                 tp.clear();
@@ -328,7 +328,7 @@ impl SwitcheState {
             tmp.hwnd = hwnd;
             hmap.insert (hwnd,tmp);
         }
-        let mut wde = hmap.get_mut(&hwnd).unwrap();
+        let wde = hmap.get_mut(&hwnd).unwrap();
 
         let mut should_emit = false;
 
@@ -490,7 +490,7 @@ impl SwitcheState {
 
         spawn ( move || unsafe {
             SetWinEventHook( 0x0003, 0x0003, HINSTANCE::default(), Some(Self::win_event_hook_cb), 0, 0, 0);
-            SetWinEventHook( 0x0017, 0x0017, HINSTANCE::default(), Some(Self::win_event_hook_cb), 0, 0, 0);
+            SetWinEventHook( 0x0016, 0x0017, HINSTANCE::default(), Some(Self::win_event_hook_cb), 0, 0, 0);
 
             SetWinEventHook( 0x8000, 0x8005, HINSTANCE::default(), Some(Self::win_event_hook_cb), 0, 0, 0);
             SetWinEventHook( 0x800C, 0x800C, HINSTANCE::default(), Some(Self::win_event_hook_cb), 0, 0, 0);
@@ -515,8 +515,9 @@ impl SwitcheState {
             // todo: prob need to figure out actual logging w debug/run switches .. theres samples incl in the other repo
             match event {
                 //
-                EVENT_SYSTEM_FOREGROUND   =>  SwitcheState::instance().proc_win_report__fgnd_hwnd      (hwnd.0),
-                EVENT_SYSTEM_MINIMIZEEND  =>  SwitcheState::instance().proc_win_report__fgnd_hwnd      (hwnd.0),
+                EVENT_SYSTEM_FOREGROUND    =>  SwitcheState::instance().proc_win_report__fgnd_hwnd     (hwnd.0),
+                EVENT_SYSTEM_MINIMIZESTART =>  SwitcheState::instance().proc_win_report__minimized     (hwnd.0),
+                EVENT_SYSTEM_MINIMIZEEND   =>  SwitcheState::instance().proc_win_report__minimize_end  (hwnd.0),
                 //
                 EVENT_OBJECT_CREATE       =>  SwitcheState::instance().proc_win_report__obj_shown      (hwnd.0),
                 EVENT_OBJECT_DESTROY      =>  SwitcheState::instance().proc_win_report__obj_destroyed  (hwnd.0),
@@ -535,6 +536,7 @@ impl SwitcheState {
     pub fn _stamp (&self) -> u128 { SystemTime::UNIX_EPOCH.elapsed().unwrap().as_millis() }
 
     pub fn proc_win_report__title_changed (&self, hwnd:Hwnd) {
+        println! ("@{:?} title-changed: {:?}", self._stamp(), hwnd);
         // first off, if its for something not in renderlist, just ignore it
         if self.hwnd_map.read().unwrap() .get(&hwnd) .filter (|wde| wde.should_exclude == Some(false)) .is_none() { return }
         // things like this IDE seem to give piles of window-level title-change events just while typing, w/o title change .. so filter them
@@ -551,7 +553,7 @@ impl SwitcheState {
     }
 
     pub fn proc_win_report__fgnd_hwnd (&self, hwnd:Hwnd) {
-        //println!("@{:?} fgnd: {:?}",self._stamp(),hwnd);
+        println! ("@{:?} fgnd: {:?}", self._stamp(), hwnd);
         // we'll set its icon to be refreshed, then process it, and queue up a 'light' (ordering only) enum-windows call
         // plus, we'll update self-fgnd state if either this is self hwnd, or if its a valid renderable hwnd coming to fgnd
         self.hwnd_map.read().unwrap() .get(&hwnd) .map (|wde| self.icons_m.mark_cached_icon_mapping_stale(wde));
@@ -563,9 +565,22 @@ impl SwitcheState {
             self.is_fgnd.set()
         }
     }
+    pub fn proc_win_report__minimize_end (&self, hwnd:Hwnd) {
+        println! ("@{:?} minimize-ended: {:?}", self._stamp(), hwnd);
+        // ehh, we can just treat this as a fgnd report (other than the printout above for identification)
+        self.proc_win_report__fgnd_hwnd(hwnd);
+    }
+
+    pub fn proc_win_report__minimized (&self, hwnd:Hwnd) {
+        println! ("@{:?} minimized: {:?}", self._stamp(), hwnd);
+        // we only really want to query/update z-order here if this was in our windows list
+        if self.process_discovered_hwnd (hwnd, false) {
+            self.trigger_enum_windows_query_pending(true);
+        }
+    }
 
     pub fn proc_win_report__obj_shown (&self, hwnd:Hwnd) {
-        //println!("@{:?} obj-shown: {:?}",self._stamp(),hwnd);
+        println! ("@{:?} obj-shown: {:?}", self._stamp(), hwnd);
 
         // first off, if this was in our list, we'll prime it to have icon refreshed on processing
         self.hwnd_map.read().unwrap() .get(&hwnd) .map (|wde| self.icons_m.mark_cached_icon_mapping_stale(wde));
@@ -588,7 +603,7 @@ impl SwitcheState {
         if !attempt_hwnd_processing (hwnd, &self) && should_recheck_uwp (hwnd, &self) {
             let ss = self.clone();
             spawn ( move || {
-                let mut n_trials = 5;
+                let mut n_trials = 8;
                 while should_recheck_uwp (hwnd, &ss) && n_trials > 0 {
                     n_trials -= 1;
                     sleep(Duration::from_millis(500));
@@ -600,7 +615,7 @@ impl SwitcheState {
     }
 
     pub fn proc_win_report__obj_destroyed (&self, hwnd:Hwnd) {
-        //println!("@{:?} obj-destroyed: {:?}",self._stamp(),hwnd);
+        println! ("@{:?} obj-destroyed: {:?}", self._stamp(), hwnd);
         // if we werent even showing this object, we're done, else queue up a enum-trigger
         if self.hwnd_map.read().unwrap() .get(&hwnd) .filter (|wde| wde.should_exclude == Some(false)) .is_some() {
             // its in our maps, so lets process it, but if processing now rejects it, we should remove it from map
@@ -704,6 +719,7 @@ impl SwitcheState {
         }) });
         self.emit_render_lists_queued(true);
         // then we'll trigger a refresh too
+        self.render_lists_m.clear_grouping();
         self.icons_m.mark_all_cached_icon_mappings_stale();
         self.trigger_enum_windows_query_pending(false);    // this will also trigger a renderlist push once the call is done
     }
@@ -855,27 +871,24 @@ impl SwitcheState {
     /*****  tauri registered hotkeys handling   ******/
 
 
-    pub fn proc_hot_key__invoke (&self) {
-        // for all practical purposes invoke is the same as scroll-down
-        // (as we want even the first invocation to highlight second top list entry for quick switch behavior)
-        self.proc_hot_key__scroll_down();
-        //self.emit_backend_notice(hotkey_req__app_invoke)
-    }
-    pub fn proc_hot_key__scroll_down (&self) {
-        // we'll ensure the app window is up, then let the frontend deal w it
-        self.emit_backend_notice (Backend_Notice::hotkey_req__scroll_down);
-        if self.is_dismissed.check() || self.render_lists_m.self_hwnd() != win_apis::get_fgnd_window() {
-            self.self_window_activate();
-            self.handle_event__switche_fgnd();
-        }
-    }
-    pub fn proc_hot_key__scroll_up (&self) {
-        // again, we'll ensure the app window is up, then let the frontend deal w it
-        self.emit_backend_notice (Backend_Notice::hotkey_req__scroll_up);
+    fn checked_self_activate (&self) {
         if self.is_dismissed.check() || self.render_lists_m.self_hwnd() != win_apis::get_fgnd_window() {
             self.self_window_activate();
             self.handle_event__switche_fgnd()
         }
+    }
+    pub fn proc_hot_key__invoke (&self) {
+        // we'll ensure the app window is up, then let the frontend deal w it
+        self.checked_self_activate();
+        self.emit_backend_notice(Backend_Notice::hotkey_req__app_invoke)
+    }
+    pub fn proc_hot_key__scroll_down (&self) {
+        self.checked_self_activate();
+        self.emit_backend_notice (Backend_Notice::hotkey_req__scroll_down);
+    }
+    pub fn proc_hot_key__scroll_up (&self) {
+        self.checked_self_activate();
+        self.emit_backend_notice (Backend_Notice::hotkey_req__scroll_up);
     }
     pub fn proc_hot_key__scroll_end (&self) {
         // this requires activating the current elem in frontend, so we'll just send a msg over to frontend
@@ -902,13 +915,14 @@ impl SwitcheState {
         let ss = self.clone();  let _ = gsm.register ( "Super+Shift+F12", move || ss.proc_hot_key__scroll_up()            );
         let ss = self.clone();  let _ = gsm.register ( "F15",             move || ss.proc_hot_key__invoke()               );
         let ss = self.clone();  let _ = gsm.register ( "F16",             move || ss.proc_hot_key__scroll_down()          );
+        let ss = self.clone();  let _ = gsm.register ( "Shift+F16",       move || ss.proc_hot_key__scroll_up()            );
         let ss = self.clone();  let _ = gsm.register ( "F17",             move || ss.proc_hot_key__scroll_up()            );
         let ss = self.clone();  let _ = gsm.register ( "Ctrl+F18",        move || ss.proc_hot_key__scroll_end()           );
         let ss = self.clone();  let _ = gsm.register ( "Ctrl+Alt+F19",    move || ss.proc_hot_key__switch_last()          );
         let ss = self.clone();  let _ = gsm.register ( "Ctrl+Alt+F20",    move || ss.proc_hot_key__switch_tabs_outliner() );
         let ss = self.clone();  let _ = gsm.register ( "Ctrl+Alt+F21",    move || ss.proc_hot_key__switch_notepad_pp()    );
         let ss = self.clone();  let _ = gsm.register ( "Ctrl+Alt+F22",    move || ss.proc_hot_key__switch_ide()           );
-        let ss = self.clone();  let _ = gsm.register ( "Ctrl+Alt+F23",    move || ss.proc_hot_key__switch_music()        );
+        let ss = self.clone();  let _ = gsm.register ( "Ctrl+Alt+F23",    move || ss.proc_hot_key__switch_music()         );
         let ss = self.clone();  let _ = gsm.register ( "Ctrl+Alt+F24",    move || ss.proc_hot_key__switch_browser()       );
 
     }
@@ -1080,6 +1094,10 @@ impl RenderReadyListsManager {
             let ge = self.grp_sorting_map.read().unwrap() .get(exe_path) .copied(); // split to end read scope
             ge .iter() .for_each (|ge| self.update_entry (exe_path, *ge, perc_idx))
         }
+    }
+
+    fn clear_grouping (&self) {
+        self.grp_sorting_map.write().unwrap().clear()
     }
 
 

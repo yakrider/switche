@@ -1,20 +1,17 @@
-#![allow(non_upper_case_globals)]
+#![ allow (non_upper_case_globals, non_snake_case) ]
 
-use std::any::Any;
 use std::ffi::{c_void};
 use std::mem::size_of;
-use std::ops::Deref;
 use std::ptr;
-use std::string::FromUtf16Error;
 use std::sync::{Arc, Mutex, RwLock};
 use once_cell::sync::Lazy;
 
-use windows::core::{GUID, HSTRING, Interface, PCWSTR, PSTR, PWSTR};
+use windows::core::{GUID, Interface, PCWSTR, PSTR, PWSTR};
 use windows::Win32::Foundation::{BOOL, CloseHandle, HANDLE, HWND, LPARAM, WPARAM};
 use windows::Win32::Graphics::Dwm::{DwmGetWindowAttribute, DWMWA_CLOAKED};
-use windows::Win32::Storage::Packaging::Appx::{GetApplicationUserModelId, GetPackageId, GetPackagePath, GetPackagePathByFullName, GetPackagesByPackageFamily, ParseApplicationUserModelId};
-use windows::Win32::System::Com::StructuredStorage::PROPVARIANT;
-use windows::Win32::System::Threading::{OpenProcess, PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION, QueryFullProcessImageNameA};
+use windows::Win32::Security::TOKEN_READ;
+use windows::Win32::Storage::Packaging::Appx::{GetApplicationUserModelId, GetPackagePathByFullName, GetPackagesByPackageFamily, ParseApplicationUserModelId};
+use windows::Win32::System::Threading::{GetCurrentProcess, OpenProcess, OpenProcessToken, PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION, QueryFullProcessImageNameA};
 use windows::Win32::UI::Shell::PropertiesSystem::{IPropertyStore, PROPERTYKEY, SHGetPropertyStoreForWindow};
 use windows::Win32::UI::WindowsAndMessaging::{GetForegroundWindow, GetWindowPlacement, ShowWindow, GetWindowTextW, IsWindowVisible, GetAncestor, GetWindowThreadProcessId, PostMessageA, SetForegroundWindow, ShowWindowAsync, GetWindowLongW, WINDOWPLACEMENT, WM_CLOSE, SW_HIDE, SW_MAXIMIZE, SW_MINIMIZE, SW_RESTORE, SW_SHOW, SW_SHOWMINIMIZED, WS_CHILD, GWL_STYLE, GA_ROOTOWNER, WS_EX_TOOLWINDOW, GWL_EXSTYLE, EnumChildWindows};
 
@@ -135,44 +132,44 @@ pub fn get_aumid_from_hwnd (hwnd:Hwnd) -> Option<String> { unsafe {
     let mut aum_id_buf_len = AUMID_MAX_LEN as u32;
     let aum_id_res = GetApplicationUserModelId ( handle.to_owned().unwrap(), &mut aum_id_buf_len, PWSTR::from_raw(aum_id_buf.as_mut_ptr())); dbg!(&aum_id_res);
     if aum_id_res.is_err() { return None }
-    dbg!(PWSTR::from_raw(aum_id_buf.as_mut_ptr()).to_string());
+    let _ = dbg!(PWSTR::from_raw(aum_id_buf.as_mut_ptr()).to_string());
     None
 } }
 
 pub fn get_package_path_from_hwnd (hwnd:Hwnd) -> Option<String> { unsafe {
 
     let mut store = ptr::null_mut();
-    let result = unsafe { SHGetPropertyStoreForWindow(HWND(hwnd), &IPropertyStore::IID, &mut store) };
+    let result = SHGetPropertyStoreForWindow(HWND(hwnd), &IPropertyStore::IID, &mut store);
     //result.expect("SHGetPropertyStoreForWindow failed");
     if result.ok().is_none() { return None }
     if store.is_null() { return None }
     //let store : IPropertyStore = unsafe { core::mem::transmute(store) };
 
     // (alternatively, a bit more explicitly cautious about types:)
-    let store = unsafe { core::mem::transmute::<*mut c_void, IPropertyStore>(store) };
+    let store = core::mem::transmute::<*mut c_void, IPropertyStore>(store);
 
     //dbg!(&store);
 
     let PKEY_AppUserModel_ID = PROPERTYKEY {fmtid: GUID::from("9F4C2855-9F79-4B39-A8D0-E1D42DE1D5F3"), pid:5 };
     //let PKEY_AppUserModel_ID = &IPropertyStore::
-    let res = store.GetCount();
+    let _res = store.GetCount();
     //dbg!(res);
-    let res = store.GetValue ( &PKEY_AppUserModel_ID as *const _ );
+    let _res = store.GetValue ( &PKEY_AppUserModel_ID as *const _ );
     //dbg!(&res.is_err());
     //dbg!(&res.unwrap().Anonymous.Anonymous.Anonymous.pwszVal.to_string());
     //dbg!(&res.clone().unwrap().Anonymous.Anonymous.Anonymous.pwszVal.to_string());
 
-    let aumid = res.unwrap().Anonymous.Anonymous.Anonymous.pwszVal;
+    let aumid = _res.unwrap().Anonymous.Anonymous.Anonymous.pwszVal;
 
 
     let mut pkg_fam_name_len = 0u32;
     let mut pkg_rel_app_name_len = 0u32;
-    let res = ParseApplicationUserModelId (PCWSTR(aumid.as_ptr()), &mut pkg_fam_name_len, PWSTR::null(), &mut pkg_rel_app_name_len, PWSTR::null());
+    let _res = ParseApplicationUserModelId (PCWSTR(aumid.as_ptr()), &mut pkg_fam_name_len, PWSTR::null(), &mut pkg_rel_app_name_len, PWSTR::null());
     //dbg! ((res, pkg_fam_name_len, pkg_rel_app_name_len));
 
     let mut pkg_fam_name     : Vec<u16> = Vec::with_capacity (pkg_fam_name_len as _);
     let mut pkg_rel_app_name : Vec<u16> = Vec::with_capacity (pkg_rel_app_name_len as _);
-    let res = ParseApplicationUserModelId ( PCWSTR(aumid.as_ptr()),
+    let _res = ParseApplicationUserModelId ( PCWSTR(aumid.as_ptr()),
                                             &mut pkg_fam_name_len,     PWSTR::from_raw (pkg_fam_name.as_mut_ptr()),
                                             &mut pkg_rel_app_name_len, PWSTR::from_raw (pkg_rel_app_name.as_mut_ptr() ),
     );
@@ -180,27 +177,27 @@ pub fn get_package_path_from_hwnd (hwnd:Hwnd) -> Option<String> { unsafe {
 
     let mut num_pkg_full_names = 0u32;
     let mut buf_len = 0u32;
-    let res = GetPackagesByPackageFamily (PCWSTR(pkg_fam_name.as_ptr()), &mut num_pkg_full_names, None, &mut buf_len, PWSTR::null());
-    //dbg! ((&res, num_pkg_full_names, buf_len));
+    let _res = GetPackagesByPackageFamily (PCWSTR(pkg_fam_name.as_ptr()), &mut num_pkg_full_names, None, &mut buf_len, PWSTR::null());
+    //dbg! ((&_res, num_pkg_full_names, buf_len));
 
     let mut pkg_full_names : Vec<*const PWSTR> = Vec::with_capacity (num_pkg_full_names as _);
     let mut buf : Vec<u16> = Vec::with_capacity (buf_len as _);
-    let res = GetPackagesByPackageFamily ( PCWSTR(pkg_fam_name.as_ptr()),
+    let _res = GetPackagesByPackageFamily ( PCWSTR(pkg_fam_name.as_ptr()),
                                            &mut num_pkg_full_names,  Some(&mut PWSTR::from_raw(&mut pkg_full_names as *mut _ as _)),
                                            &mut buf_len,  PWSTR::from_raw(buf.as_mut_ptr()) );
-    //dbg!(&res);
-    //let res = GetPackagesByPackageFamily ( PCWSTR(pkg_fam_name.as_ptr()),
+    //dbg!(&_res);
+    //let _res = GetPackagesByPackageFamily ( PCWSTR(pkg_fam_name.as_ptr()),
     //                                       &mut num_pkg_full_names,  Some(&mut PWSTR::from_raw(&mut pkg_full_names as *mut _ as _)),
     //                                       ptr::null_mut(),  PWSTR::null() );
-    //dbg!(&res);
-    //let res = GetPackagesByPackageFamily ( PCWSTR(pkg_fam_name.as_ptr()),
+    //dbg!(&_res);
+    //let _res = GetPackagesByPackageFamily ( PCWSTR(pkg_fam_name.as_ptr()),
     //                                       ptr::null_mut(),  None,
     //                                       &mut buf_len,  PWSTR::from_raw(buf.as_mut_ptr()) );
-    //dbg!(&res);
-    //let res = GetPackagesByPackageFamily ( PCWSTR(pkg_fam_name.as_ptr()),
+    //dbg!(&_res);
+    //let _res = GetPackagesByPackageFamily ( PCWSTR(pkg_fam_name.as_ptr()),
     //                                       &mut num_pkg_full_names,  None,
     //                                       &mut buf_len,  PWSTR::from_raw(buf.as_mut_ptr()) );
-    //dbg!(&res);
+    //dbg!(&_res);
     //dbg! ( PWSTR::from_raw (pkg_full_names.as_mut_ptr()) .to_string() );
     //dbg! ( pkg_full_names.get(0) .map(|p| p.as_ref()).flatten().map(|p|p.to_hstring()) );
     //let mut full_names_vec = std::slice::from_raw_parts (pkg_full_names.as_mut_ptr() as *const PWSTR, num_pkg_full_names as _);
@@ -214,19 +211,19 @@ pub fn get_package_path_from_hwnd (hwnd:Hwnd) -> Option<String> { unsafe {
     //dbg! ( *pkg_full_names )
     //full_names_vec .iter() .for_each (|p| println! ("{:?}", p) );
 
-    ///dbg! ( PWSTR::from_raw (full_names_vec.as_ptr() as *mut _) .to_string() );
-    ///dbg! ( PWSTR::from_raw (full_names_vec[0].as_ptr()) .to_string() );
+    //dbg! ( PWSTR::from_raw (full_names_vec.as_ptr() as *mut _) .to_string() );
+    //dbg! ( PWSTR::from_raw (full_names_vec[0].as_ptr()) .to_string() );
     //full_names_vec .iter() .for_each (|p| println! ("{:?}", PWSTR::from_raw (p.as_ptr()) .to_string()) );
-    ///full_names_vec .iter() .for_each (|p| println! ("{:?}", p.to_string()) );
+    //full_names_vec .iter() .for_each (|p| println! ("{:?}", p.to_string()) );
 
     let package = PWSTR::from_raw (buf.as_mut_ptr()); //.to_string();
     // todo ^^ note that we'll pick up the first of possibly multiple packages in this family
 
     let mut pkg_path_len = 0u32;
-    let res = GetPackagePathByFullName (PCWSTR(package.as_ptr()), &mut pkg_path_len, PWSTR::null() );
+    let _res = GetPackagePathByFullName (PCWSTR(package.as_ptr()), &mut pkg_path_len, PWSTR::null() );
     //dbg!((res, pkg_path_len));
     let mut pkg_path : Vec<u16> = Vec::with_capacity(pkg_path_len as _);
-    let res = GetPackagePathByFullName (PCWSTR(package.as_ptr()), &mut pkg_path_len, PWSTR::from_raw(pkg_path.as_mut_ptr()));
+    let _res = GetPackagePathByFullName (PCWSTR(package.as_ptr()), &mut pkg_path_len, PWSTR::from_raw(pkg_path.as_mut_ptr()));
     //dbg! (res);
     //dbg! (PWSTR::from_raw(pkg_path.as_mut_ptr()).to_hstring());
 
@@ -235,6 +232,18 @@ pub fn get_package_path_from_hwnd (hwnd:Hwnd) -> Option<String> { unsafe {
 
 } }
 
+
+
+pub fn check_cur_proc_elevated() -> Option<bool> { unsafe {
+    check_proc_elevated (GetCurrentProcess())
+} }
+pub fn check_proc_elevated (h_proc:HANDLE) -> Option<bool> { unsafe {
+    let mut h_token = HANDLE::default();
+    let open_success = OpenProcessToken (h_proc, TOKEN_READ, &mut h_token);
+    if !open_success.as_bool() { return None }
+
+    None
+} }
 
 
 // we'll use a static rwlocked vec to store child-windows from callbacks, and a mutex to ensure only one child-windows call is active

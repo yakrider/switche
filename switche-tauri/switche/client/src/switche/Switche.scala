@@ -124,18 +124,21 @@ object Switche {
    
    val hwndMap = new mutable.HashMap[Hwnd,WinDatEntry] ()
    
-   var inElectronDevMode = false;
-   var inGroupedMode = true;
-   var isDismissed = false;
-   var scrollEnd_disarmed = false;
+   var inElectronDevMode = false
+   var inGroupedMode = true
+   var isDismissed = false
+   var scrollEnd_armed = false
 
    var renderList : Seq[RenderListEntry] = Seq()
    var groupedRenderList : Seq[Seq[RenderListEntry]] = Seq()
 
    val iconsCache = mutable.HashMap[Int,String]()
+   
+   def setDismissed() = { isDismissed = true }
+   def setNotDismissed() = { isDismissed = false }
   
-   def scrollEnd_arm()    = { scrollEnd_disarmed = false }
-   def scrollEnd_disarm() = { scrollEnd_disarmed = true }
+   def scrollEnd_arm()    = { scrollEnd_armed = true;  RibbonDisplay.setArmedIndicator_On() }
+   def scrollEnd_disarm() = { scrollEnd_armed = false; RibbonDisplay.setArmedIndicator_Off() }
    
    def main (args: Array[String]): Unit = {
       doc.addEventListener ( "DOMContentLoaded", { (e: dom.Event) =>
@@ -167,31 +170,33 @@ object Switche {
       RenderSpacer.immdtRender()
    }
    def procHotkey_Invoke() = {
-      // note: for all practical purposes, invoke must be scroll-down because successive invokes should scroll down the list
-      // (unless ofc we started tracking if switche is topmost, in which case, we could resetFocus upon invoke if not-topmost .. meh)
-      procHotkey_ScrollDown()
-   }
-   def procHotkey_ScrollDown() = {
+      // should be same as scroll-down, except we won't arm the scroll-end behavior (as its F1 invocation)
       SwitchePageState.triggerHoverLockTimeout()
-      if (isDismissed || scrollEnd_disarmed) {
+      if (isDismissed) {
+         setNotDismissed()
          SwitchePageState.resetFocus()
-         isDismissed = false; scrollEnd_arm()
       }
       else { SwitchePageState.focusElem_Next() }
    }
+   def procHotkey_ScrollDown() = {
+      // is the same as scrolling down upon invoke, except we'll arm scroll-end for alt-tab and right-mouse-scroll
+      scrollEnd_arm()
+      procHotkey_Invoke()
+   }
    def procHotkey_ScrollUp() = {
       SwitchePageState.triggerHoverLockTimeout()
-      if (isDismissed || scrollEnd_disarmed) {
+      scrollEnd_arm()
+      if (isDismissed) {
+         setNotDismissed()
          SwitchePageState.resetFocus()
-         isDismissed = false; scrollEnd_arm()
       }
       else { SwitchePageState.focusElem_Prev() }
    }
-   def procHotkey_ScrollEnd() = {
+   def procHotkey_ScrollEnd() = { println (s"scroll-end-armed-state: ${scrollEnd_armed}")
       SwitchePageState.triggerHoverLockTimeout()
       // note below that a scroll-end only has meaning if we're scrolling (and hence already active)
-      if (!isDismissed && !scrollEnd_disarmed) {
-         isDismissed = true; scrollEnd_disarm()
+      if (!isDismissed && scrollEnd_armed) {
+         //setDismissed(); scrollEnd_disarm()             // auto happens on cur-elem-activation below
          SwitchePageState.handleReq_CurElemActivation()
       }
    }
