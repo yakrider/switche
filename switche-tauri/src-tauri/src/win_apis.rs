@@ -10,10 +10,21 @@ use windows::core::{GUID, Interface, PCWSTR, PSTR, PWSTR};
 use windows::Win32::Foundation::{BOOL, CloseHandle, HANDLE, HWND, LPARAM, WPARAM};
 use windows::Win32::Graphics::Dwm::{DwmGetWindowAttribute, DWMWA_CLOAKED};
 use windows::Win32::Security::TOKEN_READ;
-use windows::Win32::Storage::Packaging::Appx::{GetApplicationUserModelId, GetPackagePathByFullName, GetPackagesByPackageFamily, ParseApplicationUserModelId};
-use windows::Win32::System::Threading::{GetCurrentProcess, OpenProcess, OpenProcessToken, PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION, QueryFullProcessImageNameA};
+use windows::Win32::Storage::Packaging::Appx::{
+    GetApplicationUserModelId, GetPackagePathByFullName, GetPackagesByPackageFamily, ParseApplicationUserModelId
+};
+use windows::Win32::System::Threading::{
+    GetCurrentProcess, HIGH_PRIORITY_CLASS, OpenProcess, OpenProcessToken, PROCESS_NAME_WIN32,
+    PROCESS_QUERY_LIMITED_INFORMATION, QueryFullProcessImageNameA, SetPriorityClass
+};
+use windows::Win32::UI::Input::KeyboardAndMouse::{GetKeyState, VK_SHIFT};
 use windows::Win32::UI::Shell::PropertiesSystem::{IPropertyStore, PROPERTYKEY, SHGetPropertyStoreForWindow};
-use windows::Win32::UI::WindowsAndMessaging::{GetForegroundWindow, GetWindowPlacement, ShowWindow, GetWindowTextW, IsWindowVisible, GetAncestor, GetWindowThreadProcessId, PostMessageA, SetForegroundWindow, ShowWindowAsync, GetWindowLongW, WINDOWPLACEMENT, WM_CLOSE, SW_HIDE, SW_MAXIMIZE, SW_MINIMIZE, SW_RESTORE, SW_SHOW, SW_SHOWMINIMIZED, WS_CHILD, GWL_STYLE, GA_ROOTOWNER, WS_EX_TOOLWINDOW, GWL_EXSTYLE, EnumChildWindows};
+use windows::Win32::UI::WindowsAndMessaging::{
+    GetForegroundWindow, GetWindowPlacement, ShowWindow, GetWindowTextW, IsWindowVisible, GetAncestor,
+    GetWindowThreadProcessId, PostMessageA, SetForegroundWindow, ShowWindowAsync, GetWindowLongW, WINDOWPLACEMENT,
+    WM_CLOSE, SW_HIDE, SW_MAXIMIZE, SW_MINIMIZE, SW_RESTORE, SW_SHOW, SW_SHOWMINIMIZED, WS_CHILD, GWL_STYLE,
+    GA_ROOTOWNER, WS_EX_TOOLWINDOW, GWL_EXSTYLE, EnumChildWindows, //SwitchToThisWindow
+};
 
 
 use crate::*;
@@ -57,12 +68,17 @@ pub fn window_activate (hwnd:Hwnd) { unsafe { println!("winapi activate {:?}",hw
     // ^^ this will cause minimized/maximized windows to be restored
     GetWindowPlacement (HWND(hwnd), &mut win_state);
     if win_state.showCmd == SW_SHOWMINIMIZED {
-        ShowWindowAsync (HWND(hwnd), SW_RESTORE);
+        //ShowWindowAsync (HWND(hwnd), SW_RESTORE);
+        ShowWindow (HWND(hwnd), SW_RESTORE);
     } else {
-        ShowWindowAsync (HWND(hwnd), SW_SHOW);
+        //ShowWindowAsync (HWND(hwnd), SW_SHOW);
+        ShowWindow (HWND(hwnd), SW_SHOW);
     }
     //keybd_event (0, 0, KEYBD_EVENT_FLAGS::default(), 0);
     SetForegroundWindow (HWND(hwnd));
+    // its a lil flaky, so we'll try the another call too, (plus the little delay from spawn should also help)
+    //std::thread::spawn (move || SwitchToThisWindow (HWND(hwnd), BOOL::from(true)) );
+    // ^^ appears basically the same as above calls, doesnt help when have issues, else isnt necessary
 } }
 
 
@@ -113,10 +129,10 @@ fn get_pid_exe_path (pid:u32) -> Option<String> { unsafe {
 
 pub fn get_uwp_hwnd_exe_path (hwnd:Hwnd) -> Option<String> { unsafe {
     let mut frame_host_pid : u32 = 0;
-    let _ = GetWindowThreadProcessId (HWND(hwnd), Some(&mut frame_host_pid));  if hwnd==657422 {println!("fh-pid--{:?}",(frame_host_pid));}
+    let _ = GetWindowThreadProcessId (HWND(hwnd), Some(&mut frame_host_pid));  //if hwnd==657422 {println!("fh-pid--{:?}",(frame_host_pid));}
     let uwp_pid = get_child_windows (hwnd) .iter() .map (|cwh| {
         let mut pid = 0u32;
-        let _ = GetWindowThreadProcessId (HWND(*cwh), Some(&mut pid));  if hwnd==657422 {println!("uwp-pid{:?}",(pid));}
+        let _ = GetWindowThreadProcessId (HWND(*cwh), Some(&mut pid));  //if hwnd==657422 {println!("uwp-pid{:?}",(pid));}
         pid
     } ) .filter (|pid| *pid != frame_host_pid) .collect::<Vec<u32>>();
     uwp_pid .first() .and_then (|&pid| get_pid_exe_path(pid))
@@ -243,6 +259,13 @@ pub fn check_proc_elevated (h_proc:HANDLE) -> Option<bool> { unsafe {
     if !open_success.as_bool() { return None }
 
     None
+} }
+pub fn win_set_cur_process_priority_high() -> bool { unsafe {
+    SetPriorityClass (GetCurrentProcess(), HIGH_PRIORITY_CLASS) .as_bool()
+} }
+
+pub fn check_shift_active () -> bool { unsafe {
+    GetKeyState (VK_SHIFT.0 as i32) & 0x80 != 0
 } }
 
 

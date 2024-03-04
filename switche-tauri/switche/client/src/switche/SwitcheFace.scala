@@ -240,9 +240,24 @@ object SwitcheFacePage {
             if (e.ctrlKey || !inSearchState)    handleReq_CurElemActivation()
             else { setupSearchbox (doPassthrough = true) }
       }
-
+      
+      else if (scrollEnd_armed || e.altKey) {
+         // alt-tab state key nav options
+         if      (e.key == "i")  focusElem_Prev()
+         else if (e.key == ",")  focusElem_Next()
+         else if (e.key == "u")  focusElem_Top()
+         else if (e.key == "m")  focusElem_Bottom()
+         else if (e.key == "j")  focusGroup_Prev()
+         else if (e.key == "k")  focusGroup_Next()
+         else if (e.key == "ArrowLeft")   focusGroup_Prev()
+         else if (e.key == "ArrowRight")  focusGroup_Next()
+         else if (e.key == "s" || e.key == "l" || e.key == "S" || e.key == "L")  {
+            e.preventDefault(); scrollEnd_disarm(); setupSearchbox (doPassthrough = false)
+         }
+      }
+      
       else if (!inSearchState) {
-         // these are enabled in normal mode but disabled in search-state (with or without alt)
+         // these are enabled in normal mode but disabled in search-state (without alt)
          if      (e.key == "ArrowLeft")      focusGroup_Prev()
          else if (e.key == "ArrowRight")     focusGroup_Next()
           // for other keys while not in search-state, we'll activate search-state and let it propagate to searchbox
@@ -250,6 +265,7 @@ object SwitcheFacePage {
       }
       else if (!e.altKey) { setupSearchbox (doPassthrough = true) } // in search state
       
+
       
       // global ctrl hotkeys
       if (e.ctrlKey) {
@@ -281,26 +297,14 @@ object SwitcheFacePage {
             else if (key == "m" ) { SendMsgToBack.FE_Req_Switch_Music()        }
             else if (key == "b" ) { SendMsgToBack.FE_Req_Switch_Browser()      }
          }
-         // krusty eqv nav for alt (to support alt tab usage) (note that some of these will overlap the alt-ctrl(/shift above)
-         else if (e.key == "i")  focusElem_Prev()
-         else if (e.key == ",")  focusElem_Next()
-         else if (e.key == "u")  focusElem_Top()
-         else if (e.key == "m")  focusElem_Bottom()
-         else if (e.key == "j")  focusGroup_Prev()
-         else if (e.key == "k")  focusGroup_Next()
          // alt-specific hotkeys
          else if (e.key == "F4") { handleReq_SwitcheQuit() }
          //else if (e.key == " ")  { scrollEnd_disarm(); setupSearchbox (doPassthrough = false); }
-         // ^^ cant do alt-space as in windows OS intercepts it before it reaches the browser .. so we'll set up alternatives:
+         // ^^ cant do alt-space as in windows OS intercepts it before it reaches the browser .. so we'll rely on ctrl-space as above
          else { } // we'll ignore alt-combos for the searchbox
       }
       
-      if (scrollEnd_armed || e.altKey) {
-         if (e.key == "s" || e.key == "l")  {
-            e.preventDefault(); scrollEnd_disarm();
-            setupSearchbox (doPassthrough = false);
-      } }
-      
+
       eventPassthroughGuarded()
       // ^^ basically all key-down events other than for propagation to searchbox should end here!!
    }
@@ -334,9 +338,9 @@ object SwitchePageState {
    def idToHwnd (idStr:String) = idStr.split("_") .headOption .flatMap (s => Try(s.toInt).toOption)
 
 
-   def handleReq_SwitcheEscape () = { //println("dismissed")
+   def handleReq_SwitcheEscape (fromBkndHotkey:Boolean = false) = { //println("dismissed")
       scrollEnd_disarm(); setDismissed()
-      SendMsgToBack.FE_Req_SwitcheEscape()
+      if (!fromBkndHotkey) { SendMsgToBack.FE_Req_SwitcheEscape() }
       // we'll do a delayed focus-reset so the visual flip happens out of sight after switche window is gone
       js.timers.setTimeout(300) {  SwitchePageState.resetFocus() }
    }
@@ -688,7 +692,7 @@ object RibbonDisplay {
    val countSpan = span (`class`:="dragSpan").render
    val debugLinks = span ().render
    val armedIndicator = span (`class`:="armedIndicator", "").render   // content is set in css
-   val searchBox = input (`type`:="text", id:="searchBox", placeholder:="").render
+   val searchBox = input (`type`:="text", autocomplete:="off", id:="searchBox", placeholder:="").render
    def blurSearchBox() = {
       //searchBox.blur()
       //Try { doc.activeElement.asInstanceOf[HTMLElement] } .toOption .foreach(_.blur())

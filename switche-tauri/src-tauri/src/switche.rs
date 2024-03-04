@@ -8,6 +8,7 @@
 
 use std::collections::{HashMap, HashSet};
 use std::ops::{Deref};
+use std::os::raw::c_int;
 use std::sync::Arc;
 //use no_deadlocks::RwLock;
 use std::sync::RwLock;
@@ -21,12 +22,18 @@ use serde::{Deserialize, Serialize};
 use strum_macros::{AsRefStr};
 use tauri::{AppHandle, Manager, RunEvent, SystemTrayEvent, WindowEvent, Wry};
 
-use windows::Win32::Foundation::{BOOL, HINSTANCE, HWND, LPARAM};
+use windows::Win32::Foundation::{BOOL, HINSTANCE, HWND, LPARAM, LRESULT, WPARAM};
 use windows::Win32::UI::Accessibility::{HWINEVENTHOOK, SetWinEventHook};
+use windows::Win32::UI::Input::KeyboardAndMouse::{
+    INPUT, INPUT_0, INPUT_KEYBOARD, KEYBD_EVENT_FLAGS, KEYBDINPUT, KEYEVENTF_KEYUP,
+    SendInput, VK_LMENU, VK_MENU, VK_RMENU, VK_TAB
+};
 use windows::Win32::UI::WindowsAndMessaging::{
     EnumWindows, EVENT_OBJECT_CLOAKED, EVENT_OBJECT_CREATE, EVENT_OBJECT_DESTROY, EVENT_OBJECT_FOCUS,
-    EVENT_OBJECT_HIDE, EVENT_OBJECT_NAMECHANGE, EVENT_OBJECT_SHOW, EVENT_OBJECT_UNCLOAKED,
-    EVENT_SYSTEM_FOREGROUND, EVENT_SYSTEM_MINIMIZESTART, EVENT_SYSTEM_MINIMIZEEND, GetMessageW, MSG};
+    EVENT_OBJECT_HIDE, EVENT_OBJECT_NAMECHANGE, EVENT_OBJECT_SHOW, EVENT_OBJECT_UNCLOAKED, EVENT_SYSTEM_FOREGROUND,
+    EVENT_SYSTEM_MINIMIZESTART, EVENT_SYSTEM_MINIMIZEEND, GetMessageW, MSG, SetWindowsHookExW, WH_KEYBOARD_LL,
+    CallNextHookEx, HHOOK, KBDLLHOOKSTRUCT, WM_SYSKEYDOWN, WM_SYSKEYUP, WM_KEYUP
+};
 
 use crate::*;
 
@@ -82,6 +89,7 @@ pub enum Backend_Notice {
     hotkey_req__scroll_down,
     hotkey_req__scroll_up,
     hotkey_req__scroll_end,
+    hotkey_req__switche_escape,
     switche_event__fgnd_lost,
 }
 impl Backend_Notice {
@@ -169,6 +177,7 @@ pub struct _SwitcheState {
     pub enum_do_light : Flag,
     pub is_dismissed  : Flag,
     pub is_fgnd       : Flag,
+    pub in_alt_tab    : Flag,
 
     pub render_lists_m : RenderReadyListsManager,
     pub icons_m        : IconsManager,
@@ -213,7 +222,9 @@ impl Deref for RenderReadyListsManager {
     fn deref (&self) -> &Self::Target { &self.0 }
 }
 
-
+// extra-info identifier that we inject in sent kbd events (alt-release) so we can watch and ignore it when it comes back
+//const INJECTED_IDENTIFIER_EXTRA_INFO: usize = 0xFFC3D44F;     // ahk/krusty stamp
+const INJECTED_IDENTIFIER_EXTRA_INFO: usize = 0x5317C7EE;      // switche's own stamp
 
 
 
@@ -232,6 +243,7 @@ impl SwitcheState {
                 enum_do_light  : Flag::default(),
                 is_dismissed   : Flag::default(),
                 is_fgnd        : Flag::default(),
+                in_alt_tab     : Flag::default(),
 
                 render_lists_m : RenderReadyListsManager::instance(),
                 icons_m        : IconsManager::instance(),
@@ -240,6 +252,7 @@ impl SwitcheState {
             } ) );
             // lets do some init for the new instance
             ss.setup_win_event_hooks();
+            ss.setup_input_event_hooks();
             ss
         } ) .clone()
     }
@@ -536,7 +549,7 @@ impl SwitcheState {
     pub fn _stamp (&self) -> u128 { SystemTime::UNIX_EPOCH.elapsed().unwrap().as_millis() }
 
     pub fn proc_win_report__title_changed (&self, hwnd:Hwnd) {
-        println! ("@{:?} title-changed: {:?}", self._stamp(), hwnd);
+        //println! ("@{:?} title-changed: {:?}", self._stamp(), hwnd);
         // first off, if its for something not in renderlist, just ignore it
         if self.hwnd_map.read().unwrap() .get(&hwnd) .filter (|wde| wde.should_exclude == Some(false)) .is_none() { return }
         // things like this IDE seem to give piles of window-level title-change events just while typing, w/o title change .. so filter them
@@ -580,7 +593,7 @@ impl SwitcheState {
     }
 
     pub fn proc_win_report__obj_shown (&self, hwnd:Hwnd) {
-        println! ("@{:?} obj-shown: {:?}", self._stamp(), hwnd);
+        //println! ("@{:?} obj-shown: {:?}", self._stamp(), hwnd);
 
         // first off, if this was in our list, we'll prime it to have icon refreshed on processing
         self.hwnd_map.read().unwrap() .get(&hwnd) .map (|wde| self.icons_m.mark_cached_icon_mapping_stale(wde));
@@ -615,7 +628,7 @@ impl SwitcheState {
     }
 
     pub fn proc_win_report__obj_destroyed (&self, hwnd:Hwnd) {
-        println! ("@{:?} obj-destroyed: {:?}", self._stamp(), hwnd);
+        //println! ("@{:?} obj-destroyed: {:?}", self._stamp(), hwnd);
         // if we werent even showing this object, we're done, else queue up a enum-trigger
         if self.hwnd_map.read().unwrap() .get(&hwnd) .filter (|wde| wde.should_exclude == Some(false)) .is_some() {
             // its in our maps, so lets process it, but if processing now rejects it, we should remove it from map
@@ -625,6 +638,107 @@ impl SwitcheState {
         } // else the destoryed hwnd wasnt even in our list .. we can ignore it
     }
 
+
+
+
+
+
+    /***** kbd-hook handling ******/
+
+    // todo: add a config somewhere to enable/disable this
+    pub fn setup_input_event_hooks (&self) {
+        spawn ( move || unsafe {
+            let _ = win_apis::win_set_cur_process_priority_high();
+            let _ = SetWindowsHookExW (WH_KEYBOARD_LL, Some(Self::kbd_hook_cb), HINSTANCE::default(), 0);
+            // todo: ^^ can update to store the hook handle to possibly unhook it on demand later
+
+            let mut msg: MSG = MSG::default();
+            while BOOL(0) != GetMessageW (&mut msg, HWND(0), 0, 0) { };
+        } );
+    }
+
+    fn is_alt_key (vk_code:u32) -> bool {
+        vk_code == VK_MENU.0 as u32 || vk_code == VK_LMENU.0 as u32 || vk_code == VK_RMENU.0 as u32
+    }
+
+    pub unsafe extern "system" fn kbd_hook_cb (code:c_int, w_param:WPARAM, l_param:LPARAM) -> LRESULT {
+
+        let return_call = || { CallNextHookEx(HHOOK(0), code, w_param, l_param) };
+        let return_block = LRESULT(1);    // returning with non-zero code signals OS to block further processing on the input event
+
+        if code < 0 { return return_call() }
+
+        let kbs = *(l_param.0 as *const KBDLLHOOKSTRUCT);
+
+        if kbs.dwExtraInfo == INJECTED_IDENTIFIER_EXTRA_INFO { return return_call() }
+
+        //println! ("vk: {:?}, ev: {:?}, inj: {:?}", kbs.vkCode, w_param.0, kbs.dwExtraInfo);
+
+        if w_param.0 as u32 == WM_SYSKEYDOWN  && kbs.vkCode == VK_TAB.0 as u32 {
+            // when we get an actual alt-tab, we'll block the tab from going out to avoid conflict w native alt-tab
+            // further, to remain in windows graces since it only lets us call fgnd if we received last input etc, we'll send ourselves input
+            // the spawning in thread is VERY important, as that gives OS time to process msgs before we try to bring switche fgnd
+            spawn ( move || {
+                SwitcheState::instance().handle_input_event__alt_tab_press();
+                // ^^ note that we'll query shift state here, so thats best done before we inject the alt-press below
+                SwitcheState::send_alt_press();
+            } );
+            return return_block
+        }
+        else if w_param.0 as u32 == WM_SYSKEYUP  && kbs.vkCode == VK_TAB.0 as u32 {
+            // for the release, we simply block it to keep balance, but its not that big a deal either way
+            return return_block
+        }
+        else if w_param.0 as u32 == WM_KEYUP  && SwitcheState::is_alt_key(kbs.vkCode) {
+            // for actual alt-release, again we'll spawn to queue events at bottom of msg queue, and have an alt release sent out
+            // again note thread spawning to give OS time to process between our execution chunks
+            if SwitcheState::instance().in_alt_tab.is_set() {
+                SwitcheState::send_alt_release();
+                spawn ( move || { SwitcheState::instance().handle_input_event__alt_release() } );
+            }
+            return return_call()
+            // ^^ note that we cant block it even if we send out a replacement because it could be left/right/virt whatever
+        }
+        return return_call()
+    }
+
+
+    fn handle_input_event__alt_tab_press (&self) { //println! ("alt-tab-press");
+        self.in_alt_tab.set();
+        if win_apis::check_shift_active() {
+            self.proc_hot_key__scroll_up();
+        } else {
+            self.proc_hot_key__scroll_down();
+        }
+    }
+    fn handle_input_event__alt_release (&self) { //println! ("post-alt-tab-alt-release");
+        if self.in_alt_tab.is_set() {
+            self.proc_hot_key__scroll_end();
+            self.in_alt_tab.clear();
+        }
+    }
+
+    fn send_alt_press   () { SwitcheState::send_alt_event(false) }
+    fn send_alt_release () { SwitcheState::send_alt_event(true) }
+
+    fn send_alt_event (isKeyup:bool) {
+        let no_flag = KEYBD_EVENT_FLAGS::default();
+        let keyup_flag = if isKeyup { KEYEVENTF_KEYUP } else { no_flag };
+        let (virt_key, scan_code, sc_flag, ext_key_flag) = (VK_LMENU, 0u16, no_flag, no_flag);
+
+        let mut inputs = [ INPUT {
+            r#type: INPUT_KEYBOARD,
+            Anonymous: INPUT_0 {
+                ki: KEYBDINPUT {
+                    wVk: virt_key,
+                    wScan: scan_code,
+                    dwFlags: ext_key_flag | sc_flag | keyup_flag,
+                    time: 0,
+                    dwExtraInfo: INJECTED_IDENTIFIER_EXTRA_INFO,
+            } }
+        } ];
+        unsafe { SendInput (&mut inputs, core::mem::size_of::<INPUT>() as c_int) };
+    }
 
 
 
@@ -750,7 +864,7 @@ impl SwitcheState {
             "fe_req_switche_quit"         => { self.proc_tray_event_quit()       }
             "fe_req_debug_print"          => { self.handle_req__debug_print()    }
 
-            "fe_req_switch_tabs_last"    => { self.proc_hot_key__switch_last()  }
+            "fe_req_switch_tabs_last"     => { self.proc_hot_key__switch_last()  }
 
             "fe_req_switch_tabs_outliner" => { self.proc_hot_key__switch_tabs_outliner() }
             "fe_req_switch_notepad_pp"    => { self.proc_hot_key__switch_notepad_pp()    }
@@ -872,7 +986,7 @@ impl SwitcheState {
 
 
     fn checked_self_activate (&self) {
-        if self.is_dismissed.check() || self.render_lists_m.self_hwnd() != win_apis::get_fgnd_window() {
+        if self.is_dismissed.is_set() || self.is_fgnd.is_clear() || self.render_lists_m.self_hwnd() != win_apis::get_fgnd_window() {
             self.self_window_activate();
             self.handle_event__switche_fgnd()
         }
@@ -892,9 +1006,13 @@ impl SwitcheState {
     }
     pub fn proc_hot_key__scroll_end (&self) {
         // this requires activating the current elem in frontend, so we'll just send a msg over to frontend
-        if self.is_dismissed.is_clear() {
+        if self.is_dismissed.is_clear() && self.is_fgnd.is_set() {
             self.emit_backend_notice (Backend_Notice::hotkey_req__scroll_end)
         }
+    }
+    pub fn proc_hot_key__switche_escape (&self) {
+        self.handle_req__switche_escape();
+        self.emit_backend_notice (Backend_Notice::hotkey_req__switche_escape)
     }
 
 
@@ -910,20 +1028,23 @@ impl SwitcheState {
         use tauri::GlobalShortcutManager;
         let mut gsm = ah.global_shortcut_manager();
         // todo: can update these to prob printout/notify an err msg when cant register global hotkey
-        //let ss = self.clone();  let _ = gsm.register ( "Super+F12",       move || ss.proc_hot_key__invoke()               );
-        let ss = self.clone();  let _ = gsm.register ( "Super+F12",       move || ss.proc_hot_key__scroll_down()          );
-        let ss = self.clone();  let _ = gsm.register ( "Super+Shift+F12", move || ss.proc_hot_key__scroll_up()            );
+        let ss = self.clone();  let _ = gsm.register ( "F1",              move || ss.proc_hot_key__invoke()               );
         let ss = self.clone();  let _ = gsm.register ( "F15",             move || ss.proc_hot_key__invoke()               );
         let ss = self.clone();  let _ = gsm.register ( "F16",             move || ss.proc_hot_key__scroll_down()          );
         let ss = self.clone();  let _ = gsm.register ( "Shift+F16",       move || ss.proc_hot_key__scroll_up()            );
         let ss = self.clone();  let _ = gsm.register ( "F17",             move || ss.proc_hot_key__scroll_up()            );
         let ss = self.clone();  let _ = gsm.register ( "Ctrl+F18",        move || ss.proc_hot_key__scroll_end()           );
+        let ss = self.clone();  let _ = gsm.register ( "Ctrl+Alt+F18",    move || ss.proc_hot_key__switche_escape()       );
+
         let ss = self.clone();  let _ = gsm.register ( "Ctrl+Alt+F19",    move || ss.proc_hot_key__switch_last()          );
         let ss = self.clone();  let _ = gsm.register ( "Ctrl+Alt+F20",    move || ss.proc_hot_key__switch_tabs_outliner() );
         let ss = self.clone();  let _ = gsm.register ( "Ctrl+Alt+F21",    move || ss.proc_hot_key__switch_notepad_pp()    );
         let ss = self.clone();  let _ = gsm.register ( "Ctrl+Alt+F22",    move || ss.proc_hot_key__switch_ide()           );
         let ss = self.clone();  let _ = gsm.register ( "Ctrl+Alt+F23",    move || ss.proc_hot_key__switch_music()         );
         let ss = self.clone();  let _ = gsm.register ( "Ctrl+Alt+F24",    move || ss.proc_hot_key__switch_browser()       );
+
+        //let ss = self.clone();  let _ = gsm.register ( "Alt+Tab",         move || ss.proc_hot_key__scroll_down()          );
+        // ^^ ofc trying to set alt-tab like this wont take, but its useful here as a reminder
 
     }
 

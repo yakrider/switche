@@ -26,6 +26,8 @@ fn main() {
             move |app| {
                 ss.setup_front_end_listener (&app.handle());
                 ss.setup_global_shortcuts   (&app.handle());
+                app.set_device_event_filter(tauri::DeviceEventFilter::Always);
+                // ^^ w/o this, our own LL input hooks will not receive events when tauri window is fgnd
                 Ok(())
             }
         } )
@@ -46,7 +48,7 @@ fn main() {
 
 
 
-    // now lets finally actually start the app!
+    // now lets finally actually start the app! .. note that the run call wont return!
     let ss = ssi.clone();
     app .run ( move |ah, event| { ss.tauri_run_events_handler (ah, event) } );
 

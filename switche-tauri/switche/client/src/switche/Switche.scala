@@ -105,13 +105,8 @@ object SendMsgToBack {
    def FE_Req_Switch_Music        () = send ( front_end_req ( "fe_req_switch_music"         ) )
    def FE_Req_Switch_Browser      () = send ( front_end_req ( "fe_req_switch_browser"       ) )
    
-   //def FE_Req_Switch_TabsOutliner () = send_FE_Req_Activate_Matching ( "chrome.exe", "Tabs Outliner" )
-   //def FE_Req_Switch_NotepadPP    () = send_FE_Req_Activate_Matching ( "notepad++.exe" )
-   //def FE_Req_Switch_IDE          () = send_FE_Req_Activate_Matching ( "idea64.exe"    )
-   //def FE_Req_Switch_Music        () = send_FE_Req_Activate_Matching ( "MusicBee.exe"  )
-   //def FE_Req_Switch_Browser      () = send_FE_Req_Activate_Matching ( "chrome.exe"    )
    
-   def send_FE_Req_Activate_Matching (exe:String, title:String = "") = {
+   def _send_FE_Req_Activate_Matching (exe:String, title:String = "") = {
       send ( front_end_req ( "fe_req_activate_matching", _hwnd = None, _params = Seq(exe, title).filterNot(_.isEmpty) ) )
    }
 }
@@ -200,6 +195,9 @@ object Switche {
          SwitchePageState.handleReq_CurElemActivation()
       }
    }
+   def procHotkey_SwitcheEscape() = {
+      SwitchePageState.handleReq_SwitcheEscape (fromBkndHotkey = true)
+   }
    def procBkndEvent_fgndLost() = {
       SwitchePageState.resetFocus()
       scrollEnd_disarm()
@@ -254,11 +252,12 @@ object Switche {
       println (s"got backend_notice payload: ${e.payload}")
       val ep:BackendNotice_P = upickle.default.read[BackendNotice_P](e.payload);
       ep.msg match {
-         case "hotkey_req__app_invoke"   =>  procHotkey_Invoke()
-         case "hotkey_req__scroll_down"  =>  procHotkey_ScrollDown()
-         case "hotkey_req__scroll_up"    =>  procHotkey_ScrollUp()
-         case "hotkey_req__scroll_end"   =>  procHotkey_ScrollEnd()
-         case "switche_event__fgnd_lost" =>  procBkndEvent_fgndLost()
+         case "hotkey_req__app_invoke"     =>  procHotkey_Invoke()
+         case "hotkey_req__scroll_down"    =>  procHotkey_ScrollDown()
+         case "hotkey_req__scroll_up"      =>  procHotkey_ScrollUp()
+         case "hotkey_req__scroll_end"     =>  procHotkey_ScrollEnd()
+         case "hotkey_req__switche_escape" =>  procHotkey_SwitcheEscape()
+         case "switche_event__fgnd_lost"   =>  procBkndEvent_fgndLost()
          case _ => { }
       }
    }
