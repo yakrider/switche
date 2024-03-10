@@ -59,14 +59,15 @@
         "fullscreen": false,
         "resizable": true,
         "title": "Switche - Searchable Task Switcher",
-        "x": 650,
-        "y": 15,
-        "width": 900,
-        "height": 1180,
+        "x": 400,
+        "y": 20,
+        "width": 600,
+        "height": 800,
         "decorations": false,
         "focus": false,
         "visible": false,
-        "skipTaskbar": true
+        "skipTaskbar": true,
+        "additionalBrowserArgs": "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection,ElasticOverscroll"
       }
     ],
     "systemTray": {

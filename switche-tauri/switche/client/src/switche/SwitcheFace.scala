@@ -1,7 +1,7 @@
 package switche
 
 import org.scalajs.dom
-import org.scalajs.dom.{Element, EventTarget, HTMLElement, KeyboardEvent, MouseEvent, WheelEvent, window, document => doc}
+import org.scalajs.dom.{Element, EventTarget, HTMLElement, KeyboardEvent, MouseEvent, UIEvent, WheelEvent, window, document => doc}
 import org.scalajs.dom.html.{Div, Span}
 import scalatags.JsDom.all._
 
@@ -64,15 +64,21 @@ object SwitcheFacePage {
    def setPageEventHandlers() = {
       // reminder here.. capture phase means its just going down from top level to target, after that bubble phase goes from target upwards
       // intercepting here at the 'capture' phase allows us to use e.stopPropagation() to prevent event from ever reaching target
+
       doc.addEventListener ("click",       procMouse_Click _)
       doc.addEventListener ("contextmenu", procMouse_ContextMenu _)
       doc.addEventListener ("auxclick",    procMouse_AuxClick _)
       doc.addEventListener ("mouseup",     procMouse_Up _)
-      doc.addEventListener ("wheel",       procMouse_Wheel _)
+      //doc.addEventListener ("wheel",       procMouse_Wheel _, )    // see below
       doc.addEventListener ("keyup",       capturePhaseKeyUpHandler _, useCapture=true)
       doc.addEventListener ("keydown",     capturePhaseKeyDownHandler _, useCapture=true)
       //doc.addEventListener ("keypress",    capturePhaseKeyPressHandler _, useCapture=true)
       //dom.document.addEventListener ("mouseenter", procMouse_Enter _, useCapture=true) // done from element for efficiency
+      
+      // looks like chrome has an intervention for doc/window level wheel listener, where passive:false MUST be specified for preventDefault to work
+      // also, doing window below makes it exclude the scrollbar, which would be nice .. (but maybe doesnt work w custom scrollbar)
+      val eventListenerOptions = js.Dynamic.literal ( "passive" -> false.asInstanceOf[js.Any] )
+      window .asInstanceOf[js.Dynamic] .addEventListener ("wheel", procMouse_Wheel _, eventListenerOptions)
    }
    
    def procMouse_Click (e:MouseEvent) = {
@@ -80,8 +86,8 @@ object SwitcheFacePage {
       scrollEnd_disarm()
       //e.target.closest(".elemBox").foreach(_=>handleReq_CurElemActivation())
       Some(e.target) .filter(_.isInstanceOf[Element]) .flatMap { e =>
-         Option ( e.asInstanceOf[Element] .closest(".elemBox") )  // can return a null so wrapping into option
-      } .foreach ( _ => handleReq_CurElemActivation())
+         Option ( e.asInstanceOf[Element] .closest(".elemBox") .asInstanceOf[Div] )  // can return a null so wrapping into option
+      } .foreach ( b => { setCurElemHighlight(b); handleReq_CurElemActivation(); } )
       // ^^ we dont actually need the closest, we're just filtering by whether closest can find an elemBox in its ancestors
       // .. this makes it such that in rows the mouse click is active while elsewhere in empty body it is not!
    }
@@ -102,10 +108,11 @@ object SwitcheFacePage {
       triggerHoverLockTimeout(); e.preventDefault(); e.stopPropagation()
       //e.target.closest(".elemBox").foreach(_=>handleReq_CurElemClose())
       Some(e.target) .filter(_.isInstanceOf[Element]) .flatMap { e =>
-         Option ( e.asInstanceOf[Element] .closest(".elemBox") )  // can return a null so wrapping into option
-      } .foreach ( _ => handleReq_CurElemClose())
+         Option ( e.asInstanceOf[Element] .closest(".elemBox") .asInstanceOf[Div] )  // can return a null so wrapping into option
+      } .foreach ( b => { setCurElemHighlight(b); handleReq_CurElemClose(); } )
       // ^^ we dont actually need the closest, we're just filtering by whether closest can find an elemBox in its ancestors
       // .. this makes it such that in rows the mouse click is active while elsewhere in empty body it is not!
+      // ^^ update: started doing setCurElemHighlight on click location in case the highlight had moved elsewhere from pointer loc
    }
    def procMouse_RightClick (e:MouseEvent) = {
       // eventually could consider supporting more native right-click+wheel global combo here
@@ -511,6 +518,16 @@ object SwitchePageState {
       clearCurElemHighlight()       // note that this will clear curElemId too
       setCurElem (newFocusElem.id)
       newFocusElem.classList.add("curElem")
+      // we'll want to bring this into view if it is not in view area
+      if (shouldScrollIntoView(newFocusElem)) { //println("scrolling-into-view")
+         //newFocusElem.scrollIntoView()
+         // ^^ in theory works, but its more pleasant if it doesnt scroll to the default top
+         import typings.std.{ ScrollLogicalPosition => slp, ScrollBehavior => slb }
+         val options = typings.std.ScrollIntoViewOptions() .setBlock(slp.center) .setBehavior(slb.smooth)
+         newFocusElem .asInstanceOf[Element] .asInstanceOf[js.Dynamic] .scrollIntoView (options)
+         triggerHoverLockTimeout()
+         // ^^ for multiple scroll-into-views, we dont want the mouse being at say bottom to keep triggering it
+      }
       if (inSearchState && inGroupedMode) { // in group-mode search-state see if we can find another in recents to highlight too
          idToHwnd (newFocusElem.id) .map (recentsId) .flatMap (recentsElemsMap.get) .foreach (_.elem.classList.add("curElem"))
       }
@@ -524,6 +541,28 @@ object SwitchePageState {
       if (inSearchState && inGroupedMode) { // if in grouped-mode search-state try to clear one more
          Option (doc.querySelector(s".curElem")) .foreach(_.classList.remove("curElem"))
       }
+   }
+   
+   def shouldScrollIntoView (elem:Element) = {
+      val scrolledTop = ElemsDisplay.elemsDiv.scrollTop == 0
+      
+      lazy val edRect = ElemsDisplay.elemsDiv.getBoundingClientRect()
+      lazy val scrolledBtm = 1 > math.abs (ElemsDisplay.elemsDiv.scrollHeight - (edRect.bottom - edRect.top) - ElemsDisplay.elemsDiv.scrollTop )
+      // the abs is because decimals dont show up in scrolltop, but they do in abs positions, so we want some slop
+      
+      lazy val elRect = elem.getBoundingClientRect()
+      lazy val edViewHeight = edRect.bottom - edRect.top
+      lazy val scrollViewThresh = 8 // 0.05 * edViewHeight   // 5% of view height
+      // ^^ note that we do a hover-lock upon scroll-to-top, so triggering it unnecessarily causes ui to feel slower
+
+      //lazy val (topTooHigh, btmTooLow) = ( elRect.top < 0.1 * viewHeight,  elRect.bottom > 0.9 * viewHeight )
+      lazy val (topTooHigh, btmTooLow) = ( elRect.top - edRect.top < scrollViewThresh,  edRect.bottom - elRect.bottom < scrollViewThresh)
+
+      //println ((topTooHigh, btmTooLow, scrolledTop, scrolledBtm))
+      //println (((elRect.top, elRect.bottom), ElemsDisplay.elemsDiv.scrollTop, ElemsDisplay.elemsDiv.scrollHeight, (edRect.top, edRect.bottom)))
+      
+      // we should only scroll-into-view if either top or bottom is too high/low, and not already scrolled to top/bottom
+      (!scrolledTop && topTooHigh) || (!scrolledBtm && btmTooLow)
    }
 
    def getIdfnVecAndMap(elemT:ElemT) = {
@@ -620,8 +659,10 @@ object ElemsDisplay {
    import SwitchePageState._
    import Switche._
 
-   val elemsDiv = div (id:="elemsDiv").render
+   val elemsDiv = div (id:="elemsDivs").render
    def getElemsDiv = elemsDiv
+   
+   // note the use of elemsDiv for each section and elevsDivs for the outer div
 
    def makeElemsDiv (elemT:ElemT, stateT:StateT) = {
       val headerTxt = if (elemT == ElemTs.G) "Grouped:" else "Recents:"
@@ -662,6 +703,7 @@ object RibbonDisplay {
    val debugLinks = span ().render
    val armedIndicator = span (`class`:="armedIndicator", "").render   // content is set in css
    val searchBox = input (`type`:="text", autocomplete:="off", id:="searchBox", placeholder:="").render
+   
    def blurSearchBox() = {
       //searchBox.blur()
       //Try { doc.activeElement.asInstanceOf[HTMLElement] } .toOption .foreach(_.blur())

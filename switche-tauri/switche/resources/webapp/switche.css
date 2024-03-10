@@ -66,6 +66,10 @@ body {
 .modeHeader.g  { color: var(--primary-color); }
 .modeHeader.gr { color: var(--secondary-color); }
 
+#elemsDivs { height: calc(100vh - 60px); overflow-y: auto; }
+#elemsDivs::-webkit-scrollbar { width: 4px; background: #540; }
+#elemsDivs::-webkit-scrollbar-thumb { background: #970; }
+
 .elemsDiv      { }
 .elemsDiv.r    { }
 .elemsDiv.g    { }

@@ -907,7 +907,15 @@ impl SwitcheState {
         if self.render_lists_m.self_hwnd() == 0 {
             self.extract_self_hwnd() .map (|h| self.render_lists_m.store_self_hwnd(h));
             //println! ("App starting .. self-hwnd is : {:?}", self.render_lists_m.self_hwnd() );
+            self.setup_self_window();
         }
+    }
+    fn setup_self_window (&self) {
+        let wa = win_apis::win_get_work_area();
+        let (x, y, width, height) = ( wa.left + (wa.right-wa.left)/3, 0, (wa.right-wa.left)/2,  wa.bottom - wa.top);
+        win_apis::win_move_to (self.render_lists_m.self_hwnd(), x, y, width, height);
+        // todo: ^^ update this to check config first, and only do this if there's no config
+        //println! ("setting self window to: x:{}, y:{}, w:{}, h:{}", x, y, width, height);
     }
 
     fn tauri_window_events_handler (&self, ev:&WindowEvent) {

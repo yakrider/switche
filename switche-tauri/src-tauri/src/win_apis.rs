@@ -7,7 +7,7 @@ use std::sync::{Arc, Mutex, RwLock};
 use once_cell::sync::Lazy;
 
 use windows::core::{GUID, Interface, PCWSTR, PSTR, PWSTR};
-use windows::Win32::Foundation::{BOOL, CloseHandle, HANDLE, HWND, LPARAM, WPARAM};
+use windows::Win32::Foundation::{BOOL, CloseHandle, HANDLE, HWND, LPARAM, RECT, WPARAM};
 use windows::Win32::Graphics::Dwm::{DwmGetWindowAttribute, DWMWA_CLOAKED};
 use windows::Win32::Security::TOKEN_READ;
 use windows::Win32::Storage::Packaging::Appx::{
@@ -19,12 +19,7 @@ use windows::Win32::System::Threading::{
 };
 use windows::Win32::UI::Input::KeyboardAndMouse::{GetKeyState, VK_SHIFT};
 use windows::Win32::UI::Shell::PropertiesSystem::{IPropertyStore, PROPERTYKEY, SHGetPropertyStoreForWindow};
-use windows::Win32::UI::WindowsAndMessaging::{
-    GetForegroundWindow, GetWindowPlacement, ShowWindow, GetWindowTextW, IsWindowVisible, GetAncestor,
-    GetWindowThreadProcessId, PostMessageA, SetForegroundWindow, ShowWindowAsync, GetWindowLongW, WINDOWPLACEMENT,
-    WM_CLOSE, SW_HIDE, SW_MAXIMIZE, SW_MINIMIZE, SW_RESTORE, SW_SHOW, SW_SHOWMINIMIZED, WS_CHILD, GWL_STYLE,
-    GA_ROOTOWNER, WS_EX_TOOLWINDOW, GWL_EXSTYLE, EnumChildWindows, //SwitchToThisWindow
-};
+use windows::Win32::UI::WindowsAndMessaging::{GetForegroundWindow, GetWindowPlacement, ShowWindow, GetWindowTextW, IsWindowVisible, GetAncestor, GetWindowThreadProcessId, PostMessageA, SetForegroundWindow, ShowWindowAsync, GetWindowLongW, WINDOWPLACEMENT, EnumChildWindows, SystemParametersInfoW, WM_CLOSE, SW_HIDE, SW_MAXIMIZE, SW_MINIMIZE, SW_RESTORE, SW_SHOW, SW_SHOWMINIMIZED, WS_CHILD, GWL_STYLE, GA_ROOTOWNER, WS_EX_TOOLWINDOW, GWL_EXSTYLE, SPI_GETWORKAREA, SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS, MoveWindow};
 
 
 use crate::*;
@@ -107,6 +102,16 @@ pub fn get_window_text (hwnd:Hwnd) -> String { unsafe {
     let copied_len = GetWindowTextW (HWND(hwnd), &mut lpstr);
     String::from_utf16_lossy (&lpstr[..(copied_len as _)])
     // ^^ todo: see if makes sense to do all string work everywhere with cow instead of cloned strings
+} }
+
+pub fn win_get_work_area () -> RECT { unsafe {
+    let mut rect = RECT::default();
+    let _ = SystemParametersInfoW (SPI_GETWORKAREA, 0, Some (&mut rect as *mut RECT as *mut c_void), SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS::default());
+    rect
+} }
+
+pub fn win_move_to (hwnd:Hwnd, x:i32, y:i32, width:i32, height:i32) { unsafe {
+    MoveWindow (HWND(hwnd), x, y, width, height, true);    // the bool param at end flags whether to repaint or not
 } }
 
 

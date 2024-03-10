@@ -15,9 +15,9 @@ fn main() {
     // we'll setup tray-icon support to pass into app builder
     let tray = SystemTray::new().with_menu (
         SystemTrayMenu::new ()
-            .add_item ( CustomMenuItem::new ( "show",   "Show"    ) )
-            .add_item ( CustomMenuItem::new ( "quit",   "Quit"    ) )
-            .add_item ( CustomMenuItem::new ( "rstart", "Restart" ) )
+            .add_item ( CustomMenuItem::new ( "show",    "Show"    ) )
+            .add_item ( CustomMenuItem::new ( "quit",    "Quit"    ) )
+            .add_item ( CustomMenuItem::new ( "restart", "Restart" ) )
     );
 
     let app = {
