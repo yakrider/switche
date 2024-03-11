@@ -173,12 +173,14 @@ object Switche {
       }
       else { SwitchePageState.focusElem_Next() }
    }
-   def procHotkey_ScrollDown() = {
+   def procHotkey_ScrollDown() : Unit = {
       // is the same as scrolling down upon invoke, except we'll arm scroll-end for alt-tab and right-mouse-scroll
+      if (!SwitchePageState.verifyActionRepeatSpacing()) { return }
       scrollEnd_arm()
       procHotkey_Invoke()
    }
-   def procHotkey_ScrollUp() = {
+   def procHotkey_ScrollUp() : Unit = {
+      if (!SwitchePageState.verifyActionRepeatSpacing()) { return }
       SwitchePageState.triggerHoverLockTimeout()
       scrollEnd_arm()
       if (isDismissed) {

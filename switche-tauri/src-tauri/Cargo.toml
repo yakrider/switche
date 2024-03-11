@@ -3,6 +3,7 @@ name = "switche"
 version = "2.2.1"
 description = "Searchable Window Switcher"
 authors = ["yakrider"]
+keywords = ["switcher", "alt-tab", "task-switcher", "window-switcher" ]
 license = "MIT"
 repository = ""
 edition = "2021"
@@ -10,11 +11,11 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [build-dependencies]
-tauri-build = { version = "^1.2", features = [] }
+tauri-build = { version = "1.5.1", features = [] }
 
 
 [dependencies.tauri]
-version = "^1.5"
+version = "1.6.0"
 features = ["fs-all", "global-shortcut-all", "process-all", "shell-open", "system-tray", "window-close", "window-hide", "window-set-always-on-top", "window-set-focus", "window-show", "window-start-dragging"]
 
 [features]
@@ -61,5 +62,6 @@ features = [
     "Win32_System_Com",
     "Win32_System_Com_StructuredStorage",
     "Win32_Security",
+    "Win32_UI_HiDpi",
 ]
 

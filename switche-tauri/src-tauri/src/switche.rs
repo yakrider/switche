@@ -7,12 +7,11 @@
 //#[macro_use] extern crate strum_macros;
 
 use std::collections::{HashMap, HashSet};
-use std::ops::{Deref};
-use std::os::raw::c_int;
+use std::ops::Deref;
 use std::sync::Arc;
 //use no_deadlocks::RwLock;
 use std::sync::RwLock;
-use std::sync::atomic::{AtomicBool, AtomicIsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicIsize, AtomicPtr, Ordering};
 use std::thread::{sleep, spawn};
 use std::time::{Duration, SystemTime};
 
@@ -22,17 +21,12 @@ use serde::{Deserialize, Serialize};
 use strum_macros::{AsRefStr};
 use tauri::{AppHandle, Manager, RunEvent, SystemTrayEvent, WindowEvent, Wry};
 
-use windows::Win32::Foundation::{BOOL, HINSTANCE, HWND, LPARAM, LRESULT, WPARAM};
+use windows::Win32::Foundation::{BOOL, HINSTANCE, HWND, LPARAM};
 use windows::Win32::UI::Accessibility::{HWINEVENTHOOK, SetWinEventHook};
-use windows::Win32::UI::Input::KeyboardAndMouse::{
-    INPUT, INPUT_0, INPUT_KEYBOARD, KEYBD_EVENT_FLAGS, KEYBDINPUT, KEYEVENTF_KEYUP,
-    SendInput, VK_LMENU, VK_MENU, VK_RMENU, VK_TAB
-};
 use windows::Win32::UI::WindowsAndMessaging::{
     EnumWindows, EVENT_OBJECT_CLOAKED, EVENT_OBJECT_CREATE, EVENT_OBJECT_DESTROY, EVENT_OBJECT_FOCUS,
     EVENT_OBJECT_HIDE, EVENT_OBJECT_NAMECHANGE, EVENT_OBJECT_SHOW, EVENT_OBJECT_UNCLOAKED, EVENT_SYSTEM_FOREGROUND,
-    EVENT_SYSTEM_MINIMIZESTART, EVENT_SYSTEM_MINIMIZEEND, GetMessageW, MSG, SetWindowsHookExW, WH_KEYBOARD_LL,
-    CallNextHookEx, HHOOK, KBDLLHOOKSTRUCT, WM_SYSKEYDOWN, WM_SYSKEYUP, WM_KEYUP
+    EVENT_SYSTEM_MINIMIZESTART, EVENT_SYSTEM_MINIMIZEEND, GetMessageW, MSG, HHOOK
 };
 
 use crate::*;
@@ -179,6 +173,12 @@ pub struct _SwitcheState {
     pub is_fgnd       : Flag,
     pub in_alt_tab    : Flag,
 
+    pub is_mouse_right_down       : Flag,
+    pub in_right_btn_scroll_state : Flag,
+
+    pub kbd_hook   : AtomicPtr <HHOOK>,
+    pub mouse_hook : AtomicPtr <HHOOK>,
+
     pub render_lists_m : RenderReadyListsManager,
     pub icons_m        : IconsManager,
 
@@ -222,10 +222,6 @@ impl Deref for RenderReadyListsManager {
     fn deref (&self) -> &Self::Target { &self.0 }
 }
 
-// extra-info identifier that we inject in sent kbd events (alt-release) so we can watch and ignore it when it comes back
-//const INJECTED_IDENTIFIER_EXTRA_INFO: usize = 0xFFC3D44F;     // ahk/krusty stamp
-const INJECTED_IDENTIFIER_EXTRA_INFO: usize = 0x5317C7EE;      // switche's own stamp
-
 
 
 
@@ -245,6 +241,12 @@ impl SwitcheState {
                 is_fgnd        : Flag::default(),
                 in_alt_tab     : Flag::default(),
 
+                is_mouse_right_down       : Flag::default(),
+                in_right_btn_scroll_state : Flag::default(),
+
+                kbd_hook   : AtomicPtr::default(),
+                mouse_hook : AtomicPtr::default(),
+
                 render_lists_m : RenderReadyListsManager::instance(),
                 icons_m        : IconsManager::instance(),
 
@@ -252,7 +254,7 @@ impl SwitcheState {
             } ) );
             // lets do some init for the new instance
             ss.setup_win_event_hooks();
-            ss.setup_input_event_hooks();
+            begin_input_processing (&ss);
             ss
         } ) .clone()
     }
@@ -327,12 +329,15 @@ impl SwitcheState {
             return self.hwnd_map.read().unwrap() .get(&hwnd) .map (|wde| wde.should_exclude != Some(true)) .is_some();
         }
 
-        if !check_window_visible   (hwnd)  { return false }
-        if  check_window_cloaked   (hwnd)  { return false }
-        if  check_window_has_owner (hwnd)  { return false }
-        if  check_if_tool_window   (hwnd)  { return false }
-
         if self.render_lists_m.check_self_hwnd (hwnd) { return false }
+
+        if !check_window_visible  (hwnd)  { return false }
+        if  check_window_cloaked  (hwnd)  { return false }
+
+        if !check_if_app_window (hwnd) {
+            if  check_window_has_owner (hwnd)  { return false }
+            if  check_if_tool_window   (hwnd)  { return false }
+        }
 
         let mut hmap = self.hwnd_map.write().unwrap();
 
@@ -358,14 +363,12 @@ impl SwitcheState {
                 wde.is_uwp_app = Some(true);
                 //wde.exe_path_name = get_uwp_hwnd_exe_path(wde.hwnd) .and_then (|s| Self::parse_exe_path(s));
                 //dbg!(&wde.exe_path_name);
-                //if hwnd==133930 { dbg!(get_package_path_from_hwnd(hwnd)); }
-                //let path = get_package_path_from_hwnd(hwnd);
                 //if wde.exe_path_name.is_none() {
-                    if let Some(pkg_path) = get_package_path_from_hwnd(hwnd).as_ref() { //dbg!(&pkg_path);
-                        if let Some(mfp) = uwp_processing::get_uwp_manifest_parse(pkg_path) {
-                            wde.exe_path_name = Self::parse_exe_path(mfp.exe.to_string_lossy().into());
-                            wde.uwp_icon_path = Some(mfp.ico.to_string_lossy().into());
-                } } //}
+                if let Some(pkg_path) = get_package_path_from_hwnd(hwnd).as_ref() { //dbg!(&pkg_path);
+                    if let Some(mfp) = uwp_processing::get_uwp_manifest_parse(pkg_path) {
+                        wde.exe_path_name = Self::parse_exe_path(mfp.exe.to_string_lossy().into());
+                        wde.uwp_icon_path = Some(mfp.ico.to_string_lossy().into());
+                } }
             } else {
                 wde.is_uwp_app = Some(false);
             }
@@ -373,7 +376,7 @@ impl SwitcheState {
 
         let excl_flag = Some ( self.render_lists_m.calc_excl_flag (&wde) );
         if wde.should_exclude != excl_flag { should_emit = true }
-        wde.should_exclude = excl_flag;   if hwnd==657422 {dbg!(wde);};
+        wde.should_exclude = excl_flag;
 
         drop(hmap); // clearing out write scope before lenghty calls
 
@@ -570,12 +573,12 @@ impl SwitcheState {
         // we'll set its icon to be refreshed, then process it, and queue up a 'light' (ordering only) enum-windows call
         // plus, we'll update self-fgnd state if either this is self hwnd, or if its a valid renderable hwnd coming to fgnd
         self.hwnd_map.read().unwrap() .get(&hwnd) .map (|wde| self.icons_m.mark_cached_icon_mapping_stale(wde));
-        if self.process_discovered_hwnd (hwnd, false) {
+        if self.render_lists_m.check_self_hwnd(hwnd) {
+            self.handle_event__switche_fgnd();
+        } else if self.process_discovered_hwnd (hwnd, false) {
             self.trigger_enum_windows_query_pending(true);
             if self.is_fgnd.is_set() { self.emit_backend_notice (Backend_Notice::switche_event__fgnd_lost) }
             self.is_fgnd.clear()
-        } else if self.render_lists_m.check_self_hwnd(hwnd) {
-            self.is_fgnd.set()
         }
     }
     pub fn proc_win_report__minimize_end (&self, hwnd:Hwnd) {
@@ -643,102 +646,10 @@ impl SwitcheState {
 
 
 
-    /***** kbd-hook handling ******/
-
-    // todo: add a config somewhere to enable/disable this
-    pub fn setup_input_event_hooks (&self) {
-        spawn ( move || unsafe {
-            let _ = win_apis::win_set_cur_process_priority_high();
-            let _ = SetWindowsHookExW (WH_KEYBOARD_LL, Some(Self::kbd_hook_cb), HINSTANCE::default(), 0);
-            // todo: ^^ can update to store the hook handle to possibly unhook it on demand later
-
-            let mut msg: MSG = MSG::default();
-            while BOOL(0) != GetMessageW (&mut msg, HWND(0), 0, 0) { };
-        } );
-    }
-
-    fn is_alt_key (vk_code:u32) -> bool {
-        vk_code == VK_MENU.0 as u32 || vk_code == VK_LMENU.0 as u32 || vk_code == VK_RMENU.0 as u32
-    }
-
-    pub unsafe extern "system" fn kbd_hook_cb (code:c_int, w_param:WPARAM, l_param:LPARAM) -> LRESULT {
-
-        let return_call = || { CallNextHookEx(HHOOK(0), code, w_param, l_param) };
-        let return_block = LRESULT(1);    // returning with non-zero code signals OS to block further processing on the input event
-
-        if code < 0 { return return_call() }
-
-        let kbs = *(l_param.0 as *const KBDLLHOOKSTRUCT);
-
-        if kbs.dwExtraInfo == INJECTED_IDENTIFIER_EXTRA_INFO { return return_call() }
-
-        //println! ("vk: {:?}, ev: {:?}, inj: {:?}", kbs.vkCode, w_param.0, kbs.dwExtraInfo);
-
-        if w_param.0 as u32 == WM_SYSKEYDOWN  && kbs.vkCode == VK_TAB.0 as u32 {
-            // when we get an actual alt-tab, we'll block the tab from going out to avoid conflict w native alt-tab
-            // further, to remain in windows graces since it only lets us call fgnd if we received last input etc, we'll send ourselves input
-            // the spawning in thread is VERY important, as that gives OS time to process msgs before we try to bring switche fgnd
-            spawn ( move || {
-                SwitcheState::instance().handle_input_event__alt_tab_press();
-                // ^^ note that we'll query shift state here, so thats best done before we inject the alt-press below
-                SwitcheState::send_alt_press();
-            } );
-            return return_block
-        }
-        else if w_param.0 as u32 == WM_SYSKEYUP  && kbs.vkCode == VK_TAB.0 as u32 {
-            // for the release, we simply block it to keep balance, but its not that big a deal either way
-            return return_block
-        }
-        else if w_param.0 as u32 == WM_KEYUP  && SwitcheState::is_alt_key(kbs.vkCode) {
-            // for actual alt-release, again we'll spawn to queue events at bottom of msg queue, and have an alt release sent out
-            // again note thread spawning to give OS time to process between our execution chunks
-            if SwitcheState::instance().in_alt_tab.is_set() {
-                SwitcheState::send_alt_release();
-                spawn ( move || { SwitcheState::instance().handle_input_event__alt_release() } );
-            }
-            return return_call()
-            // ^^ note that we cant block it even if we send out a replacement because it could be left/right/virt whatever
-        }
-        return return_call()
-    }
 
 
-    fn handle_input_event__alt_tab_press (&self) { //println! ("alt-tab-press");
-        self.in_alt_tab.set();
-        if win_apis::check_shift_active() {
-            self.proc_hot_key__scroll_up();
-        } else {
-            self.proc_hot_key__scroll_down();
-        }
-    }
-    fn handle_input_event__alt_release (&self) { //println! ("post-alt-tab-alt-release");
-        if self.in_alt_tab.is_set() {
-            self.proc_hot_key__scroll_end();
-            self.in_alt_tab.clear();
-        }
-    }
 
-    fn send_alt_press   () { SwitcheState::send_alt_event(false) }
-    fn send_alt_release () { SwitcheState::send_alt_event(true) }
 
-    fn send_alt_event (isKeyup:bool) {
-        let no_flag = KEYBD_EVENT_FLAGS::default();
-        let keyup_flag = if isKeyup { KEYEVENTF_KEYUP } else { no_flag };
-        let (virt_key, scan_code, sc_flag, ext_key_flag) = (VK_LMENU, 0u16, no_flag, no_flag);
-
-        let mut inputs = [ INPUT {
-            r#type: INPUT_KEYBOARD,
-            Anonymous: INPUT_0 {
-                ki: KEYBDINPUT {
-                    wVk: virt_key,
-                    wScan: scan_code,
-                    dwFlags: ext_key_flag | sc_flag | keyup_flag,
-                    time: 0,
-                    dwExtraInfo: INJECTED_IDENTIFIER_EXTRA_INFO,
-            } }
-        } ];
-        unsafe { SendInput (&mut inputs, core::mem::size_of::<INPUT>() as c_int) };
-    }
 
 
 
@@ -751,8 +662,11 @@ impl SwitcheState {
 
     fn handle_req__window_activate (&self, hwnd:Hwnd) {
         // this call is only for non-self windows .. we'll want to dimiss ourselves
-        spawn ( move || { win_apis::window_activate(hwnd) } );
-        self.handle_req__switche_dismiss();
+        let ss = self.clone();
+        spawn ( move || {
+            win_apis::window_activate(hwnd);
+            ss.handle_req__switche_dismiss();
+        } );
     }
     fn handle_req__window_peek (&self, hwnd:Hwnd) {
         let self_hwnd = self.render_lists_m.self_hwnd();
@@ -812,11 +726,12 @@ impl SwitcheState {
         self.self_window_hide();
     }
     fn handle_req__switche_escape (&self) {
-        // this is called specifically upon escape from switche, and we'll want to reactivate last active window before we dismiss
+        // this is called specifically upon escape from switche
         self.handle_req__switche_dismiss();
-        self.handle_req__nth_recent_window_activate(0);
-        // this is also a good time to do a full query to keep things in sync if any weird events etc have fallen through the cracks
+        //self.handle_req__nth_recent_window_activate(0);
+        // ^^ should we reactivate last active window before we dismiss .. nah .. should rather maintain 'least-surprise'
         self.trigger_enum_windows_query_pending(false);
+        // ^^ this is also a good time to do a full query to keep things in sync if any weird events etc have fallen through the cracks
     }
     fn handle_req__second_recent_window_activate (&self) {
         self.handle_req__nth_recent_window_activate(1);
@@ -897,7 +812,7 @@ impl SwitcheState {
     /*****  tauri app-window events setup and handling   ******/
 
     fn proc_app_window_event__focus (&self) {
-        if self.is_dismissed.check() { self.handle_event__switche_fgnd() }
+        if self.is_dismissed.is_set() || self.is_fgnd.is_clear() { self.handle_event__switche_fgnd() }
     }
     fn proc_app_window_event__focus_lost (&self) {
         // nothing really .. this doesnt even count as dismissed (which triggers list-cur-elem reset etc)
@@ -941,10 +856,7 @@ impl SwitcheState {
     fn proc_tray_event_show (&self) {
         //self.app_handle.read().unwrap().as_ref() .map (|ah| ah.windows().get("main").map (|w| {w.show(); w.set_focus();} ) );
         // ^^ this works but causes an extra alt-up to be left straggling when krusty is running .. annoying
-        if self.is_dismissed.check() || self.render_lists_m.self_hwnd()!= win_apis::get_fgnd_window() {
-            self.self_window_activate();
-            self.handle_event__switche_fgnd();
-        }
+        self.checked_self_activate()
     }
     fn proc_tray_event_quit (&self) {
         self.app_handle.read().unwrap().as_ref() .map (|ah| ah.windows().values() .for_each (|w| { w.close().ok(); }));
@@ -996,7 +908,8 @@ impl SwitcheState {
     fn checked_self_activate (&self) {
         if self.is_dismissed.is_set() || self.is_fgnd.is_clear() || self.render_lists_m.self_hwnd() != win_apis::get_fgnd_window() {
             self.self_window_activate();
-            self.handle_event__switche_fgnd()
+            //self.handle_event__switche_fgnd()
+            // ^^ this should trigger from win-event fgnd report anyway .. and doing this here potentially sets is_fgnd before it happens
         }
     }
     pub fn proc_hot_key__invoke (&self) {
@@ -1035,15 +948,25 @@ impl SwitcheState {
     pub fn setup_global_shortcuts (&self, ah:&AppHandle<Wry>) {
         use tauri::GlobalShortcutManager;
         let mut gsm = ah.global_shortcut_manager();
-        // todo: can update these to prob printout/notify an err msg when cant register global hotkey
-        let ss = self.clone();  let _ = gsm.register ( "F1",              move || ss.proc_hot_key__invoke()               );
-        let ss = self.clone();  let _ = gsm.register ( "F15",             move || ss.proc_hot_key__invoke()               );
-        let ss = self.clone();  let _ = gsm.register ( "F16",             move || ss.proc_hot_key__scroll_down()          );
-        let ss = self.clone();  let _ = gsm.register ( "Shift+F16",       move || ss.proc_hot_key__scroll_up()            );
-        let ss = self.clone();  let _ = gsm.register ( "F17",             move || ss.proc_hot_key__scroll_up()            );
-        let ss = self.clone();  let _ = gsm.register ( "Ctrl+F18",        move || ss.proc_hot_key__scroll_end()           );
-        let ss = self.clone();  let _ = gsm.register ( "Ctrl+Alt+F18",    move || ss.proc_hot_key__switche_escape()       );
 
+        // todo: can update these to prob printout/notify an err msg when cant register global hotkey
+
+        let ss = self.clone();  let _ = gsm.register ( "F1",              move || ss.proc_hot_key__invoke() );
+        // ^^ F1 is for global invocatino
+
+        let ss = self.clone();  let _ = gsm.register ( "Ctrl+F15",        move || ss.proc_hot_key__invoke() );
+        // ^^ krusty remapping of F1 .. this allows krusty to use say ralt-F1 for actual F1 if we disable F1 above in switche configs
+
+        //let ss = self.clone();  let _ = gsm.register ( "F16",             move || ss.proc_hot_key__scroll_down() );
+        //let ss = self.clone();  let _ = gsm.register ( "Shift+F16",       move || ss.proc_hot_key__scroll_up()   );
+        //let ss = self.clone();  let _ = gsm.register ( "F17",             move || ss.proc_hot_key__scroll_up()   );
+        //let ss = self.clone();  let _ = gsm.register ( "Ctrl+F18",        move || ss.proc_hot_key__scroll_end()  );
+        // ^^ these were krusty driven scrolling hotkeys, but we've direct impld alt-tab and right-mbtn-scroll in switche now
+
+        let ss = self.clone();  let _ = gsm.register ( "Ctrl+Alt+F18",    move || ss.proc_hot_key__switche_escape() );
+        // ^^ krusty-driven support for esc during alt-tab, to avoid the native alt-esc behavior
+
+        // other misc krusty/ahk driven hotkeys for direct invocation of specific windows types
         let ss = self.clone();  let _ = gsm.register ( "Ctrl+Alt+F19",    move || ss.proc_hot_key__switch_last()          );
         let ss = self.clone();  let _ = gsm.register ( "Ctrl+Alt+F20",    move || ss.proc_hot_key__switch_tabs_outliner() );
         let ss = self.clone();  let _ = gsm.register ( "Ctrl+Alt+F21",    move || ss.proc_hot_key__switch_notepad_pp()    );
@@ -1278,6 +1201,8 @@ impl RenderReadyListsManager {
 
 
 }
+
+
 
 
 

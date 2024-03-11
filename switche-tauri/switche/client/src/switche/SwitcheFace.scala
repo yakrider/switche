@@ -13,7 +13,8 @@ import scala.util.Try
 
 object SwitcheFaceConfig {
    val groupedModeTopRecentsCount = 9
-   val hoverLockTime = 300 // ms
+   val hoverLockTime = 200 // ms
+   val minScrollSpacingMs = 15d // ms
    def nbsp(n:Int=1) = raw((1 to n).map(i=>"&nbsp;").mkString)
    def clearElem (e:dom.Element): Unit = { e.innerHTML = ""}
    def clearedElem (e:dom.Element) = { e.innerHTML = ""; e }
@@ -82,8 +83,8 @@ object SwitcheFacePage {
    }
    
    def procMouse_Click (e:MouseEvent) = {
-      triggerHoverLockTimeout()
-      scrollEnd_disarm()
+      triggerHoverLockTimeout(); scrollEnd_disarm()
+      e.preventDefault(); e.stopPropagation()
       //e.target.closest(".elemBox").foreach(_=>handleReq_CurElemActivation())
       Some(e.target) .filter(_.isInstanceOf[Element]) .flatMap { e =>
          Option ( e.asInstanceOf[Element] .closest(".elemBox") .asInstanceOf[Div] )  // can return a null so wrapping into option
@@ -132,7 +133,7 @@ object SwitcheFacePage {
    }
    def procMouse_Wheel (e:WheelEvent) = {
       e.preventDefault()
-      if (verifyActionRepeatSpacing(20d)) {  // enforced spacing (in ms) between consecutive mouse scroll action handling
+      if (verifyActionRepeatSpacing()) {  // enforced spacing (in ms) between consecutive mouse scroll action handling
          triggerHoverLockTimeout(); //scrollEnd_arm();
          if (e.deltaY > 0 || e.deltaX > 0) {
             if (e.ctrlKey) focusGroup_Next() else  focusElem_Next()
@@ -318,7 +319,7 @@ object SwitchePageState {
       scrollEnd_disarm(); setDismissed()
       if (!fromBkndHotkey) { SendMsgToBack.FE_Req_SwitcheEscape() }
       // we'll do a delayed focus-reset so the visual flip happens out of sight after switche window is gone
-      js.timers.setTimeout(300) {  SwitchePageState.resetFocus() }
+      js.timers.setTimeout(300) {  SwitchePageState.resetFocus(); SwitchePageState.exitSearchState(); }
    }
    def handleReq_SwitcheQuit () = {
       SendMsgToBack.FE_Req_SwitcheQuit()
@@ -334,8 +335,14 @@ object SwitchePageState {
    }
    def handleReq_CurElemMinimize() = { idToHwnd (curElemId) .foreach ( SendMsgToBack.FE_Req_WindowMinimize ) }
    def handleReq_CurElemMaximize() = { idToHwnd (curElemId) .foreach ( SendMsgToBack.FE_Req_WindowMaximize ) }
-   def handleReq_CurElemClose()    = { idToHwnd (curElemId) .foreach ( SendMsgToBack.FE_Req_WindowClose    ) }
    def handleReq_CurElemPeek()     = { idToHwnd (curElemId) .foreach ( SendMsgToBack.FE_Req_WindowPeek     ) }
+   def handleReq_CurElemClose()    = {
+      val toClose = idToHwnd(curElemId)
+      //focusElem_Next()
+      pickNextElem (isReverseDir = false, isGrpNext = false) .map(_.id) .foreach(setCurElem)
+      // ^^ instead of immdtly focusing on next elem, we'll just pick it out and let it be highligted upon next repaint
+      toClose .foreach ( SendMsgToBack.FE_Req_WindowClose    )
+   }
    
 
    def handleMouseEnter (elem:Div) = { println("mouse enter!")
@@ -349,7 +356,7 @@ object SwitchePageState {
       isHoverLocked = true; val t = js.Date.now(); lastActionStamp = t;
       js.timers.setTimeout(hoverLockTime) {handleHoverLockTimeout(t)}
    }
-   def verifyActionRepeatSpacing (minRepeatSpacingMs:Double) : Boolean = {
+   def verifyActionRepeatSpacing (minRepeatSpacingMs:Double = minScrollSpacingMs) : Boolean = {
       val t = scalajs.js.Date.now()
       if ((t - lastActionStamp) < minRepeatSpacingMs) { return false }
       lastActionStamp = t
@@ -593,7 +600,7 @@ object SwitchePageState {
    } .map(_.elem) .foreach (setCurElemHighlight)      // finally do the focus syncing
 
 
-   def focusElem (isReverseDir:Boolean=false, isGrpNext:Boolean=false) = {
+   def pickNextElem (isReverseDir:Boolean, isGrpNext:Boolean) = {
       // we'll setup closures to nav and wrap-over forwards or backwards so it can handle both with same logic block below
       type Wrapper = IndexedSeq[String] => Option[String]
       val (incr, vecWrap) = {
@@ -631,7 +638,10 @@ object SwitchePageState {
                } else { groupsHeadsIdsVec .lift(oe.yg) .flatMap(groupedElemsMap.get) }
             }
          }
-      } .map(_.elem) .foreach (setCurElemHighlight)  // finally, can make that current (if we found one)
+      } .map(_.elem)
+   }
+   def focusElem (isReverseDir:Boolean=false, isGrpNext:Boolean=false) = {
+      pickNextElem (isReverseDir, isGrpNext) .foreach(setCurElemHighlight)
    }
    def focusElem_Next()  = focusElem (isReverseDir=false, isGrpNext=false)
    def focusElem_Prev()  = focusElem (isReverseDir=true,  isGrpNext=false)
@@ -730,10 +740,16 @@ object RibbonDisplay {
    def debugDisplayMsg (msg:String) = { debugLinks.innerHTML = s"$msg (${js.Date.now().toString})"; }
    def handleRefreshBtnClick() : Unit = {
       // we want to refresh too (as do periodic calls elsewhere), but here we want to also force icons-refresh
+      blipArmedIndicator()    // some visual indicator on refresh click is useful since often it causes no visible change
       SendMsgToBack.FE_Req_Refresh()
    }
    def setArmedIndicator_On  () = { armedIndicator.classList.add("armed") }
    def setArmedIndicator_Off () = { armedIndicator.classList.remove("armed") }
+   def blipArmedIndicator () = {
+      // delay both on and off a bit, as typically we might be doing repaints etc when this is triggered
+      js.timers.setTimeout(50 ) { setArmedIndicator_On() }
+      js.timers.setTimeout(250) { setArmedIndicator_Off() }
+   }
    
    def getTopRibbonDiv() = {
       val reloadLink = a (href:="#", "Reload", onclick:={(e:MouseEvent) => g.window.location.reload()} )

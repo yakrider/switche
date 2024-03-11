@@ -8,7 +8,7 @@ use once_cell::sync::Lazy;
 
 use windows::core::{GUID, Interface, PCWSTR, PSTR, PWSTR};
 use windows::Win32::Foundation::{BOOL, CloseHandle, HANDLE, HWND, LPARAM, RECT, WPARAM};
-use windows::Win32::Graphics::Dwm::{DwmGetWindowAttribute, DWMWA_CLOAKED};
+use windows::Win32::Graphics::Dwm::{DwmGetWindowAttribute, DWMWA_CLOAKED, DWMWA_EXTENDED_FRAME_BOUNDS};
 use windows::Win32::Security::TOKEN_READ;
 use windows::Win32::Storage::Packaging::Appx::{
     GetApplicationUserModelId, GetPackagePathByFullName, GetPackagesByPackageFamily, ParseApplicationUserModelId
@@ -19,7 +19,13 @@ use windows::Win32::System::Threading::{
 };
 use windows::Win32::UI::Input::KeyboardAndMouse::{GetKeyState, VK_SHIFT};
 use windows::Win32::UI::Shell::PropertiesSystem::{IPropertyStore, PROPERTYKEY, SHGetPropertyStoreForWindow};
-use windows::Win32::UI::WindowsAndMessaging::{GetForegroundWindow, GetWindowPlacement, ShowWindow, GetWindowTextW, IsWindowVisible, GetAncestor, GetWindowThreadProcessId, PostMessageA, SetForegroundWindow, ShowWindowAsync, GetWindowLongW, WINDOWPLACEMENT, EnumChildWindows, SystemParametersInfoW, WM_CLOSE, SW_HIDE, SW_MAXIMIZE, SW_MINIMIZE, SW_RESTORE, SW_SHOW, SW_SHOWMINIMIZED, WS_CHILD, GWL_STYLE, GA_ROOTOWNER, WS_EX_TOOLWINDOW, GWL_EXSTYLE, SPI_GETWORKAREA, SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS, MoveWindow};
+use windows::Win32::UI::HiDpi::{DPI_AWARENESS_CONTEXT_SYSTEM_AWARE, SetThreadDpiAwarenessContext};
+use windows::Win32::UI::WindowsAndMessaging::{
+    GetForegroundWindow, GetWindowPlacement, GetWindowTextW, IsWindowVisible, GetAncestor, GetWindowThreadProcessId,
+    PostMessageA, SetForegroundWindow, ShowWindowAsync, GetWindowLongW, WINDOWPLACEMENT, EnumChildWindows, SystemParametersInfoW,
+    WM_CLOSE, SW_HIDE, SW_MAXIMIZE, SW_MINIMIZE, SW_RESTORE, SW_SHOW, SW_SHOWMINIMIZED, WS_CHILD, GWL_STYLE, GA_ROOTOWNER,
+    WS_EX_APPWINDOW, WS_EX_TOOLWINDOW, GWL_EXSTYLE, SPI_GETWORKAREA, SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS, MoveWindow
+};
 
 
 use crate::*;
@@ -35,6 +41,10 @@ pub fn check_window_cloaked (hwnd:Hwnd) -> bool { unsafe {
     let out_ptr = &mut cloaked_state as *mut isize as *mut c_void;
     let _ = DwmGetWindowAttribute (HWND(hwnd), DWMWA_CLOAKED, out_ptr, size_of::<isize>() as u32);
     cloaked_state != 0
+} }
+
+pub fn check_if_app_window (hwnd:Hwnd) -> bool { unsafe {
+    GetWindowLongW (HWND(hwnd), GWL_EXSTYLE) & WS_EX_APPWINDOW.0 as i32 != 0
 } }
 
 pub fn check_if_tool_window (hwnd:Hwnd) -> bool { unsafe {
@@ -63,11 +73,11 @@ pub fn window_activate (hwnd:Hwnd) { unsafe { println!("winapi activate {:?}",hw
     // ^^ this will cause minimized/maximized windows to be restored
     GetWindowPlacement (HWND(hwnd), &mut win_state);
     if win_state.showCmd == SW_SHOWMINIMIZED {
-        //ShowWindowAsync (HWND(hwnd), SW_RESTORE);
-        ShowWindow (HWND(hwnd), SW_RESTORE);
+        //ShowWindow (HWND(hwnd), SW_RESTORE);
+        ShowWindowAsync (HWND(hwnd), SW_RESTORE);
     } else {
-        //ShowWindowAsync (HWND(hwnd), SW_SHOW);
-        ShowWindow (HWND(hwnd), SW_SHOW);
+        //ShowWindow (HWND(hwnd), SW_SHOW);
+        ShowWindowAsync (HWND(hwnd), SW_SHOW);
     }
     //keybd_event (0, 0, KEYBD_EVENT_FLAGS::default(), 0);
     SetForegroundWindow (HWND(hwnd));
@@ -79,7 +89,9 @@ pub fn window_activate (hwnd:Hwnd) { unsafe { println!("winapi activate {:?}",hw
 
 
 pub fn window_hide (hwnd:Hwnd) { unsafe { println!("winapi hide {:?}",hwnd);
-    ShowWindow (HWND(hwnd), SW_HIDE);
+    //ShowWindow (HWND(hwnd), SW_HIDE);
+    // ^^ since this calls from our thread, this can apparently be unable to remove kbd focus from the window being hidden!!
+    ShowWindowAsync (HWND(hwnd), SW_HIDE);
 } }
 pub fn window_minimize (hwnd:Hwnd) { unsafe {
     ShowWindowAsync (HWND(hwnd), SW_MINIMIZE);
@@ -110,6 +122,13 @@ pub fn win_get_work_area () -> RECT { unsafe {
     rect
 } }
 
+pub fn win_get_window_frame (hwnd:Hwnd) -> RECT { unsafe {
+    // note that rect includes padding of the 'drop shadow' around the frame
+    let mut rect = RECT::default();
+    let _ = DwmGetWindowAttribute (HWND(hwnd), DWMWA_EXTENDED_FRAME_BOUNDS, &mut rect as *mut RECT as *mut c_void, size_of::<RECT>() as u32);
+    rect
+} }
+
 pub fn win_move_to (hwnd:Hwnd, x:i32, y:i32, width:i32, height:i32) { unsafe {
     MoveWindow (HWND(hwnd), x, y, width, height, true);    // the bool param at end flags whether to repaint or not
 } }
@@ -134,10 +153,10 @@ fn get_pid_exe_path (pid:u32) -> Option<String> { unsafe {
 
 pub fn get_uwp_hwnd_exe_path (hwnd:Hwnd) -> Option<String> { unsafe {
     let mut frame_host_pid : u32 = 0;
-    let _ = GetWindowThreadProcessId (HWND(hwnd), Some(&mut frame_host_pid));  //if hwnd==657422 {println!("fh-pid--{:?}",(frame_host_pid));}
+    let _ = GetWindowThreadProcessId (HWND(hwnd), Some(&mut frame_host_pid));
     let uwp_pid = get_child_windows (hwnd) .iter() .map (|cwh| {
         let mut pid = 0u32;
-        let _ = GetWindowThreadProcessId (HWND(*cwh), Some(&mut pid));  //if hwnd==657422 {println!("uwp-pid{:?}",(pid));}
+        let _ = GetWindowThreadProcessId (HWND(*cwh), Some(&mut pid));
         pid
     } ) .filter (|pid| *pid != frame_host_pid) .collect::<Vec<u32>>();
     uwp_pid .first() .and_then (|&pid| get_pid_exe_path(pid))
@@ -161,24 +180,17 @@ pub fn get_package_path_from_hwnd (hwnd:Hwnd) -> Option<String> { unsafe {
 
     let mut store = ptr::null_mut();
     let result = SHGetPropertyStoreForWindow(HWND(hwnd), &IPropertyStore::IID, &mut store);
-    //result.expect("SHGetPropertyStoreForWindow failed");
     if result.ok().is_none() { return None }
     if store.is_null() { return None }
     //let store : IPropertyStore = unsafe { core::mem::transmute(store) };
 
     // (alternatively, a bit more explicitly cautious about types:)
     let store = core::mem::transmute::<*mut c_void, IPropertyStore>(store);
-
     //dbg!(&store);
 
     let PKEY_AppUserModel_ID = PROPERTYKEY {fmtid: GUID::from("9F4C2855-9F79-4B39-A8D0-E1D42DE1D5F3"), pid:5 };
-    //let PKEY_AppUserModel_ID = &IPropertyStore::
     let _res = store.GetCount();
-    //dbg!(res);
     let _res = store.GetValue ( &PKEY_AppUserModel_ID as *const _ );
-    //dbg!(&res.is_err());
-    //dbg!(&res.unwrap().Anonymous.Anonymous.Anonymous.pwszVal.to_string());
-    //dbg!(&res.clone().unwrap().Anonymous.Anonymous.Anonymous.pwszVal.to_string());
 
     let aumid = _res.unwrap().Anonymous.Anonymous.Anonymous.pwszVal;
 
@@ -206,38 +218,8 @@ pub fn get_package_path_from_hwnd (hwnd:Hwnd) -> Option<String> { unsafe {
     let _res = GetPackagesByPackageFamily ( PCWSTR(pkg_fam_name.as_ptr()),
                                            &mut num_pkg_full_names,  Some(&mut PWSTR::from_raw(&mut pkg_full_names as *mut _ as _)),
                                            &mut buf_len,  PWSTR::from_raw(buf.as_mut_ptr()) );
-    //dbg!(&_res);
-    //let _res = GetPackagesByPackageFamily ( PCWSTR(pkg_fam_name.as_ptr()),
-    //                                       &mut num_pkg_full_names,  Some(&mut PWSTR::from_raw(&mut pkg_full_names as *mut _ as _)),
-    //                                       ptr::null_mut(),  PWSTR::null() );
-    //dbg!(&_res);
-    //let _res = GetPackagesByPackageFamily ( PCWSTR(pkg_fam_name.as_ptr()),
-    //                                       ptr::null_mut(),  None,
-    //                                       &mut buf_len,  PWSTR::from_raw(buf.as_mut_ptr()) );
-    //dbg!(&_res);
-    //let _res = GetPackagesByPackageFamily ( PCWSTR(pkg_fam_name.as_ptr()),
-    //                                       &mut num_pkg_full_names,  None,
-    //                                       &mut buf_len,  PWSTR::from_raw(buf.as_mut_ptr()) );
-    //dbg!(&_res);
-    //dbg! ( PWSTR::from_raw (pkg_full_names.as_mut_ptr()) .to_string() );
-    //dbg! ( pkg_full_names.get(0) .map(|p| p.as_ref()).flatten().map(|p|p.to_hstring()) );
-    //let mut full_names_vec = std::slice::from_raw_parts (pkg_full_names.as_mut_ptr() as *const PWSTR, num_pkg_full_names as _);
-    //dbg! (full_names_vec.as_ref().len());
-    //dbg! (full_names_vec.as_ref().clone());
-    //dbg! (&buf);
-    //dbg! ( PWSTR::from_raw (buf.as_mut_ptr()) .to_string() );
-    //if full_names_vec.as_ref().is_empty() { return None }
 
-    //dbg! ( pkg_full_names.get(0).map(|p| (*p).read().to_string()) );
-    //dbg! ( *pkg_full_names )
-    //full_names_vec .iter() .for_each (|p| println! ("{:?}", p) );
-
-    //dbg! ( PWSTR::from_raw (full_names_vec.as_ptr() as *mut _) .to_string() );
-    //dbg! ( PWSTR::from_raw (full_names_vec[0].as_ptr()) .to_string() );
-    //full_names_vec .iter() .for_each (|p| println! ("{:?}", PWSTR::from_raw (p.as_ptr()) .to_string()) );
-    //full_names_vec .iter() .for_each (|p| println! ("{:?}", p.to_string()) );
-
-    let package = PWSTR::from_raw (buf.as_mut_ptr()); //.to_string();
+    let package = PWSTR::from_raw (buf.as_mut_ptr());
     // todo ^^ note that we'll pick up the first of possibly multiple packages in this family
 
     let mut pkg_path_len = 0u32;
@@ -246,10 +228,7 @@ pub fn get_package_path_from_hwnd (hwnd:Hwnd) -> Option<String> { unsafe {
     let mut pkg_path : Vec<u16> = Vec::with_capacity(pkg_path_len as _);
     let _res = GetPackagePathByFullName (PCWSTR(package.as_ptr()), &mut pkg_path_len, PWSTR::from_raw(pkg_path.as_mut_ptr()));
     //dbg! (res);
-    //dbg! (PWSTR::from_raw(pkg_path.as_mut_ptr()).to_hstring());
-
     PWSTR::from_raw(pkg_path.as_mut_ptr()).to_string().ok()
-
 
 } }
 
@@ -268,6 +247,11 @@ pub fn check_proc_elevated (h_proc:HANDLE) -> Option<bool> { unsafe {
 pub fn win_set_cur_process_priority_high() -> bool { unsafe {
     SetPriorityClass (GetCurrentProcess(), HIGH_PRIORITY_CLASS) .as_bool()
 } }
+
+pub fn win_set_thread_dpi_aware() { unsafe {
+    SetThreadDpiAwarenessContext (DPI_AWARENESS_CONTEXT_SYSTEM_AWARE);
+} }
+
 
 pub fn check_shift_active () -> bool { unsafe {
     GetKeyState (VK_SHIFT.0 as i32) & 0x80 != 0
