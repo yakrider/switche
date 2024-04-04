@@ -1,6 +1,6 @@
 #![ allow (non_upper_case_globals, non_snake_case) ]
 
-use std::ffi::{c_void};
+use std::ffi::c_void;
 use std::mem::size_of;
 use std::ptr;
 use std::sync::{Arc, Mutex, RwLock};
@@ -28,7 +28,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
 };
 
 
-use crate::*;
+use crate::switche::Hwnd;
 
 
 
@@ -68,9 +68,9 @@ pub fn get_fgnd_window () -> Hwnd { unsafe {
 
 
 pub fn window_activate (hwnd:Hwnd) { unsafe { println!("winapi activate {:?}",hwnd);
-    let mut win_state =  WINDOWPLACEMENT::default();
     //ShowWindowAsync (HWND(hwnd), SW_NORMAL);
     // ^^ this will cause minimized/maximized windows to be restored
+    let mut win_state =  WINDOWPLACEMENT::default();
     GetWindowPlacement (HWND(hwnd), &mut win_state);
     if win_state.showCmd == SW_SHOWMINIMIZED {
         //ShowWindow (HWND(hwnd), SW_RESTORE);
@@ -81,11 +81,11 @@ pub fn window_activate (hwnd:Hwnd) { unsafe { println!("winapi activate {:?}",hw
     }
     //keybd_event (0, 0, KEYBD_EVENT_FLAGS::default(), 0);
     SetForegroundWindow (HWND(hwnd));
+    //std::thread::spawn ( move || SetForegroundWindow (HWND(hwnd)) );
     // its a lil flaky, so we'll try the another call too, (plus the little delay from spawn should also help)
     //std::thread::spawn (move || SwitchToThisWindow (HWND(hwnd), BOOL::from(true)) );
     // ^^ appears basically the same as above calls, doesnt help when have issues, else isnt necessary
 } }
-
 
 
 pub fn window_hide (hwnd:Hwnd) { unsafe { println!("winapi hide {:?}",hwnd);

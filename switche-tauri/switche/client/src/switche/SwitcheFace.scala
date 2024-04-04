@@ -12,7 +12,7 @@ import scala.util.Try
 
 
 object SwitcheFaceConfig {
-   val groupedModeTopRecentsCount = 9
+   //val groupedModeTopRecentsCount = 9      // moved to configs.n_grp_mode_top_recents
    val hoverLockTime = 200 // ms
    val minScrollSpacingMs = 15d // ms
    def nbsp(n:Int=1) = raw((1 to n).map(i=>"&nbsp;").mkString)
@@ -82,7 +82,7 @@ object SwitcheFacePage {
       window .asInstanceOf[js.Dynamic] .addEventListener ("wheel", procMouse_Wheel _, eventListenerOptions)
    }
    
-   def procMouse_Click (e:MouseEvent) = {
+   def procMouse_Click (e:MouseEvent) = { //println ("mouse lbtn click!")
       triggerHoverLockTimeout(); scrollEnd_disarm()
       e.preventDefault(); e.stopPropagation()
       //e.target.closest(".elemBox").foreach(_=>handleReq_CurElemActivation())
@@ -146,7 +146,7 @@ object SwitcheFacePage {
       //handleMouseEnter ( e.target.asInstanceOf[Element].closest(".elemBox").asInstanceOf[Div] )
       Some(e.target) .filter(_.isInstanceOf[Element]) .flatMap { e =>
          Option ( e .asInstanceOf[Element] .closest(".elemBox") .asInstanceOf[Div] )
-      } .foreach (handleMouseEnter)
+      } .foreach {e => /*handleMouseEnter*/ }
    }
    
    def capturePhaseKeyUpHandler (e:KeyboardEvent) = {    printKeyDebugInfo(e,"up")
@@ -214,8 +214,12 @@ object SwitcheFacePage {
          
          
          // space key .. usually for cur elem activation .. but in search state, it'll pass through to searchbox
-         case (_, false, _, _,     " ")   => handleReq_CurElemActivation()    // non-search state
-         case (_, true,  _, true,  " ")   => handleReq_CurElemActivation()    // search-state w/ ctrl key
+         // note that the alt versions are for reference, as OS never lets those through (and we do the eqv via LL-hook callbacks)
+         //   (arm,    srch,   alt,   ctrl,  key)
+         case (true,   _,      true,  _,     " ")  => scrollEnd_disarm()               // alt-space disarms if scroll-armed
+         case (false,  _,      true,  _,     " ")  => handleReq_CurElemActivation()    // alt-space activates if NOT scroll-armed
+         case (_,      false,  _,     _,     " ")  => handleReq_CurElemActivation()    // activation in non-search state
+         case (_,      true,   _,     true,  " ")  => handleReq_CurElemActivation()    // activation in search-state w/ ctrl key
          
          
          // alt-f4 .. we'll directly exit app ..  (although just doing doStopProp = false would also work indirectly)
@@ -245,10 +249,10 @@ object SwitcheFacePage {
                case "j"  => focusGroup_Prev()
                case "k"  => focusGroup_Next()
                
-               case "s" | "l" | "S" | "L" =>
+               case " " | "s" | "l" | "S" | "L" =>
                   e.preventDefault(); scrollEnd_disarm(); setupSearchbox (doPassthrough = false)
                   
-               case _ => // all other alt combos, or while armed can be ignored
+               case _ => // all other alt combos, or while dis-armed can be ignored
             }
          }
          
@@ -306,9 +310,12 @@ object SwitchePageState {
    var isHoverLocked = false; var lastActionStamp = 0d;
    // ^^ hover-lock flag locks-out mouseover, and is intended to be set (w small timeout) while mouse scrolling/clicks etc
    // .. and that prevents mouse jiggles from screwing up any in-preogress mouse scrolls, clicks, key-nav etc
-   var isFreshRendered = true;
-   // ^^ mouse-enter retriggers after repaint w/o mouse movement, so we'll use this flag to ignore the first event after repaint
-
+   var last_mouse_enter_xy : Option[(Double,Double)] = None
+   // ^^ mouse-enter retriggers after repaint, so we'll keep track of mouse pos at last mouseenter and ignore if same pos
+   var fresh_render_under_mouse_elem_bounds : Option[dom.DOMRect] = None
+   // ^^ otoh, we'll want to trigger selection when user moves mouse even in the ignored first mouse position ..
+   // .. so, we'll capture the bounds of the elem under mouse on first render, and use that to trigger mouse-enter ourselves if needed
+   
 
    def recentsId (hwnd:Int) = s"${hwnd}_r"
    def groupedId (hwnd:Int) = s"${hwnd}_g"
@@ -328,10 +335,9 @@ object SwitchePageState {
    def handleReq_CurElemActivation() : Unit = {
       scrollEnd_disarm(); setDismissed()
       idToHwnd (curElemId) .foreach ( SendMsgToBack.FE_Req_WindowActivate )
-      js.timers.setTimeout(300) {   // again, small delay to avoid visible change
-         if (SwitchePageState.inSearchState) { SwitchePageState.exitSearchState() }
-         SwitchePageState.resetFocus()
-      }
+      // we'll reset focus w small delay to avoid visible change
+      //js.timers.setTimeout(300) { SwitchePageState.exitSearchState(); SwitchePageState.resetFocus(); }
+      // ^^ this will happen on swi-fgnd-lost report anyway, putting this on a timer just invites races etc
    }
    def handleReq_CurElemMinimize() = { idToHwnd (curElemId) .foreach ( SendMsgToBack.FE_Req_WindowMinimize ) }
    def handleReq_CurElemMaximize() = { idToHwnd (curElemId) .foreach ( SendMsgToBack.FE_Req_WindowMaximize ) }
@@ -345,10 +351,6 @@ object SwitchePageState {
    }
    
 
-   def handleMouseEnter (elem:Div) = { println("mouse enter!")
-      if (!isHoverLocked && !isFreshRendered) { setCurElemHighlight(elem) }
-      isFreshRendered = false
-   }
    def handleHoverLockTimeout (kickerStamp:Double) = {
       if (lastActionStamp == kickerStamp) { isHoverLocked = false }
    }
@@ -361,6 +363,29 @@ object SwitchePageState {
       if ((t - lastActionStamp) < minRepeatSpacingMs) { return false }
       lastActionStamp = t
       return true
+   }
+   
+   def handleElemMouseEnter (elem:Div, ev:MouseEvent) = { //println (s"mouse enter on elem: ${elem.id}")
+      if (last_mouse_enter_xy.isEmpty) {
+         fresh_render_under_mouse_elem_bounds = Some(elem.getBoundingClientRect())
+         // ^^ for first render, we want to capture bounds of elem under mouse, so we can react to mousemove even w/o mouseenter
+      } else if (last_mouse_enter_xy == Some(ev.clientX, ev.clientY)) {
+         // we'll ignore these spurious mouse-enters triggered due to elem repaints (but we'll invalidate first render bounds)
+         fresh_render_under_mouse_elem_bounds = None
+      } else if (!isHoverLocked) {
+         setCurElemHighlight(elem)
+      }
+      last_mouse_enter_xy = Some (ev.clientX, ev.clientY)
+   }
+   def handleElemMouseMove  (elem:Div, ev:MouseEvent) = {
+      // in the corner case after first repaint, when we want to ignore the first mouse-enter, but still want to respond to the user
+      //    actually moving the mouse, we'll use the bounds we captured on repaint-fresh mouse-enter to trigger a mouse-enter ourselves
+      if ( !isHoverLocked &&
+            last_mouse_enter_xy != Some(ev.clientX, ev.clientY) &&
+            fresh_render_under_mouse_elem_bounds.exists { bounds =>
+               ev.clientX >= bounds.left && ev.clientX <= bounds.right && ev.clientY >= bounds.top && ev.clientY <= bounds.bottom
+            }
+      ) { setCurElemHighlight(elem) }
    }
 
 
@@ -382,8 +407,9 @@ object SwitchePageState {
       val elem = div (`class`:="elemBox", id:=idStr, tabindex:=0, exeSpan, nbsp(2), ySpan, nbsp(2), icoSpan, nbsp(), titleSpan).render
       //elem.onclick = {ev:MouseEvent => SwitcheState.handleReq_WindowActivation(e.hwnd)}
       // ^^ moved most handlers to single document-level events handler
-      elem.onmouseenter = {(ev:MouseEvent) => handleMouseEnter(elem)}
-      // ^^ but we left mouseenter here, as doing that globally is pointlessly inefficient
+      // .. but we left mouseenter etc here, as doing that globally is a little wasteful
+      elem.onmouseenter = { (ev:MouseEvent) => handleElemMouseEnter (elem,ev) }
+      elem.onmousemove  = { (ev:MouseEvent) => handleElemMouseMove  (elem,ev) }
       elem
    }
 
@@ -391,7 +417,7 @@ object SwitchePageState {
       // this needs the elems table, and a vec to navigate through it
       val elemsMap = mutable.LinkedHashMap[String,OrderedElemsEntry]()
       val cappedRecents = {
-         if (!inGroupedMode) renderList else renderList.take(groupedModeTopRecentsCount)
+         if (!inGroupedMode) renderList else renderList.take(configs.n_grp_mode_top_recents)
       }
       cappedRecents .flatMap(e => hwndMap.get(e.hwnd).map(d => (d, e))) .zipWithIndex .foreach { case ((wde,rle),i) =>
          val id = recentsId (wde.hwnd)
@@ -468,7 +494,7 @@ object SwitchePageState {
 
          // now lets build the recents w similar search-match highlighting as well .. (we wont need nav idxs for it)
          val elemsMap = mutable.LinkedHashMap[String,OrderedElemsEntry]()
-         renderList .take(groupedModeTopRecentsCount) .zipWithIndex .foreach { case (e,i) =>
+         renderList .take(configs.n_grp_mode_top_recents) .zipWithIndex .foreach { case (e,i) =>
             getSearchMatchRes(e) .flatMap (res => getSearchElem (e, ElemTs.GR, GrpTs.NG, res)) .foreach { se =>
                elemsMap .put (se.id, OrderedElemsEntry (i, se.elem))
          } }
@@ -698,10 +724,11 @@ object ElemsDisplay {
             } else { makeElemsDiv (ElemTs.R,  StateTs.L) }
       } }
       clearedElem(elemsDiv) .appendChild (searchedDiv.render)
-      reSyncCurFocusIdAfterRebuild()
-      //triggerHoverLockTimeout()     // coz newly built elems seem to get the first mouse-enter w/o any mouse movement
-      // ^^ gaah that makes ui a bit janky, so we moved to using a special first-render-after-repaint flag
-      isFreshRendered = true
+      if (!isDismissed) { reSyncCurFocusIdAfterRebuild() } else { resetFocus() }
+      // ^^ we typically want to resync on rebuild so our selection remains where we placed it despite z-order changing ..
+      // however, while dismissed, we'll want to always have the second-top selected, as thats what we want when swi is invoked next
+      last_mouse_enter_xy = None
+      // ^^ this helps avoid spurious mouse-enter triggering elem-highlight upon repaint
    }
 }
 

@@ -7,7 +7,7 @@
     "withGlobalTauri": true
   },
   "package": {
-    "productName": "switche",
+    "productName": "Switche",
     "version": "0.2.1"
   },
   "tauri": {
@@ -43,10 +43,10 @@
           "icons/icon.ico"
       ],
       "identifier": "com.yakrider.switche",
-      "shortDescription": "",
-      "longDescription": "",
+      "shortDescription": "Searchable Task Switcher",
+      "longDescription": "Searchable Task Switcher",
       "resources": [],
-      "targets": "app"
+      "targets": "nsis"
     },
     "security": {
       "csp": null

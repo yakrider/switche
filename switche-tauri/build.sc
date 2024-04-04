@@ -21,7 +21,7 @@ object switche extends JavaModule {
    object client extends ScalaJSModule {
      
       def scalaVersion = "3.2.2" // "2.13.10"
-      def scalaJSVersion = "1.13.0"
+      def scalaJSVersion = "1.16.0"
      
       //override def moduleKind = T { ModuleKind.CommonJSModule }
       override def moduleKind = T { ModuleKind.ESModule }

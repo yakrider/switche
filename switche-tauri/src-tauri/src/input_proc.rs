@@ -1,16 +1,18 @@
 #![ allow (non_snake_case) ]
 
-use std::ptr::null_mut;
 use std::thread::{sleep, spawn};
-use std::sync::atomic::{AtomicPtr, Ordering};
+use std::sync::atomic::{AtomicIsize, Ordering};
 use std::os::raw::c_int;
 use std::time;
 
-use windows::Win32::Foundation::{HINSTANCE, HWND, LPARAM, WPARAM, LRESULT, POINT, BOOL};
-use windows::Win32::UI::WindowsAndMessaging::{GetMessageW, MSG, SetWindowsHookExW, UnhookWindowsHookEx, WH_KEYBOARD_LL, CallNextHookEx, HHOOK, KBDLLHOOKSTRUCT, WM_SYSKEYDOWN, WM_SYSKEYUP, WM_KEYUP, WH_MOUSE_LL, WINDOWS_HOOK_ID, WM_RBUTTONDOWN, WM_RBUTTONUP, WM_MOUSEWHEEL, MSLLHOOKSTRUCT, SetCursorPos, GetCursorPos};
+use windows::Win32::Foundation::{HINSTANCE, HWND, LPARAM, WPARAM, LRESULT, POINT, BOOL, GetLastError};
+use windows::Win32::System::Threading::GetCurrentThreadId;
+use windows::Win32::UI::WindowsAndMessaging::{GetMessageW, MSG, SetWindowsHookExW, UnhookWindowsHookEx, WH_KEYBOARD_LL, CallNextHookEx, HHOOK, KBDLLHOOKSTRUCT, WM_SYSKEYDOWN, WM_SYSKEYUP, WM_KEYUP, WH_MOUSE_LL, WINDOWS_HOOK_ID, WM_RBUTTONDOWN, WM_RBUTTONUP, WM_MOUSEWHEEL, MSLLHOOKSTRUCT, SetCursorPos, GetCursorPos, WM_USER, PostThreadMessageW};
 use windows::Win32::UI::Input::KeyboardAndMouse::{INPUT, INPUT_0, INPUT_KEYBOARD, INPUT_MOUSE, KEYBD_EVENT_FLAGS, KEYBDINPUT, KEYEVENTF_KEYUP, MOUSE_EVENT_FLAGS, MOUSEEVENTF_ABSOLUTE, MOUSEEVENTF_RIGHTUP, MOUSEINPUT, SendInput, VIRTUAL_KEY, VK_LMENU, VK_MENU, VK_RMENU, VK_TAB};
 
 use crate::*;
+use crate::switche::SwitcheState;
+
 
 
 
@@ -27,25 +29,45 @@ fn hi_word(l: u32) -> u16 { ((l >> 16) & 0xffff) as u16 }
 
 fn set_hook (
     hook_id: WINDOWS_HOOK_ID,
-    hook_ptr: &AtomicPtr<HHOOK>,
+    hhook: &AtomicIsize,
     hook_proc: unsafe extern "system" fn (c_int, WPARAM, LPARAM) -> LRESULT,
-) {
-    let mut hook_handle = unsafe { SetWindowsHookExW (hook_id, Some(hook_proc), HINSTANCE(0), 0) };
-    hook_handle .iter_mut() .for_each (|hh| hook_ptr.store (hh, Ordering::Relaxed));
-}
+) { unsafe {
+    SetWindowsHookExW (hook_id, Some(hook_proc), HINSTANCE(0), 0) .iter() .for_each ( |hh|
+        hhook.store (hh.0, Ordering::SeqCst)
+    );
+} }
 
 fn set_kbd_hook   (ss : &SwitcheState) { set_hook ( WH_KEYBOARD_LL, &ss.kbd_hook,   kbd_hook_cb   ); }
 fn set_mouse_hook (ss : &SwitcheState) { set_hook ( WH_MOUSE_LL,    &ss.mouse_hook, mouse_hook_cb ); }
 
 
-fn unset_hook (hook_ptr: &AtomicPtr<HHOOK>) {
-    if !hook_ptr .load (Ordering::Relaxed) .is_null() {
-        let _ = unsafe { UnhookWindowsHookEx ( * hook_ptr .load (Ordering::Relaxed) ) };
-        hook_ptr .store (null_mut(), Ordering::Relaxed);
+fn unset_hook (hhook: &AtomicIsize) -> bool {
+    if hhook.load (Ordering::SeqCst) != HHOOK::default().0 {
+        if true == unsafe { UnhookWindowsHookEx ( HHOOK (hhook.load(Ordering::SeqCst)) ) } {
+            hhook.store (HHOOK::default().0, Ordering::SeqCst);
+            println!("unhooking attempt .. succeeded!");
+            return true
+        }
+        eprintln!("unhooking attempt .. failed .. error code : {:?} !!", unsafe { GetLastError() });
+    } else {
+        println!("unhooking attempt .. no prior hook found !!");
     }
+    return false
 }
-pub fn unset_kbd_hook   (ss : &SwitcheState) { unset_hook (&ss.kbd_hook) }
-pub fn unset_mouse_hook (ss : &SwitcheState) { unset_hook (&ss.mouse_hook) }
+pub fn unset_kbd_hook   (ss : &SwitcheState) -> bool { unset_hook (&ss.kbd_hook) }
+pub fn unset_mouse_hook (ss : &SwitcheState) -> bool { unset_hook (&ss.mouse_hook) }
+
+
+const KILL_MSG : u32 = WM_USER + 1;
+pub fn re_set_hooks (ss : &SwitcheState) { unsafe {
+    // first we'll unhook any prior hooks and signal prior input-processing thread to terminate
+    unset_kbd_hook (ss);
+    unset_mouse_hook (ss);
+    PostThreadMessageW (ss.iproc_thread.load(Ordering::Relaxed), KILL_MSG, WPARAM::default(), LPARAM::default());
+
+    // then we can re-set hooks and start the input-proc thread
+    begin_input_processing(&ss);
+} }
 
 
 /// Starts listening for bound input events.
@@ -53,6 +75,9 @@ pub fn begin_input_processing (ss : &SwitcheState) {
     // todo: add config check here before we set kbd/mouse hooks
     let ss = ss.clone();
     spawn ( move || unsafe {
+        ss.iproc_thread.store (GetCurrentThreadId(), Ordering::Relaxed);
+        // ^^ we'll store this thread id in case we need to unhook the hooks later and want to terminate this thread
+
         set_kbd_hook (&ss);
         set_mouse_hook (&ss);
 
@@ -66,7 +91,12 @@ pub fn begin_input_processing (ss : &SwitcheState) {
         //  so we wont get any actual messages, so we can just leave a forever waiting GetMessage instead of setting up a msg-loop
         // .. basically while its waiting, the thread is awakened simply to call kbd hook (for an actual msg, itd awaken give the msg)
         let mut msg: MSG = MSG::default();
-        while BOOL(0) != GetMessageW (&mut msg, HWND(0), 0, 0) { };
+        while BOOL(0) != GetMessageW (&mut msg, HWND(0), 0, 0) {
+            if msg.message == KILL_MSG {
+                println! ("received kill-msg in input-processing thread .. terminating thread ..");
+                break
+            }
+        }
     } );
 
 }
@@ -89,23 +119,29 @@ fn _print_kbd_event (wp:&WPARAM, kbs:&KBDLLHOOKSTRUCT) {
 /// Keyboard lower-level-hook processor
 pub unsafe extern "system" fn kbd_hook_cb (code:c_int, w_param:WPARAM, l_param:LPARAM) -> LRESULT {
 
-    let return_call = || { CallNextHookEx(HHOOK(0), code, w_param, l_param) };
-    let return_block = LRESULT(1);    // returning with non-zero code signals OS to block further processing on the input event
+    let return_call  = || CallNextHookEx(HHOOK(0), code, w_param, l_param);
+    let return_block = || LRESULT(1);    // returning with non-zero code signals OS to block further processing on the input event
 
     if code < 0 { return return_call() }
 
     let kbs = *(l_param.0 as *const KBDLLHOOKSTRUCT);
 
-    if kbs.dwExtraInfo == SWITCHE_INJECTED_IDENTIFIER_EXTRA_INFO { return return_call() }
+    if kbs.dwExtraInfo == SWITCHE_INJECTED_IDENTIFIER_EXTRA_INFO {
+        //println! ("ignoring swi injected event");
+        return return_call()
+    }
 
     //println! ("vk: {:?}, ev: {:?}, inj: {:?}", kbs.vkCode, w_param.0, kbs.dwExtraInfo);
 
     if w_param.0 as u32 == WM_SYSKEYDOWN  && kbs.vkCode == VK_TAB.0 as u32 {
         // when we get an actual alt-tab, we'll block the tab from going out to avoid conflict w native alt-tab
-        // further, to remain in windows graces since it only lets us call fgnd if we received last input etc, we'll send ourselves an input
+        // further, to remain in windows graces since it only lets us call fgnd if we handled last input etc, we'll send ourselves an input
         // the spawning in thread is VERY important, as that gives OS time to process msgs before we try to bring switche fgnd
         //send_dummy_key_release();
         spawn ( move || {
+            sleep(time::Duration::from_millis(20));
+            // ^^ this allows krusty to get the tab-up out as well, so we dont get interspersed (and thereby lose our last-input status?)
+            // (plus it avoids possible races w krusty hooks, or win report handling etc that can interefere w bringing us fgnd)
             send_dummy_key_release();
             let ss = SwitcheState::instance();
             ss.in_alt_tab.set();
@@ -115,13 +151,22 @@ pub unsafe extern "system" fn kbd_hook_cb (code:c_int, w_param:WPARAM, l_param:L
                 ss.proc_hot_key__scroll_down();
             }
         } );
-        return return_block
+        return return_block()
+    }
+    else if w_param.0 as u32 == WM_SYSKEYDOWN && kbs.vkCode == VK_SPACE.0 as u32 {
+        // we want to use alt-space to disarm alt-tab etc when swi fgnd
+        // .. we need this here as OS captures alt-space and the browser/webapp doesnt ever see it
+        spawn ( || {
+            let ss = SwitcheState::instance();
+            if ss.is_fgnd.is_set() { ss.proc_hot_key__scroll_end_disarm(); }
+        } );
+        return return_call()
     }
     else if w_param.0 as u32 == WM_SYSKEYUP  && kbs.vkCode == VK_TAB.0 as u32 {
         // for tab release (w alt), we simply block it to keep balance, but its not that big a deal either way
-        return return_block
+        return return_block()
     }
-    else if w_param.0 as u32 == WM_KEYUP  && is_alt_key(kbs.vkCode) {
+    else if w_param.0 as u32 == WM_KEYUP  && is_alt_key(kbs.vkCode) { //println!("alt-release");
         // for actual alt-release, again we'll spawn to queue events at bottom of msg queue, and have an alt release sent out
         // again note thread spawning to give OS time to process between our execution chunks
         let ss = SwitcheState::instance();
@@ -132,6 +177,7 @@ pub unsafe extern "system" fn kbd_hook_cb (code:c_int, w_param:WPARAM, l_param:L
             // .. esp while there's something else like krusty behind us in the hook chain (and therefore gets the last input?) etc
             // .. Not even a dummy-key release seems to work, has to be an alt press or rel .. presumably win32 has special case for alt-tab?
             spawn ( move || {
+                sleep(time::Duration::from_millis(20));
                 ss.proc_hot_key__scroll_end();
                 ss.in_alt_tab.clear();
             } );

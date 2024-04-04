@@ -11,7 +11,7 @@ use std::ops::Deref;
 use std::sync::Arc;
 //use no_deadlocks::RwLock;
 use std::sync::RwLock;
-use std::sync::atomic::{AtomicBool, AtomicIsize, AtomicPtr, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicIsize, AtomicU32, Ordering};
 use std::thread::{sleep, spawn};
 use std::time::{Duration, SystemTime};
 
@@ -19,18 +19,19 @@ use grouping_by::GroupingBy;
 use once_cell::sync::{Lazy, OnceCell};
 use serde::{Deserialize, Serialize};
 use strum_macros::{AsRefStr};
-use tauri::{AppHandle, Manager, RunEvent, SystemTrayEvent, WindowEvent, Wry};
+use tauri::{AppHandle, Manager, Wry};
 
 use windows::Win32::Foundation::{BOOL, HINSTANCE, HWND, LPARAM};
 use windows::Win32::UI::Accessibility::{HWINEVENTHOOK, SetWinEventHook};
 use windows::Win32::UI::WindowsAndMessaging::{
     EnumWindows, EVENT_OBJECT_CLOAKED, EVENT_OBJECT_CREATE, EVENT_OBJECT_DESTROY, EVENT_OBJECT_FOCUS,
     EVENT_OBJECT_HIDE, EVENT_OBJECT_NAMECHANGE, EVENT_OBJECT_SHOW, EVENT_OBJECT_UNCLOAKED, EVENT_SYSTEM_FOREGROUND,
-    EVENT_SYSTEM_MINIMIZESTART, EVENT_SYSTEM_MINIMIZEEND, GetMessageW, MSG, HHOOK
+    EVENT_SYSTEM_MINIMIZESTART, EVENT_SYSTEM_MINIMIZEEND, GetMessageW, MSG
 };
 
-use crate::*;
-
+//use crate::*;
+use crate::{win_apis, icons, input_proc};
+use crate::icons::IconsManager;
 
 pub type Hwnd = isize;
 
@@ -56,7 +57,7 @@ pub struct WinDatEntry {
 }
 
 # [ derive (Debug, Clone, Serialize, Deserialize) ]
-pub struct WinDatEntry_FE {
+pub struct WinDatEntry_Pl {
     pub hwnd           : Hwnd,
     pub win_text       : Option<String>,
     pub exe_path_name  : Option<ExePathName>,
@@ -83,7 +84,9 @@ pub enum Backend_Notice {
     hotkey_req__scroll_down,
     hotkey_req__scroll_up,
     hotkey_req__scroll_end,
+    hotkey_req__scroll_end_disarm,
     hotkey_req__switche_escape,
+    switche_event__in_fgnd,
     switche_event__fgnd_lost,
 }
 impl Backend_Notice {
@@ -105,11 +108,30 @@ pub struct RenderListEntry {
 }
 
 # [ derive (Debug, Eq, PartialEq, Hash, Default, Clone, Serialize, Deserialize) ]
-pub struct RenderList_P {
+pub struct RenderList_Pl {
     rl  : Vec <RenderListEntry>,
     grl : Vec <Vec <RenderListEntry>>,
 }
 
+
+# [ derive (Debug, Eq, PartialEq, Hash, Default, Clone, Serialize, Deserialize) ]
+pub struct Configs_Pl {
+    auto_hide_enabled      : bool,
+    grp_mode_is_default    : bool,
+    n_grp_mode_top_recents : u32,
+}
+impl Configs_Pl {
+    pub fn default() -> Configs_Pl { Configs_Pl {
+        auto_hide_enabled      : true,
+        grp_mode_is_default    : true,
+        n_grp_mode_top_recents : 9
+        /* todo other configs
+           - remember window pos/dimensions
+           - enable/disable alt-tab replacement
+           - startup elevated
+         */
+    } }
+}
 
 
 
@@ -121,7 +143,7 @@ pub enum Backend_Event {
     updated_win_dat_entry,
     updated_render_list,
     updated_icon_entry,
-    updated_icon_lookup_entry
+    updated_configs,
 }
 impl Backend_Event {
     fn str (&self) -> &str { self.as_ref() }
@@ -157,6 +179,7 @@ impl Flag {
     pub fn check    (&self) -> bool { self.0 .load (Ordering::SeqCst) }
     pub fn is_set   (&self) -> bool { true  == self.0 .load (Ordering::SeqCst) }
     pub fn is_clear (&self) -> bool { false == self.0 .load (Ordering::SeqCst) }
+    pub fn toggle   (&self) -> bool { ! self.0 .fetch_xor (true, Ordering::SeqCst) }
 }
 
 # [ derive ( ) ]
@@ -176,13 +199,16 @@ pub struct _SwitcheState {
     pub is_mouse_right_down       : Flag,
     pub in_right_btn_scroll_state : Flag,
 
-    pub kbd_hook   : AtomicPtr <HHOOK>,
-    pub mouse_hook : AtomicPtr <HHOOK>,
+    pub auto_hide_enabled : Flag,
+
+    pub kbd_hook     : AtomicIsize,
+    pub mouse_hook   : AtomicIsize,
+    pub iproc_thread : AtomicU32,
 
     pub render_lists_m : RenderReadyListsManager,
     pub icons_m        : IconsManager,
 
-    app_handle : Arc <RwLock < Option <AppHandle<Wry>>>>,
+    pub(crate) app_handle : Arc <RwLock < Option <AppHandle<Wry>>>>,
 
 }
 
@@ -244,8 +270,11 @@ impl SwitcheState {
                 is_mouse_right_down       : Flag::default(),
                 in_right_btn_scroll_state : Flag::default(),
 
-                kbd_hook   : AtomicPtr::default(),
-                mouse_hook : AtomicPtr::default(),
+                auto_hide_enabled : Flag::default(),
+
+                kbd_hook     : AtomicIsize::default(),
+                mouse_hook   : AtomicIsize::default(),
+                iproc_thread : AtomicU32::default(),
 
                 render_lists_m : RenderReadyListsManager::instance(),
                 icons_m        : IconsManager::instance(),
@@ -253,8 +282,10 @@ impl SwitcheState {
                 app_handle     : Arc::new ( RwLock::new (None)),
             } ) );
             // lets do some init for the new instance
+            ss.load_configs();
             ss.setup_win_event_hooks();
-            begin_input_processing (&ss);
+            //begin_input_processing (&ss);
+            // ^^ instead, we do this everytime on reload (which front-end requests on first load too)
             ss
         } ) .clone()
     }
@@ -262,7 +293,21 @@ impl SwitcheState {
     pub fn register_app_handle (&self, ah:AppHandle<Wry>) {
         *self.app_handle.write().unwrap() = Some(ah);
     }
+    pub fn store_self_hwnd (&self, hwnd:Hwnd) {
+        self.render_lists_m.store_self_hwnd(hwnd);
+    }
 
+    pub fn toggle_auto_hide (&self) -> bool {
+        self.auto_hide_enabled.toggle();
+        self.emit_configs();
+        self.auto_hide_enabled.check()
+    }
+
+    pub fn load_configs (&self) {
+        //todo .. load actual configs, keep them in separate struct instead of dumping flags in SwitcheState
+        self.auto_hide_enabled.set();
+        //self.grp_mode_is_default.set();
+    }
 
 
 
@@ -278,7 +323,7 @@ impl SwitcheState {
             let ss = self.clone();
             let tp = trigger_pending.clone();
             // we'll set up a delay to reduce thrashing from bunched up trains of events that the OS often sends
-            let delay = 10 + if self.enum_do_light.check() {20} else {100};
+            let delay = if self.enum_do_light.check() {20} else {100};
             spawn ( move || {
                 sleep (Duration::from_millis(delay));
                 tp.clear();
@@ -365,7 +410,7 @@ impl SwitcheState {
                 //dbg!(&wde.exe_path_name);
                 //if wde.exe_path_name.is_none() {
                 if let Some(pkg_path) = get_package_path_from_hwnd(hwnd).as_ref() { //dbg!(&pkg_path);
-                    if let Some(mfp) = uwp_processing::get_uwp_manifest_parse(pkg_path) {
+                    if let Some(mfp) = icons::uwp_processing::get_uwp_manifest_parse(pkg_path) {
                         wde.exe_path_name = Self::parse_exe_path(mfp.exe.to_string_lossy().into());
                         wde.uwp_icon_path = Some(mfp.ico.to_string_lossy().into());
                 } }
@@ -421,15 +466,13 @@ impl SwitcheState {
 
     /*****  some support functions  ******/
 
-    pub fn extract_self_hwnd (&self) -> Option<Hwnd> {
-        self.app_handle.read().unwrap().as_ref() .iter() .map (|ah| {
-            ah.windows().values() .next() .map (|w| w.hwnd().ok()) .flatten()
-        } ) .flatten() .next() .map (|h| h.0)
-    }
 
     fn handle_event__switche_fgnd (&self) {
         //println! ("switche self-fgnd report .. refreshing window-list-top icon");
+        if self.is_fgnd.is_set() { return }
+
         self.is_dismissed.clear(); self.is_fgnd.set();
+        self.emit_backend_notice (Backend_Notice::switche_event__in_fgnd);
         // the idea below is that to keep icons mostly updated, we do icon-refresh for a window when it comes to fgnd ..
         // however, when switche is brought to fgnd, recent changes in the topmost window might not be updated yet .. so we'll trigger that here
         let rleo = self .render_lists_m.render_list.read().unwrap() .first() .copied();
@@ -437,6 +480,22 @@ impl SwitcheState {
             self .hwnd_map .read().unwrap() .get(&rle.hwnd) .as_ref() .map (|wde| self.icons_m.queue_icon_refresh(wde));
             // note that this ^^ will extend read scope into icon-refresh and its children, but it avoids having to clone wde
         } );
+    }
+    fn handle_event__switche_fgnd_lost (&self) {
+        if self.is_fgnd.is_clear() { return }
+
+        self.is_fgnd.clear();
+        if self.auto_hide_enabled.is_set() {
+            self.handle_req__switche_escape()
+        } else {
+            //self.app_handle .read().unwrap() .as_ref() .map ( |ah| {
+            //    ah .windows() .get("main") .map (|w| w.set_always_on_top (false))
+            //} );
+            // ^^ disabled because removeing always-on-top here seems to be too late for the window coming to fgnd ..
+            // .. in theory we could then try to re-bring the 'fgnd' to fgnd, but eitherway, the topmost enablement here has minimal utility
+            // .. esp since, w auto-hide-enabled all those issues are avoided anyway (by always keeping always-on-top)
+        }
+        self.emit_backend_notice (Backend_Notice::switche_event__fgnd_lost);
     }
 
     fn activate_matching_window (&self, exe:Option<&str>, title:Option<&str>) {
@@ -577,8 +636,7 @@ impl SwitcheState {
             self.handle_event__switche_fgnd();
         } else if self.process_discovered_hwnd (hwnd, false) {
             self.trigger_enum_windows_query_pending(true);
-            if self.is_fgnd.is_set() { self.emit_backend_notice (Backend_Notice::switche_event__fgnd_lost) }
-            self.is_fgnd.clear()
+            if self.is_fgnd.is_set() { self.handle_event__switche_fgnd_lost() }
         }
     }
     pub fn proc_win_report__minimize_end (&self, hwnd:Hwnd) {
@@ -600,6 +658,14 @@ impl SwitcheState {
 
         // first off, if this was in our list, we'll prime it to have icon refreshed on processing
         self.hwnd_map.read().unwrap() .get(&hwnd) .map (|wde| self.icons_m.mark_cached_icon_mapping_stale(wde));
+
+        // windows can get into nothing-in-fgnd state, and in such cases, if the new fgnd is the same as what was fgnd last ..
+        // .. then it will not send a new fgnd report .. if this happens to switche, our is_fgnd flags get out of sync ..
+        // .. so we'll handle this here directly .. and in fgnd report we'll ignore if our is_fgnd flag is already set
+        if self.render_lists_m.check_self_hwnd(hwnd) {
+            self.handle_event__switche_fgnd();
+            return
+        }
 
         // Note: now it turns out that even after uwp hwnds are 'shown', apparently it takes a bit for their app pids to spin up
         // .. so we'll have to queue things up, but in some cases, it took 2+ secs for apps to be ready w the pid/title etc
@@ -632,6 +698,13 @@ impl SwitcheState {
 
     pub fn proc_win_report__obj_destroyed (&self, hwnd:Hwnd) {
         //println! ("@{:?} obj-destroyed: {:?}", self._stamp(), hwnd);
+
+        // this is counterpart to special swi handling in obj-shown
+        if self.render_lists_m.check_self_hwnd(hwnd) {
+            self.handle_event__switche_fgnd_lost();
+            return
+        }
+
         // if we werent even showing this object, we're done, else queue up a enum-trigger
         if self.hwnd_map.read().unwrap() .get(&hwnd) .filter (|wde| wde.should_exclude == Some(false)) .is_some() {
             // its in our maps, so lets process it, but if processing now rejects it, we should remove it from map
@@ -690,27 +763,20 @@ impl SwitcheState {
 
     fn self_window_activate (&self) {
         self.is_dismissed.clear();
-        //self.app_handle .read().unwrap() .iter().for_each (|ah| {
-        //    ah.get_window("main") .iter() .for_each (|wh| { wh.show(); wh.set_focus(); } )
-        //});
-        // ^^ doing this via tauri seems less reliable, and it seems to inject some alt-key events .. so we'll do it outselves!
-        let self_hwnd = self.render_lists_m.self_hwnd();
-        spawn ( move || {
-            win_apis::window_activate (self_hwnd);
+        self.app_handle .read().unwrap() .as_ref() .map ( |ah| {
+            ah .windows() .get("main") .map (|w| {
+                let (_, _) = ( w.show(), w.set_focus() );
+                //let (_, _, _) = ( w.show(), w.set_focus(), w.set_always_on_top(true) );
+                // ^^ disabling setting always-on-top since it doesnt play too well when auto-hide is disabled ..
+                // (instead, we will always set always-on-top when auto-hide is enabled)
+            } );
         } );
     }
     fn self_window_hide (&self) {
         self.is_dismissed.set();
-        //self.app_handle .read().unwrap() .iter().for_each (|ah| {
-        //    ah.get_window("main") .iter() .for_each (|wh| { wh.hide(); } )
-        //} );
-        let self_hwnd = self.render_lists_m.self_hwnd();
-        spawn ( move || {
-            win_apis::window_hide (self_hwnd);
+        self.app_handle .read().unwrap() .as_ref() .map ( |ah| {
+            ah .windows() .get("main") .map (|w| w.hide() )
         } );
-    }
-    fn _self_window_close (&self) {
-        win_apis::window_close(self.render_lists_m.self_hwnd());
     }
 
     fn handle_req__nth_recent_window_activate (&self, n:usize) {
@@ -722,16 +788,21 @@ impl SwitcheState {
 
 
     fn handle_req__switche_dismiss (&self) {
-        // note: this is called both after some window-activation, or after escaping switche w/o explicitly activating other window
+        // this is called after some window-activation
         self.self_window_hide();
+        self.trigger_enum_windows_query_immdt(true);
+        // ^^ we'll do an immdt light query so we'll have the latest ordering when we come back
     }
     fn handle_req__switche_escape (&self) {
         // this is called specifically upon escape from switche
-        self.handle_req__switche_dismiss();
+        self.self_window_hide();
         //self.handle_req__nth_recent_window_activate(0);
         // ^^ should we reactivate last active window before we dismiss .. nah .. should rather maintain 'least-surprise'
         self.trigger_enum_windows_query_pending(false);
         // ^^ this is also a good time to do a full query to keep things in sync if any weird events etc have fallen through the cracks
+    }
+    fn handle_req__switche_quit (&self) {
+        self.app_handle.read().unwrap().as_ref() .map (|ah| ah.exit(0));
     }
     fn handle_req__second_recent_window_activate (&self) {
         self.handle_req__nth_recent_window_activate(1);
@@ -739,8 +810,12 @@ impl SwitcheState {
     fn handle_req__debug_print (&self) { }
 
 
-    fn handle_req__data_load(&self) {
+    pub(crate) fn handle_req__data_load(&self) {
+        // ^ this triggers on reload .. we'll use that to refresh our hooks, configs etc too
+        self.load_configs();
+        input_proc::re_set_hooks(&self);
         // first we'll send what data we have
+        self.emit_configs();
         self.icons_m.emit_all_icon_entries();
         self.render_lists_m.render_list.read().unwrap() .iter() .for_each ( |rle| {
             self.hwnd_map.read().unwrap() .get (&rle.hwnd) .iter() .for_each ( |wde| {
@@ -764,7 +839,7 @@ impl SwitcheState {
 
 
     pub fn handle_frontend_request (&self, r:&FrontendRequest) {
-        println! ("received front-end request : {:?}", r);
+        println! ("received {:?}", r);
 
         match r.req.as_str() {
             "fe_req_window_activate"      => { r.hwnd .map (|h| self.handle_req__window_activate (h as Hwnd) ); }
@@ -776,7 +851,7 @@ impl SwitcheState {
             "fe_req_data_load"            => { self.handle_req__data_load()      }
             "fe_req_refresh"              => { self.handle_req__refresh()        }
             "fe_req_switche_escape"       => { self.handle_req__switche_escape() }
-            "fe_req_switche_quit"         => { self.proc_tray_event_quit()       }
+            "fe_req_switche_quit"         => { self.handle_req__switche_quit()   }
             "fe_req_debug_print"          => { self.handle_req__debug_print()    }
 
             "fe_req_switch_tabs_last"     => { self.proc_hot_key__switch_last()  }
@@ -809,107 +884,24 @@ impl SwitcheState {
 
 
 
-    /*****  tauri app-window events setup and handling   ******/
 
-    fn proc_app_window_event__focus (&self) {
-        if self.is_dismissed.is_set() || self.is_fgnd.is_clear() { self.handle_event__switche_fgnd() }
+
+    /*****  tauri registered hotkeys and app event handling   ******/
+
+    pub fn proc_app_window_event__focus (&self) {
+        //if self.is_dismissed.is_set() || self.is_fgnd.is_clear() { self.handle_event__switche_fgnd() }
+        // ^^ first off this is unnecessary given our win-event fgnd notice ..
+        //  .. plus it will race or get out-of-sync w the actual fgnd notice w/o eqv focus_lost handling, which too would be pointless
     }
-    fn proc_app_window_event__focus_lost (&self) {
+    pub fn proc_app_window_event__focus_lost (&self) {
         // nothing really .. this doesnt even count as dismissed (which triggers list-cur-elem reset etc)
     }
-    fn proc_event_app_ready (&self) {
-        // we want to store a cached value of our hwnd for exclusions-mgr (and general use)
-        if self.render_lists_m.self_hwnd() == 0 {
-            self.extract_self_hwnd() .map (|h| self.render_lists_m.store_self_hwnd(h));
-            //println! ("App starting .. self-hwnd is : {:?}", self.render_lists_m.self_hwnd() );
-            self.setup_self_window();
-        }
-    }
-    fn setup_self_window (&self) {
-        let wa = win_apis::win_get_work_area();
-        let (x, y, width, height) = ( wa.left + (wa.right-wa.left)/3, 0, (wa.right-wa.left)/2,  wa.bottom - wa.top);
-        win_apis::win_move_to (self.render_lists_m.self_hwnd(), x, y, width, height);
-        // todo: ^^ update this to check config first, and only do this if there's no config
-        //println! ("setting self window to: x:{}, y:{}, w:{}, h:{}", x, y, width, height);
-    }
 
-    fn tauri_window_events_handler (&self, ev:&WindowEvent) {
-        match ev {
-            WindowEvent::Focused (true)       => { self.proc_app_window_event__focus () }
-            WindowEvent::Focused (false)      => { self.proc_app_window_event__focus_lost() }
-            WindowEvent::Moved (..)           => { } // todo: useful when want to store window pos/size in configs
-            WindowEvent::Resized (..)         => { }
-            WindowEvent::CloseRequested {..}  => { }
-            _ => { }
-        }
-    }
-    pub fn tauri_run_events_handler (&self, _ah:&AppHandle<Wry>, event:RunEvent) {
-        match event {
-            RunEvent::Ready                          => { self.proc_event_app_ready() }
-            RunEvent::WindowEvent   { event, .. }    => { self.tauri_window_events_handler(&event) }
-            //RunEvent::ExitRequested { api,   .. }  => { api.prevent_exit() }
-            _ => {}
-        }
-    }
-
-
-    fn proc_tray_event_show (&self) {
-        //self.app_handle.read().unwrap().as_ref() .map (|ah| ah.windows().get("main").map (|w| {w.show(); w.set_focus();} ) );
-        // ^^ this works but causes an extra alt-up to be left straggling when krusty is running .. annoying
-        self.checked_self_activate()
-    }
-    fn proc_tray_event_quit (&self) {
-        self.app_handle.read().unwrap().as_ref() .map (|ah| ah.windows().values() .for_each (|w| { w.close().ok(); }));
-        //ah.exit(0)
-        // ^^ looks like closing all windows is enough to let it exit .. (requires ofc for main event handling to not disable exit-request)
-        //self.get_self_hwnd() .iter() .for_each (|hwnd| self.self_window_close())
-
-    }
-    fn proc_tray_event_restart (&self) {
-        //self.app_handle.read().unwrap().as_ref() .map (|ah| ah.restart());
-        self.app_handle.read().unwrap().as_ref() .map (|ah| tauri::api::process::restart(&ah.env()));
-        // ^^ neither of these work .. seems to be ignored ,. maybe some unexposed permissions issue
-    }
-    fn proc_tray_event_left_click (&self) {
-        self.proc_tray_event_show()
-    }
-    fn proc_tray_event_right_click (&self) {
-        // nothign to do to bring up the menu?
-    }
-    fn proc_tray_event_double_click (&self) {
-        // maybe eventually will want to bring up config?
-    }
-    fn proc_tray_event_menu_click (&self, _ah:&AppHandle<Wry>, menu_id:String) {
-        match menu_id.as_str() {
-            "show"    => { self.proc_tray_event_show() }
-            "quit"    => { self.proc_tray_event_quit() }
-            "restart" => { self.proc_tray_event_restart() }
-            _ => { }
-        }
-    }
-
-    pub fn tray_events_handler (&self, ah:&AppHandle<Wry>, event:SystemTrayEvent) {
-        match event {
-            SystemTrayEvent::LeftClick   { .. }  =>  { self.proc_tray_event_left_click() },
-            SystemTrayEvent::RightClick  { .. }  =>  { self.proc_tray_event_right_click() },
-            SystemTrayEvent::DoubleClick { .. }  =>  { self.proc_tray_event_double_click() },
-            SystemTrayEvent::MenuItemClick { id, .. }  =>  { self.proc_tray_event_menu_click (ah, id) },
-            _ => { }
-        }
-    }
-
-
-
-
-
-    /*****  tauri registered hotkeys handling   ******/
-
-
-    fn checked_self_activate (&self) {
+    pub fn checked_self_activate (&self) {
         if self.is_dismissed.is_set() || self.is_fgnd.is_clear() || self.render_lists_m.self_hwnd() != win_apis::get_fgnd_window() {
             self.self_window_activate();
-            //self.handle_event__switche_fgnd()
-            // ^^ this should trigger from win-event fgnd report anyway .. and doing this here potentially sets is_fgnd before it happens
+            //self.handle_event__switche_fgnd();
+            // ^^ this should trigger from win-event fgnd report anyway .. and calling this triggers icon refresh, so we'll let it happen then
         }
     }
     pub fn proc_hot_key__invoke (&self) {
@@ -926,9 +918,13 @@ impl SwitcheState {
         self.emit_backend_notice (Backend_Notice::hotkey_req__scroll_up);
     }
     pub fn proc_hot_key__scroll_end (&self) {
-        // this requires activating the current elem in frontend, so we'll just send a msg over to frontend
         if self.is_dismissed.is_clear() && self.is_fgnd.is_set() {
             self.emit_backend_notice (Backend_Notice::hotkey_req__scroll_end)
+        }
+    }
+    pub fn proc_hot_key__scroll_end_disarm (&self) {
+        if self.is_dismissed.is_clear() && self.is_fgnd.is_set() {
+            self.emit_backend_notice (Backend_Notice::hotkey_req__scroll_end_disarm)
         }
     }
     pub fn proc_hot_key__switche_escape (&self) {
@@ -945,40 +941,6 @@ impl SwitcheState {
     pub fn proc_hot_key__switch_browser       (&self)  { self.activate_matching_window ( Some("chrome.exe"),    None ) }
 
 
-    pub fn setup_global_shortcuts (&self, ah:&AppHandle<Wry>) {
-        use tauri::GlobalShortcutManager;
-        let mut gsm = ah.global_shortcut_manager();
-
-        // todo: can update these to prob printout/notify an err msg when cant register global hotkey
-
-        let ss = self.clone();  let _ = gsm.register ( "F1",              move || ss.proc_hot_key__invoke() );
-        // ^^ F1 is for global invocatino
-
-        let ss = self.clone();  let _ = gsm.register ( "Ctrl+F15",        move || ss.proc_hot_key__invoke() );
-        // ^^ krusty remapping of F1 .. this allows krusty to use say ralt-F1 for actual F1 if we disable F1 above in switche configs
-
-        //let ss = self.clone();  let _ = gsm.register ( "F16",             move || ss.proc_hot_key__scroll_down() );
-        //let ss = self.clone();  let _ = gsm.register ( "Shift+F16",       move || ss.proc_hot_key__scroll_up()   );
-        //let ss = self.clone();  let _ = gsm.register ( "F17",             move || ss.proc_hot_key__scroll_up()   );
-        //let ss = self.clone();  let _ = gsm.register ( "Ctrl+F18",        move || ss.proc_hot_key__scroll_end()  );
-        // ^^ these were krusty driven scrolling hotkeys, but we've direct impld alt-tab and right-mbtn-scroll in switche now
-
-        let ss = self.clone();  let _ = gsm.register ( "Ctrl+Alt+F18",    move || ss.proc_hot_key__switche_escape() );
-        // ^^ krusty-driven support for esc during alt-tab, to avoid the native alt-esc behavior
-
-        // other misc krusty/ahk driven hotkeys for direct invocation of specific windows types
-        let ss = self.clone();  let _ = gsm.register ( "Ctrl+Alt+F19",    move || ss.proc_hot_key__switch_last()          );
-        let ss = self.clone();  let _ = gsm.register ( "Ctrl+Alt+F20",    move || ss.proc_hot_key__switch_tabs_outliner() );
-        let ss = self.clone();  let _ = gsm.register ( "Ctrl+Alt+F21",    move || ss.proc_hot_key__switch_notepad_pp()    );
-        let ss = self.clone();  let _ = gsm.register ( "Ctrl+Alt+F22",    move || ss.proc_hot_key__switch_ide()           );
-        let ss = self.clone();  let _ = gsm.register ( "Ctrl+Alt+F23",    move || ss.proc_hot_key__switch_music()         );
-        let ss = self.clone();  let _ = gsm.register ( "Ctrl+Alt+F24",    move || ss.proc_hot_key__switch_browser()       );
-
-        //let ss = self.clone();  let _ = gsm.register ( "Alt+Tab",         move || ss.proc_hot_key__scroll_down()          );
-        // ^^ ofc trying to set alt-tab like this wont take, but its useful here as a reminder
-
-    }
-
 
 
 
@@ -989,7 +951,7 @@ impl SwitcheState {
 
     pub fn emit_win_dat_entry (&self, wde:&WinDatEntry) {
         //println! ("emitting **{notice}** win_dat_entry for: {:?}", wde.hwnd);
-        let pl = WinDatEntry_FE {
+        let pl = WinDatEntry_Pl {
                 hwnd: wde.hwnd,
                 win_text: wde.win_text.clone(),
                 exe_path_name: wde.exe_path_name.clone(),
@@ -1012,6 +974,19 @@ impl SwitcheState {
         } );
     }
 
+    pub fn emit_configs (&self) {
+        println! ("** emitting .. configs-update");
+        let cfgs = Configs_Pl {
+            auto_hide_enabled  : self.auto_hide_enabled.check(),
+            .. Configs_Pl::default()
+        };
+        self.app_handle .read().unwrap() .iter() .for_each ( |ah| {
+            serde_json::to_string(&cfgs) .map (|pl| {
+                ah.emit_all::<String> ( Backend_Event::updated_configs.str(), pl )
+            } ) .err() .iter() .for_each (|err| println!("configs emit failed: {:?}", err));
+        } );
+    }
+
 
     pub fn emit_backend_notice (&self, notice: Backend_Notice) {
         let pl = BackendNotice_Pl { msg: notice.str().to_string() };
@@ -1025,7 +1000,7 @@ impl SwitcheState {
 
 
     fn emit_render_lists (&self) {
-        let rlp = RenderList_P {
+        let rlp = RenderList_Pl {
             rl  : self.render_lists_m.render_list.read().unwrap().clone(),
             grl : self.render_lists_m.grpd_render_list.read().unwrap().clone()
         };

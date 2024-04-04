@@ -32,10 +32,22 @@ case class WinDatEntry_wNull (hwnd:Hwnd, win_text:String, exe_path_name:ExePathN
 }
 
 case class IconEntry_P      ( ico_id:Int, ico_str:String )     derives ReadWriter
-//case class IconLookup_P     ( hwnd:Int, exe:String, iid:String )  derives ReadWriter
-case class BackendNotice_P  ( msg:String )                        derives ReadWriter
-case class HotKey_P         ( req:String )                        derives ReadWriter
-case class AppWindowEvent_P ( app_win_ev:String )                 derives ReadWriter
+case class BackendNotice_P  ( msg:String )                     derives ReadWriter
+
+case class Configs (
+   auto_hide_enabled      : Boolean,
+   grp_mode_is_default    : Boolean,
+   n_grp_mode_top_recents : Int,
+) derives ReadWriter
+
+object Configs {
+   def default() = Configs (
+      auto_hide_enabled       =  true,
+      grp_mode_is_default     =  true,
+      n_grp_mode_top_recents  =  9,
+   )
+}
+
 
 
 
@@ -119,18 +131,24 @@ object Switche {
    
    val hwndMap = new mutable.HashMap[Hwnd,WinDatEntry] ()
    
-   var inElectronDevMode = false
-   var inGroupedMode = true
-   var isDismissed = false
-   var scrollEnd_armed = false
+   var inElectronDevMode  = false
+   var inGroupedMode      = true
+   var isDismissed        = false
+   var isFgnd             = false
+   var scrollEnd_armed    = false
 
    var renderList : Seq[RenderListEntry] = Seq()
    var groupedRenderList : Seq[Seq[RenderListEntry]] = Seq()
 
    val iconsCache = mutable.HashMap[Int,String]()
    
-   def setDismissed() = { isDismissed = true }
+   var configs = Configs.default()
+   
+   def setDismissed()    = { isDismissed = true }
    def setNotDismissed() = { isDismissed = false }
+   
+   def setIsFgnd()  = { isFgnd = true }
+   def setNotFgnd() = { isFgnd = false }
   
    def scrollEnd_arm()    = { scrollEnd_armed = true;  RibbonDisplay.setArmedIndicator_On() }
    def scrollEnd_disarm() = { scrollEnd_armed = false; RibbonDisplay.setArmedIndicator_Off() }
@@ -167,8 +185,8 @@ object Switche {
    def procHotkey_Invoke() = {
       // should be same as scroll-down, except we won't arm the scroll-end behavior (as its F1 invocation)
       SwitchePageState.triggerHoverLockTimeout()
-      if (isDismissed) {
-         setNotDismissed()
+      if (isDismissed || !isFgnd) {
+         setNotDismissed(); setIsFgnd()
          SwitchePageState.resetFocus()
       }
       else { SwitchePageState.focusElem_Next() }
@@ -183,8 +201,8 @@ object Switche {
       if (!SwitchePageState.verifyActionRepeatSpacing()) { return }
       SwitchePageState.triggerHoverLockTimeout()
       scrollEnd_arm()
-      if (isDismissed) {
-         setNotDismissed()
+      if (isDismissed || !isFgnd) {
+         setNotDismissed(); setIsFgnd()
          SwitchePageState.resetFocus()
       }
       else { SwitchePageState.focusElem_Prev() }
@@ -192,17 +210,26 @@ object Switche {
    def procHotkey_ScrollEnd() = { println (s"scroll-end-armed-state: ${scrollEnd_armed}")
       SwitchePageState.triggerHoverLockTimeout()
       // note below that a scroll-end only has meaning if we're scrolling (and hence already active)
-      if (!isDismissed && scrollEnd_armed) {
+      if (!isDismissed && isFgnd && scrollEnd_armed) {
          //setDismissed(); scrollEnd_disarm()             // auto happens on cur-elem-activation below
          SwitchePageState.handleReq_CurElemActivation()
       }
    }
+   def procHotkey_ScrollEnd_Disarm() = {
+      if (!isDismissed && isFgnd && scrollEnd_armed) { scrollEnd_disarm() }
+   }
    def procHotkey_SwitcheEscape() = {
       SwitchePageState.handleReq_SwitcheEscape (fromBkndHotkey = true)
    }
-   def procBkndEvent_fgndLost() = {
+   def procBkndEvent_SwitcheFgnd() = {
+      setIsFgnd(); setNotDismissed()
+   }
+   def procBkndEvent_FgndLost() = {
+      setNotFgnd(); scrollEnd_disarm()
       SwitchePageState.resetFocus()
-      scrollEnd_disarm()
+      SwitchePageState.exitSearchState()
+      if (configs.auto_hide_enabled) { setDismissed() }
+      RenderSpacer.queueSpacedRender()
    }
   
    def setTauriEventListeners() : Unit = {
@@ -211,6 +238,7 @@ object Switche {
       TauriEvent .listen ( "updated_render_list",       updateListener_RenderList _  )
       TauriEvent .listen ( "updated_win_dat_entry",     updateListener_WinDatEntry _ )
       TauriEvent .listen ( "updated_icon_entry",        updateListener_IconEntry _   )
+      TauriEvent .listen ( "updated_configs",           updateListener_Configs _     )
       //TauriEvent .listen ( "updated_icon_lookup_entry", updateListener_IconLookupE _ )
    }
    
@@ -218,9 +246,9 @@ object Switche {
       //println ("received render_list")
       val ep:RenderList_P = upickle.default.read[RenderList_P](e.payload);
       //println(ee.payload); println (ep.rl)
+      val rl_same = ep.rl == renderList && ep.grl == groupedRenderList
       renderList = ep.rl;  groupedRenderList = ep.grl
-      // we could try to only render if changed, but rendering is cheap and frequent enough it doesnt matter
-      RenderSpacer.queueSpacedRender()
+      if (!rl_same) { RenderSpacer.queueSpacedRender() }
    }
    
    def updateListener_WinDatEntry (e:BackendPacket) : Unit = {
@@ -233,15 +261,21 @@ object Switche {
       )
       //ep .map (wde => s"${wde.hwnd} : ${wde.win_text}") .foreach(println)
       
-      val wde = ep.map(_.conv())
+      val wde : Option[WinDatEntry] = ep.map(_.conv())
       val wde_old = wde.map(_.hwnd).flatMap(hwndMap.get)
+      
       wde.foreach (wde => hwndMap.update (wde.hwnd, wde))
-      if ( wde_old.isDefined && wde_old.flatMap(_.win_text) != wde.flatMap(_.win_text)) {
-         // surgically update title for that elem
-         wde.foreach (SwitchePageState.handle_TitleUpdate)
+      
+      // for mere title-updates, since they can come w high frequency (e.g. title scrobbling), we dont want to re-render
+      // (esp since re-rendering can introduce missed mouse events whlie the event targets are being swapped out)
+      if ( wde_old.isDefined
+         && wde_old.flatMap(_.win_text) != wde.flatMap(_.win_text)                  // title changed
+         && wde_old.map(_.copy(win_text=None)) == wde.map(_.copy(win_text=None))    // but everything else is same
+      ) {
+         wde.foreach (SwitchePageState.handle_TitleUpdate)   // surgically update title for that elem
+      } else {
+         RenderSpacer.queueSpacedRender()   // for everything else, we'll just queue a render
       }
-      // for everything else, we'll just queue a render .. these things are pretty cheap really
-      RenderSpacer.queueSpacedRender();
    }
    
    def updateListener_IconEntry (e:BackendPacket) : Unit = {
@@ -250,16 +284,33 @@ object Switche {
       updateIconCache (ep.ico_id, ep.ico_str);
    }
    
+   def updateListener_Configs (e:BackendPacket) : Unit = {
+      println (s"got configs: ${e.payload}");
+      val confs_old = configs;
+      configs = upickle.default.read[Configs](e.payload)
+      if (confs_old.grp_mode_is_default != configs.grp_mode_is_default) {
+         inGroupedMode = configs.grp_mode_is_default
+         RenderSpacer.immdtRender()
+      }
+      if (confs_old.auto_hide_enabled != configs.auto_hide_enabled) {
+         if (configs.auto_hide_enabled && !isDismissed && !isFgnd) {
+            SwitchePageState.handleReq_SwitcheEscape()
+         }
+      }
+   }
+   
    def backendNoticeListener (e:BackendPacket) : Unit = {
       println (s"got backend_notice payload: ${e.payload}")
       val ep:BackendNotice_P = upickle.default.read[BackendNotice_P](e.payload);
       ep.msg match {
-         case "hotkey_req__app_invoke"     =>  procHotkey_Invoke()
-         case "hotkey_req__scroll_down"    =>  procHotkey_ScrollDown()
-         case "hotkey_req__scroll_up"      =>  procHotkey_ScrollUp()
-         case "hotkey_req__scroll_end"     =>  procHotkey_ScrollEnd()
-         case "hotkey_req__switche_escape" =>  procHotkey_SwitcheEscape()
-         case "switche_event__fgnd_lost"   =>  procBkndEvent_fgndLost()
+         case "hotkey_req__app_invoke"        =>  procHotkey_Invoke()
+         case "hotkey_req__scroll_down"       =>  procHotkey_ScrollDown()
+         case "hotkey_req__scroll_up"         =>  procHotkey_ScrollUp()
+         case "hotkey_req__scroll_end"        =>  procHotkey_ScrollEnd()
+         case "hotkey_req__scroll_end_disarm" =>  procHotkey_ScrollEnd_Disarm()
+         case "hotkey_req__switche_escape"    =>  procHotkey_SwitcheEscape()
+         case "switche_event__in_fgnd"        =>  procBkndEvent_SwitcheFgnd()
+         case "switche_event__fgnd_lost"      =>  procBkndEvent_FgndLost()
          case _ => { }
       }
    }
@@ -275,7 +326,7 @@ object RenderSpacer {
       lastRenderTargStamp = js.Date.now()
       SwitcheFacePage.updatePageElems()
    }
-   def queueSpacedRender():Unit = {
+   def queueSpacedRender():Unit = { // println("rendering queued")
       // main idea .. if its past reqd spacing, rebuild view now and update stamp
       // else if its not yet time, but nothing queued already, queue with required delay
       // else if last queued still in future, can just ignore it

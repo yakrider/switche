@@ -9,15 +9,13 @@ use std::sync::{RwLock};
 //use no_deadlocks::RwLock;
 use std::thread::{sleep, spawn};
 use std::time::{Duration};
-use std::mem;
 
 use once_cell::sync::OnceCell;
 use rand::Rng;
 use windows::Win32::Foundation::HWND;
 
 
-
-use crate::*;
+use crate::switche::{Hwnd, IconEntry, SwitcheState, WinDatEntry};
 
 
 
@@ -195,7 +193,7 @@ impl IconsManager {
                 new_cache_idx
             } );
             // lets release the guards before we call anywhere outside to emit updates
-            mem::drop(icm); mem::drop(iidm);
+            drop(icm); drop(iidm);
             if prior_cache_idx.is_none() {
                 ss .emit_icon_entry ( &IconEntry { ico_id: cache_idx, ico_str: icon_str } );
             }
@@ -291,7 +289,6 @@ pub(crate) mod uwp_processing {
         let mut buf = Vec::new();
         let mut ico_path : Option<String> = None;
         let mut app_path : Option<String> = None;
-        let mut is_logo_tag : bool = false;
         use quick_xml::events::Event::*;
         manifest.as_ref() .filter (|mf| mf.exists()) .iter() .for_each (|mf| {
             quick_xml::reader::Reader::from_file(mf) .ok() .iter_mut() .for_each ( |reader| {
@@ -301,18 +298,14 @@ pub(crate) mod uwp_processing {
                         Ok (Eof) => break,
                         Ok (Start (ref e)) => {
                             reader.decoder() .decode (e.name().as_ref()) .ok() .iter() .for_each (|tag| {
-                            if      tag == "Logo" { is_logo_tag = true }
-                            else if tag == "Application"  {
-                                app_path = e.attributes() .filter (|a| a.as_ref().ok() .filter (|a| a.key.as_ref() == "Executable".as_bytes()).is_some())
+                            if tag == "Application"  {
+                                app_path = e.attributes() .filter (|a| a.as_ref().ok() .filter (|a| a.key.as_ref() == "Executable".as_bytes()) .is_some())
+                                    .flatten() .next() .map (|a| String::from_utf8_lossy(&a.value).into_owned());
+                            } else if tag == "uap:VisualElements" || tag == "VisualElements" {
+                                ico_path = e.attributes() .filter (|a| a.as_ref().ok() .filter (|a| a.key.as_ref() == "Square44x44Logo".as_bytes()) .is_some())
                                     .flatten() .next() .map (|a| String::from_utf8_lossy(&a.value).into_owned());
                             }
                         } ) },
-                        Ok (Text (ref txt)) => {
-                            if is_logo_tag {
-                                ico_path = reader.decoder() .decode(txt) .map (|c| c.to_string()) .ok();
-                                is_logo_tag = false;
-                            }
-                        },
                         _ => (),
                     }
                     if ico_path.is_some() && app_path.is_some() { break }
@@ -457,10 +450,10 @@ mod test {
     #[test]
     fn calculator_manifest_test () { unsafe {
         let calc_loc = r"C:\Program Files\WindowsApps\Microsoft.WindowsCalculator_11.2210.0.0_x64__8wekyb3d8bbwe\CalculatorApp.exe".to_string();
-        let mfp = crate::uwp_processing::get_uwp_manifest_parse (&calc_loc);
+        let mfp = crate::icons::uwp_processing::get_uwp_manifest_parse (&calc_loc);
         assert! (mfp.is_some());
         if let Some(ico_path) = mfp.as_ref() .map(|mfp| mfp.ico.to_string_lossy()) {
-            assert! (crate::icon_extraction::extract_png_icon (&ico_path.as_ref()).is_some());
+            assert! (crate::icons::icon_extraction::extract_png_icon (&ico_path.as_ref()).is_some());
         }
     } }
 
