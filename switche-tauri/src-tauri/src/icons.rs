@@ -21,7 +21,6 @@ use crate::switche::{Hwnd, IconEntry, SwitcheState, WinDatEntry};
 
 #[derive (Debug, Default, Eq, PartialEq, Hash, Clone)]
 struct HwndExePathPair { hwnd:Hwnd, path:String, is_uwp:bool }
-// todo ^^ prob could make this hold just the hash of path all throughout this module
 
 #[derive (Debug, Default, Eq, PartialEq, Hash, Copy, Clone)]
 struct IconCacheMapping { cache_idx:usize, is_stale:bool }
@@ -30,20 +29,20 @@ struct IconCacheMapping { cache_idx:usize, is_stale:bool }
 pub struct _IconsManager {
 
     // we'll store icons in a vec and just add remove mappings to its indices for associated hwnds
-    icons_cache        : Arc <RwLock <Vec <String>>>,
+    icons_cache        : RwLock <Vec <String>>,
     // we'll use hashes of icons as map-key for reverse lookup
-    icons_idx_map      : Arc <RwLock <HashMap <String, usize>>>,
+    icons_idx_map      : RwLock <HashMap <String, usize>>,
 
     // for hwnds, key needs to incl the exe-path as a hpp pair
-    icons_hpp_map      : Arc <RwLock <HashMap <HwndExePathPair, IconCacheMapping>>>,
+    icons_hpp_map      : RwLock <HashMap <HwndExePathPair, IconCacheMapping>>,
     // for exes, icons dont go stale, so directly mapping to icons idx
-    icons_exe_map      : Arc <RwLock <HashMap <String, usize>>>,
+    icons_exe_map      : RwLock <HashMap <String, usize>>,
 
     // we'll need a reverse lookup table from exe paths to check if they were queried
-    queried_exe_cache  : Arc <RwLock <HashSet <String>>>,
+    queried_exe_cache  : RwLock <HashSet <String>>,
     // but for hpps, since cache map key is hwnd+path, we'll store that as a map and compare against it (alt coudld use an hpp set)
     // (that will also ensure only one hpp for a hwnd is in the map as it should be)
-    queried_hpp_cache  : Arc <RwLock <HashMap <Hwnd, HwndExePathPair>>>,
+    queried_hpp_cache  : RwLock <HashMap <Hwnd, HwndExePathPair>>,
 
 }
 
@@ -65,12 +64,12 @@ impl IconsManager {
             //let icons_mgr = IconsManager ( Arc::new ( _IconsManager::default() ) );
             // ^^ when trying no-deadlock, cant do that as it doesnt impl default
             let icons_mgr = IconsManager ( Arc::new ( _IconsManager {
-                icons_cache        : Arc::new(RwLock::new(Default::default())),
-                icons_idx_map      : Arc::new(RwLock::new(Default::default())),
-                icons_hpp_map      : Arc::new(RwLock::new(Default::default())),
-                icons_exe_map      : Arc::new(RwLock::new(Default::default())),
-                queried_exe_cache  : Arc::new(RwLock::new(Default::default())),
-                queried_hpp_cache  : Arc::new(RwLock::new(Default::default())),
+                icons_cache        : RwLock::new(Default::default()),
+                icons_idx_map      : RwLock::new(Default::default()),
+                icons_hpp_map      : RwLock::new(Default::default()),
+                icons_exe_map      : RwLock::new(Default::default()),
+                queried_exe_cache  : RwLock::new(Default::default()),
+                queried_hpp_cache  : RwLock::new(Default::default()),
             } ) );
             let empty_icon : String = {
                 "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAAAklEQVR4AewaftIAAAAPSURBVGMYBaNgFIwCKAAABBAAAY7F3VUAAAAASUVORK5CYII="
@@ -128,24 +127,15 @@ impl IconsManager {
 
     fn queue_hwnd_icon_query (&self, hpp:&HwndExePathPair) {
         //println!("hwnd icon query: {:?} : {:?}", &hpp.hwnd, &hpp.path.clone().split(r"\").last());
-
-        // UWP apps dont seem to hang at hwnd icon query winapi calls, but we shouldnt get here anyway as they have separate handling now
         if hpp.is_uwp { return }
-
-        let icmgr = self.clone();
-        let hppc = hpp.clone();
+        // ^^ UWP apps sometimes seem to hang at hwnd icon query winapi calls, but we shouldnt get here anyway as they have separate handling now
+        let (icmgr, hppc) = (self.clone(), hpp.clone());
         spawn ( move || unsafe {
-            let ico_str = icon_extraction::extract_hwnd_icon (HWND(hppc.hwnd)) .or_else (|| icon_extraction::get_default_icon());
-            ico_str .map (|s| icmgr.icon_string_callback (&hppc, s, true));
-        } );
-
-        // we'll also set up a watch thread as some of the extract-icon calls dont seem to ever return from winapi calls
-        // Note: although it looks like we're gonna just let piles of threads hang, w/ the UWP extraction impld, that shouldn't happen anymore
-        let icmgr = self.clone();
-        let hppc = hpp.clone();
-        spawn ( move || {
-            sleep (Duration::from_millis(100));
-            icmgr .unheard_hwnd_icon_callback_fallback_check(&hppc);
+            if let Some(ico_str) = icon_extraction::extract_hwnd_icon (HWND(hppc.hwnd)) {
+                icmgr.icon_string_callback (&hppc, ico_str, true);
+            } else {
+                icmgr.queue_exe_icon_query (&hppc);
+            }
         } );
     }
 
@@ -159,13 +149,13 @@ impl IconsManager {
             if !was_past_queried {
                 icmgr.queried_exe_cache .write().unwrap() .insert (hppc.path.clone());
                 let ico_str = if hppc.is_uwp {
+                    // note that for uwm, the hpp has already been populated with icon path (instead of exe path)
                     icon_extraction::extract_png_icon (hppc.path.as_str())
-                    //if let Some(mfp) = uwp_processing::get_uwp_manifest_parse(&hppc.path) {
-                    //    icon_extraction::extract_png_icon(&mfp.ico)
-                    //}
                 } else {
                     icon_extraction::extract_exe_path_icon (&hppc.path)
-                }  .or_else (|| icon_extraction::get_default_icon());
+                };
+                let ico_str = ico_str .or_else (|| icon_extraction::get_default_icon());
+                // note ^^ this is the win default 'exe' icon, not our empty icon
                 ico_str .map (|s| icmgr.icon_string_callback (&hppc, s, false));
             } else {
                 // if multiple hwnds for same app get queued, because of random delay and cache checking the second one might end up here
@@ -231,15 +221,6 @@ impl IconsManager {
     } else {"hpp-icp-- None".into()} }
     // */
 
-    fn unheard_hwnd_icon_callback_fallback_check (&self, hpp:&HwndExePathPair) { //println!("unheard-check-- {:?}", self.hpp_split(hpp));
-        if self.check_icon_needs_query(hpp) {
-            println! ("INFO: Did not hear callback for {:?} {:?} within check period, falling back to exe icon query", hpp.hwnd, &hpp.path.clone().split(r"\").last());
-            self.queue_exe_icon_query(hpp)
-        }
-    }
-    fn check_icon_needs_query (&self, hpp:&HwndExePathPair) -> bool {
-        self.icons_hpp_map .read().unwrap() .get(hpp) .filter(|icm| icm.cache_idx != 0 && !icm.is_stale) .is_none()
-    }
 
     pub fn emit_all_icon_entries (&self) {
         let ss = SwitcheState::instance();
@@ -344,6 +325,7 @@ pub(crate) mod uwp_processing {
 pub(crate) mod icon_extraction {
     use std::io::{Cursor};
     use std::mem;
+    use std::ops::Not;
     use std::path::PathBuf;
 
     use image::{ImageOutputFormat, RgbaImage};
@@ -354,7 +336,7 @@ pub(crate) mod icon_extraction {
     use windows::Win32::Graphics::Gdi::{BITMAP, DeleteObject, GetBitmapBits, GetObjectW, HGDIOBJ};
     use windows::Win32::UI::Shell::{ExtractAssociatedIconA};
     use windows::Win32::UI::WindowsAndMessaging::{
-        DestroyIcon, GCL_HICON, GetClassLongPtrW, GetIconInfo, HICON, ICON_BIG, ICON_SMALL, ICON_SMALL2,
+        DestroyIcon, GCL_HICON, GCL_HICONSM, GetClassLongPtrW, GetIconInfo, HICON, ICON_BIG, ICON_SMALL, ICON_SMALL2,
         ICONINFO, IDI_APPLICATION, LoadIconW, SendMessageA, WM_GETICON
     };
 
@@ -369,11 +351,13 @@ pub(crate) mod icon_extraction {
 
     pub unsafe fn extract_hwnd_icon (hwnd:HWND) -> Option<String> {
         let mut hicon = HICON::default();
-        if hicon.is_invalid() { hicon = HICON ( SendMessageA ( hwnd, WM_GETICON, WPARAM (ICON_SMALL2 as usize), LPARAM(0) ) .0 ) }
-        if hicon.is_invalid() { hicon = HICON ( SendMessageA ( hwnd, WM_GETICON, WPARAM (ICON_SMALL  as usize), LPARAM(0) ) .0 ) }
-        if hicon.is_invalid() { hicon = HICON ( SendMessageA ( hwnd, WM_GETICON, WPARAM (ICON_BIG    as usize), LPARAM(0) ) .0 ) }
+        // first we'll ask the window directly for the latest icon it has
+        if hicon.is_invalid() { hicon = HICON ( SendMessageA     ( hwnd, WM_GETICON, WPARAM (ICON_BIG    as usize), LPARAM(0) ) .0 ) }
+        if hicon.is_invalid() { hicon = HICON ( SendMessageA     ( hwnd, WM_GETICON, WPARAM (ICON_SMALL  as usize), LPARAM(0) ) .0 ) }
+        if hicon.is_invalid() { hicon = HICON ( SendMessageA     ( hwnd, WM_GETICON, WPARAM (ICON_SMALL2 as usize), LPARAM(0) ) .0 ) }
+        // else we'll try and get the icon for its registered window class
         if hicon.is_invalid() { hicon = HICON ( GetClassLongPtrW ( hwnd, GCL_HICON ) as isize ) }
-        //if hicon.is_invalid() { hicon = HICON ( GetClassLongPtrW ( hwnd, GCL_HICONSM ) as isize ) }
+        if hicon.is_invalid() { hicon = HICON ( GetClassLongPtrW ( hwnd, GCL_HICONSM ) as isize ) }
 
         hicon_to_base64_str(hicon)
     }
@@ -409,20 +393,33 @@ pub(crate) mod icon_extraction {
         // first gotta get the details on the icon
         let mut info = ICONINFO::default();
         let res = GetIconInfo (hicon, &mut info as *mut _);
-        if res.ok().is_err() { return None }
+        if res.is_err() { return None }
 
-        // then we'll get the actual bitmap (ignoring separate mask field as thats typically in rgba already)
+        // then we'll get the actual bitmap (and later its mask if necessary)
         let mut bmp = BITMAP::default();
-        let _ = GetObjectW (
-            HGDIOBJ (info.hbmColor.0),
-            mem::size_of::<BITMAP>() as i32,
-            Some ( &mut bmp as *mut BITMAP as _),
-        );
-
-        // then convert the bitmap structure into a regular vec/arr
+        let _ = GetObjectW ( HGDIOBJ (info.hbmColor.0), mem::size_of::<BITMAP>() as i32, Some ( &mut bmp as *mut BITMAP as _) );
         let buf_size = bmp.bmWidth * bmp.bmHeight * 4;
         let mut buf = vec![0u8; buf_size as usize];
         let _ = GetBitmapBits (info.hbmColor, buf_size, buf.as_mut_ptr() as _);
+
+        //let title =  crate::switche::SwitcheState::instance().hwnd_map.read().unwrap().get(&_hwnd.0).and_then(|wde| wde.win_text.to_owned()).unwrap_or_default();
+        //println! ("hwnd:{} \t: w:{},h:{}, {}bpp .. {}", _hwnd.0, bmp.bmWidth, bmp.bmHeight, bmp.bmBitsPixel, title);
+
+        // we'll check to see if all alpha values are 0, in which case we'll fallback to looking at the mask
+        let mut alpha_invalid = true;
+        for n in 0 .. buf.len()/4 {
+            if buf [n*4 + 3] != 0 { alpha_invalid = false; break }
+        }
+
+        // lets do the same for the mask (if the alpha channel was invalid)
+        let use_mask = alpha_invalid && info.hbmMask.is_invalid().not();
+        let buf_size_mask = bmp.bmWidth * bmp.bmHeight / 8;
+        let mut mask = BITMAP::default();
+        let mut buf_mask = vec![0u8; buf_size_mask as usize];
+        if use_mask {
+            let _ = GetObjectW ( HGDIOBJ (info.hbmMask.0), mem::size_of::<BITMAP>() as i32, Some ( &mut mask as *mut BITMAP as _) );
+            let _ = GetBitmapBits (info.hbmMask, buf_size_mask, buf_mask.as_mut_ptr() as _);
+        }
 
         // requesting info has the system allocate the bitmap and mask, should release that memory
         let _ = DeleteObject (info.hbmColor);
@@ -430,9 +427,16 @@ pub(crate) mod icon_extraction {
         let _ = DestroyIcon  (hicon);
 
         // then rearrange the bitmap into rgba channels for the image representation
-        for chunk in buf.chunks_exact_mut(4) {
-            let [b, _, r, _] = chunk else { unreachable!() };
+        for (i, chunk) in buf.chunks_exact_mut(4).enumerate() {
+            let [b, _g, r, a] = chunk else { unreachable!() };
             mem::swap(b, r);
+            //if alpha_invalid { *a = 0xFF }
+            // ^^ this alone mostly works w/o loading mask, but ofc the transparency would be lost
+            if use_mask {
+                let mask_byte = buf_mask.get(i/8).unwrap_or(&0);
+                let mask_bit = 1 << (i % 8);
+                *a = if mask_byte & mask_bit != 0 { *a } else { 0xFF };
+            }
         }
         let img = RgbaImage::from_vec (bmp.bmWidth as u32, bmp.bmHeight as u32, buf).unwrap();
 
@@ -456,5 +460,9 @@ mod test {
             assert! (crate::icons::icon_extraction::extract_png_icon (&ico_path.as_ref()).is_some());
         }
     } }
-
+    #[test]
+    fn dbgview_ico_test () { unsafe {
+        let dbgview_loc = r"C:\yakdat\downloads\ins-bin\SysinternalsSuite\dbgview64.exe".to_string();
+        assert! (crate::icons::icon_extraction::extract_exe_path_icon (&dbgview_loc).is_some());
+    } }
 }

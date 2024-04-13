@@ -11,7 +11,7 @@ use std::ops::Deref;
 use std::sync::Arc;
 //use no_deadlocks::RwLock;
 use std::sync::RwLock;
-use std::sync::atomic::{AtomicBool, AtomicIsize, AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicIsize, Ordering};
 use std::thread::{sleep, spawn};
 use std::time::{Duration, SystemTime};
 
@@ -30,8 +30,10 @@ use windows::Win32::UI::WindowsAndMessaging::{
 };
 
 //use crate::*;
-use crate::{win_apis, icons, input_proc};
+use crate::{win_apis, icons};
+use crate::input_proc::InputProcessor;
 use crate::icons::IconsManager;
+use crate::config::Config;
 
 pub type Hwnd = isize;
 
@@ -115,21 +117,17 @@ pub struct RenderList_Pl {
 
 
 # [ derive (Debug, Eq, PartialEq, Hash, Default, Clone, Serialize, Deserialize) ]
+/// Configs-payload contains the subset of configs that is sent to the front-end
 pub struct Configs_Pl {
     auto_hide_enabled      : bool,
-    grp_mode_is_default    : bool,
+    group_mode_enabled     : bool,
     n_grp_mode_top_recents : u32,
 }
 impl Configs_Pl {
-    pub fn default() -> Configs_Pl { Configs_Pl {
-        auto_hide_enabled      : true,
-        grp_mode_is_default    : true,
-        n_grp_mode_top_recents : 9
-        /* todo other configs
-           - remember window pos/dimensions
-           - enable/disable alt-tab replacement
-           - startup elevated
-         */
+    pub fn assemble (ss:&SwitcheState) -> Configs_Pl { Configs_Pl {
+        auto_hide_enabled      : ss.conf.check_flag__auto_hide_enabled(),
+        group_mode_enabled     : ss.conf.check_flag__group_mode_enabled(),
+        n_grp_mode_top_recents : ss.conf.get_n_grp_mode_top_recents(),
     } }
 }
 
@@ -186,9 +184,9 @@ impl Flag {
 pub struct _SwitcheState {
 
     // note: should always use hwnd-map-prior as that only flips fully formed (unlike hamp-cur which might be getting slowly rebuilt)
-    pub hwnd_map      : Arc <RwLock <HashMap <Hwnd, WinDatEntry>>>,
-    pub hwnds_ordered : Arc <RwLock <Vec <Hwnd>>>,
-    pub hwnds_acc     : Arc <RwLock <Vec <Hwnd>>>,
+    pub hwnd_map      : RwLock <HashMap <Hwnd, WinDatEntry>>,
+    pub hwnds_ordered : RwLock <Vec <Hwnd>>,
+    pub hwnds_acc     : RwLock <Vec <Hwnd>>,
 
     pub cur_call_id   : AtomicIsize,
     pub enum_do_light : Flag,
@@ -199,16 +197,12 @@ pub struct _SwitcheState {
     pub is_mouse_right_down       : Flag,
     pub in_right_btn_scroll_state : Flag,
 
-    pub auto_hide_enabled : Flag,
-
-    pub kbd_hook     : AtomicIsize,
-    pub mouse_hook   : AtomicIsize,
-    pub iproc_thread : AtomicU32,
-
     pub render_lists_m : RenderReadyListsManager,
+    pub i_proc         : InputProcessor,
     pub icons_m        : IconsManager,
+    pub conf           : Config,
 
-    pub(crate) app_handle : Arc <RwLock < Option <AppHandle<Wry>>>>,
+    pub app_handle : RwLock < Option <AppHandle<Wry>>>,
 
 }
 
@@ -232,11 +226,11 @@ struct GroupSortingEntry {
 
 # [ derive ( ) ]
 pub struct _RenderReadyListsManager {
-    //switche_state_r  : &'a SwitcheState,
     self_hwnd        : AtomicIsize,
-    grp_sorting_map  : Arc <RwLock <HashMap <String, GroupSortingEntry>>>,
-    render_list      : Arc <RwLock <Vec <RenderListEntry>>>,
-    grpd_render_list : Arc <RwLock <Vec <Vec <RenderListEntry>>>>,
+    grp_sorting_map  : RwLock <HashMap <String, GroupSortingEntry>>,
+    render_list      : RwLock <Vec <RenderListEntry>>,
+    grpd_render_list : RwLock <Vec <Vec <RenderListEntry>>>,
+    exes_excl_set    : RwLock <HashSet <String>>,
 }
 
 
@@ -257,9 +251,9 @@ impl SwitcheState {
         static INSTANCE: OnceCell <SwitcheState> = OnceCell::new();
         INSTANCE .get_or_init ( || {
             let ss = SwitcheState ( Arc::new ( _SwitcheState {
-                hwnd_map       : Arc::new ( RwLock::new (HashMap::new())),
-                hwnds_ordered  : Arc::new ( RwLock::new (Vec::new())),
-                hwnds_acc      : Arc::new ( RwLock::new (Vec::new())),
+                hwnd_map       : RwLock::new (HashMap::new()),
+                hwnds_ordered  : RwLock::new (Vec::new()),
+                hwnds_acc      : RwLock::new (Vec::new()),
 
                 cur_call_id    : AtomicIsize::default(),
                 enum_do_light  : Flag::default(),
@@ -270,21 +264,16 @@ impl SwitcheState {
                 is_mouse_right_down       : Flag::default(),
                 in_right_btn_scroll_state : Flag::default(),
 
-                auto_hide_enabled : Flag::default(),
-
-                kbd_hook     : AtomicIsize::default(),
-                mouse_hook   : AtomicIsize::default(),
-                iproc_thread : AtomicU32::default(),
-
                 render_lists_m : RenderReadyListsManager::instance(),
+                i_proc         : InputProcessor::instance(),
                 icons_m        : IconsManager::instance(),
+                conf           : Config::instance(),
 
-                app_handle     : Arc::new ( RwLock::new (None)),
+                app_handle     : RwLock::new (None),
             } ) );
             // lets do some init for the new instance
-            ss.load_configs();
             ss.setup_win_event_hooks();
-            //begin_input_processing (&ss);
+            //ss.i_proc.begin_input_processing(&ss);
             // ^^ instead, we do this everytime on reload (which front-end requests on first load too)
             ss
         } ) .clone()
@@ -295,18 +284,6 @@ impl SwitcheState {
     }
     pub fn store_self_hwnd (&self, hwnd:Hwnd) {
         self.render_lists_m.store_self_hwnd(hwnd);
-    }
-
-    pub fn toggle_auto_hide (&self) -> bool {
-        self.auto_hide_enabled.toggle();
-        self.emit_configs();
-        self.auto_hide_enabled.check()
-    }
-
-    pub fn load_configs (&self) {
-        //todo .. load actual configs, keep them in separate struct instead of dumping flags in SwitcheState
-        self.auto_hide_enabled.set();
-        //self.grp_mode_is_default.set();
     }
 
 
@@ -344,7 +321,7 @@ impl SwitcheState {
             let res = EnumWindows ( Some(Self::enum_windows_streamed_callback), LPARAM (call_id_old + 1) );
             //let dur = Instant::now().duration_since(t).as_millis();
             //println! ("enum-windows query completed in {dur} ms, with success result: {:?}", res); // --> 'light' ones now finish < 1ms
-            if res == false { return }    // the call could have been superceded by a newer request
+            if res.is_err() { return }    // the call could have been superceded by a newer request
             ss.post_enum_win_call_cleanup();
         } );
     }
@@ -406,9 +383,6 @@ impl SwitcheState {
             wde.exe_path_name = get_hwnd_exe_path(wde.hwnd) .and_then (|s| Self::parse_exe_path(s));
             if wde.exe_path_name .iter() .find (|ep| ep.name.as_str() == "ApplicationFrameHost.exe") .is_some() { //dbg!(hwnd);
                 wde.is_uwp_app = Some(true);
-                //wde.exe_path_name = get_uwp_hwnd_exe_path(wde.hwnd) .and_then (|s| Self::parse_exe_path(s));
-                //dbg!(&wde.exe_path_name);
-                //if wde.exe_path_name.is_none() {
                 if let Some(pkg_path) = get_package_path_from_hwnd(hwnd).as_ref() { //dbg!(&pkg_path);
                     if let Some(mfp) = icons::uwp_processing::get_uwp_manifest_parse(pkg_path) {
                         wde.exe_path_name = Self::parse_exe_path(mfp.exe.to_string_lossy().into());
@@ -447,9 +421,8 @@ impl SwitcheState {
         let cur_hwnds_set = self.hwnds_acc.read().unwrap() .iter() .map(|h| *h) .collect::<HashSet<Hwnd>>();
         let dead_hwnds = self.hwnds_ordered.read().unwrap() .iter() .map(|h| *h)
             .filter (|hwnd| !cur_hwnds_set.contains(hwnd)) .collect::<Vec<Hwnd>>();
-        let icm = IconsManager::instance();
         dead_hwnds .iter() .for_each (|hwnd| {
-            self.hwnd_map .read().unwrap()  .get(&hwnd) .map (|wde| icm.clear_dead_hwnd(wde));
+            self.hwnd_map .read().unwrap()  .get(&hwnd) .map (|wde| self.icons_m.clear_dead_hwnd(wde));
             self.hwnd_map .write().unwrap() .remove(&hwnd);
         });
         // and we'll swap out the live order-list with the readied accumulator to make the new ordering current
@@ -485,7 +458,7 @@ impl SwitcheState {
         if self.is_fgnd.is_clear() { return }
 
         self.is_fgnd.clear();
-        if self.auto_hide_enabled.is_set() {
+        if self.conf.check_flag__auto_hide_enabled() {
             self.handle_req__switche_escape()
         } else {
             //self.app_handle .read().unwrap() .as_ref() .map ( |ah| {
@@ -627,6 +600,20 @@ impl SwitcheState {
         }
     }
 
+    pub fn check_owner_chain_in_render_list (&self, hwnd:Hwnd) -> bool {
+        if self.process_discovered_hwnd(hwnd, true) { return true }
+        let owner_hwnd = win_apis::get_window_owner(hwnd);
+        //println! ("owner-chain: {:?} -> {:?}", hwnd, owner_hwnd);
+        if owner_hwnd == 0 || owner_hwnd == hwnd { return false }
+        self.check_owner_chain_in_render_list (owner_hwnd)
+    }
+    pub fn check_parent_chain_in_render_list (&self, hwnd:Hwnd) -> bool {
+        if self.process_discovered_hwnd(hwnd, true) { return true }
+        let parent_hwnd = win_apis::get_window_parent(hwnd);
+        //println! ("parent-chain: {:?} -> {:?}", hwnd, owner_hwnd);
+        if parent_hwnd == 0 || parent_hwnd == hwnd { return false }
+        self.check_parent_chain_in_render_list (parent_hwnd)
+    }
     pub fn proc_win_report__fgnd_hwnd (&self, hwnd:Hwnd) {
         println! ("@{:?} fgnd: {:?}", self._stamp(), hwnd);
         // we'll set its icon to be refreshed, then process it, and queue up a 'light' (ordering only) enum-windows call
@@ -634,7 +621,11 @@ impl SwitcheState {
         self.hwnd_map.read().unwrap() .get(&hwnd) .map (|wde| self.icons_m.mark_cached_icon_mapping_stale(wde));
         if self.render_lists_m.check_self_hwnd(hwnd) {
             self.handle_event__switche_fgnd();
-        } else if self.process_discovered_hwnd (hwnd, false) {
+        //} else if self.process_discovered_hwnd (hwnd, false) {
+        //} else if self.process_discovered_hwnd (hwnd, false) || self.check_owner_chain_in_render_list(hwnd) {
+        //} else if self.process_discovered_hwnd (hwnd, false) || self.check_parent_chain_in_render_list(hwnd) {
+        } else {
+            // ^^ we want to catch all z-order changes, it seems only possible if we check (light) everytime a fgnd report comes in
             self.trigger_enum_windows_query_pending(true);
             if self.is_fgnd.is_set() { self.handle_event__switche_fgnd_lost() }
         }
@@ -656,9 +647,6 @@ impl SwitcheState {
     pub fn proc_win_report__obj_shown (&self, hwnd:Hwnd) {
         //println! ("@{:?} obj-shown: {:?}", self._stamp(), hwnd);
 
-        // first off, if this was in our list, we'll prime it to have icon refreshed on processing
-        self.hwnd_map.read().unwrap() .get(&hwnd) .map (|wde| self.icons_m.mark_cached_icon_mapping_stale(wde));
-
         // windows can get into nothing-in-fgnd state, and in such cases, if the new fgnd is the same as what was fgnd last ..
         // .. then it will not send a new fgnd report .. if this happens to switche, our is_fgnd flags get out of sync ..
         // .. so we'll handle this here directly .. and in fgnd report we'll ignore if our is_fgnd flag is already set
@@ -666,34 +654,25 @@ impl SwitcheState {
             self.handle_event__switche_fgnd();
             return
         }
-
-        // Note: now it turns out that even after uwp hwnds are 'shown', apparently it takes a bit for their app pids to spin up
-        // .. so we'll have to queue things up, but in some cases, it took 2+ secs for apps to be ready w the pid/title etc
-        // .. and thats too long to wait regularly, so we'll set up staged rechecks that unfold if needed
-        fn should_recheck_uwp (hwnd:Hwnd, ss:&SwitcheState) -> bool {
-            ss.hwnd_map.read().unwrap().get(&hwnd) .filter (|wde|
-                wde.is_uwp_app == Some(true) && wde.exe_path_name.is_none()
-            ) .is_some()
-        }
-        fn attempt_hwnd_processing (hwnd:Hwnd, ss:&SwitcheState) -> bool {
-            let hwnd_proc_check = ss.process_discovered_hwnd(hwnd, false);
-            // we'll queue up an enum call only if it passed procesing checks
-            if hwnd_proc_check { ss.trigger_enum_windows_query_pending(true) }
-            hwnd_proc_check
-        }
-        // now we can do the initial processing attempt and set up the rest
-        if !attempt_hwnd_processing (hwnd, &self) && should_recheck_uwp (hwnd, &self) {
-            let ss = self.clone();
+        fn setup_backed_off_icon_requeries (hwnd:Hwnd, ss:SwitcheState) {
+            println!("## triggering backed-off icon requeries for {:?}", hwnd);
+            // for first created/shown/uncloaked valid windows, we'll set up exponentially backing off icon requeries ..
+            // (.. since things like chrome apps seem to take many seconds at times to put up real icons instead of just placeholders)
             spawn ( move || {
-                let mut n_trials = 8;
-                while should_recheck_uwp (hwnd, &ss) && n_trials > 0 {
-                    n_trials -= 1;
-                    sleep(Duration::from_millis(500));
-                    attempt_hwnd_processing (hwnd, &ss);
+                for i in 1..10 {
+                    sleep (Duration::from_millis (200 * i*i));      // quadratic backoff .. 6 backoffs accumulates to x100, 11 to x500
+                    ss.hwnd_map.read().unwrap().get(&hwnd) .map (|wde| ss.icons_m.queue_icon_refresh(wde));
                 }
             } );
         }
+        // now before we reprocess, if this was in our list, we'll prime it to have icon refreshed upon processing
+        self.hwnd_map.read().unwrap() .get(&hwnd) .map (|wde| self.icons_m.mark_cached_icon_mapping_stale(wde));
 
+        // now we can do the initial processing attempt and set up the requeries
+        if self.process_discovered_hwnd(hwnd, false) {
+            self.trigger_enum_windows_query_pending(true);
+            setup_backed_off_icon_requeries (hwnd, self.clone());
+        }
     }
 
     pub fn proc_win_report__obj_destroyed (&self, hwnd:Hwnd) {
@@ -804,6 +783,9 @@ impl SwitcheState {
     fn handle_req__switche_quit (&self) {
         self.app_handle.read().unwrap().as_ref() .map (|ah| ah.exit(0));
     }
+    fn handle_req__self_auto_resize (&self) {
+        crate::tauri::auto_setup_self_window (self.render_lists_m.self_hwnd.load(Ordering::Relaxed));
+    }
     fn handle_req__second_recent_window_activate (&self) {
         self.handle_req__nth_recent_window_activate(1);
     }
@@ -812,8 +794,9 @@ impl SwitcheState {
 
     pub(crate) fn handle_req__data_load(&self) {
         // ^ this triggers on reload .. we'll use that to refresh our hooks, configs etc too
-        self.load_configs();
-        input_proc::re_set_hooks(&self);
+        self.conf.load();
+        self.render_lists_m.reload_exes_excl_set(self.conf.get_exe_exclusions_list());
+        self.i_proc.re_set_hooks();
         // first we'll send what data we have
         self.emit_configs();
         self.icons_m.emit_all_icon_entries();
@@ -831,10 +814,6 @@ impl SwitcheState {
         self.icons_m.mark_all_cached_icon_mappings_stale();
         self.trigger_enum_windows_query_pending(false)
     }
-    # [ allow (dead_code) ]
-    fn handle_req__refresh_idle (&self) {
-        if self.is_dismissed.check() { self.trigger_enum_windows_query_pending(false) }
-    }
 
 
 
@@ -848,28 +827,22 @@ impl SwitcheState {
             "fe_req_window_maximize"      => { r.hwnd .map (|h| self.handle_req__window_maximize (h as Hwnd) ); }
             "fe_req_window_close"         => { r.hwnd .map (|h| self.handle_req__window_close    (h as Hwnd) ); }
 
-            "fe_req_data_load"            => { self.handle_req__data_load()      }
-            "fe_req_refresh"              => { self.handle_req__refresh()        }
-            "fe_req_switche_escape"       => { self.handle_req__switche_escape() }
-            "fe_req_switche_quit"         => { self.handle_req__switche_quit()   }
-            "fe_req_debug_print"          => { self.handle_req__debug_print()    }
+            "fe_req_data_load"            => { self.handle_req__data_load()        }
+            "fe_req_refresh"              => { self.handle_req__refresh()          }
+            "fe_req_switche_escape"       => { self.handle_req__switche_escape()   }
+            "fe_req_switche_quit"         => { self.handle_req__switche_quit()     }
+            "fe_req_self_auto_resize"     => { self.handle_req__self_auto_resize() }
+            "fe_req_debug_print"          => { self.handle_req__debug_print()      }
 
-            "fe_req_switch_tabs_last"     => { self.proc_hot_key__switch_last()  }
-
-            "fe_req_switch_tabs_outliner" => { self.proc_hot_key__switch_tabs_outliner() }
-            "fe_req_switch_notepad_pp"    => { self.proc_hot_key__switch_notepad_pp()    }
-            "fe_req_switch_ide"           => { self.proc_hot_key__switch_ide()           }
-            "fe_req_switch_music"         => { self.proc_hot_key__switch_music()         }
-            "fe_req_switch_browser"       => { self.proc_hot_key__switch_browser()       }
-
-            "fe_req_activate_matching"    => { self.activate_matching_window (r.params.first().map(|s| s.as_str()), r.params.get(1).map(|s| s.as_str())) }
+            "fe_req_edit_config"          => { self.conf.trigger_config_file_edit() }
+            "fe_req_grp_mode_enable"      => { self.conf.deferred_update_conf__grp_mode (true)  }
+            "fe_req_grp_mode_disable"     => { self.conf.deferred_update_conf__grp_mode (false) }
 
             _ => { println! ("unrecognized frontend cmd: {}", r.req) }
         }
     }
 
     pub fn setup_front_end_listener (&self, ah:&AppHandle<Wry>) {
-        // todo: could consider refactoring and doing this in main if want to save the id and maybe do unlisten before exit etc?
         let ss = self.clone();
         let _ = ah .listen_global ( "frontend_request", move |event| {
             //println!("got event with raw payload {:?}", &event.payload());
@@ -932,13 +905,13 @@ impl SwitcheState {
         self.emit_backend_notice (Backend_Notice::hotkey_req__switche_escape)
     }
 
+    pub fn proc_hot_key__switch_last (&self)  {
+        self.handle_req__second_recent_window_activate()
+    }
+    pub fn proc_hot_key__switch_app (&self, exe:Option<&str>, title:Option<&str>) {
+        self.activate_matching_window (exe, title)
+    }
 
-    pub fn proc_hot_key__switch_last          (&self)  { self.handle_req__second_recent_window_activate() }
-    pub fn proc_hot_key__switch_tabs_outliner (&self)  { self.activate_matching_window ( Some("chrome.exe"),    Some("Tabs Outliner") ) }
-    pub fn proc_hot_key__switch_notepad_pp    (&self)  { self.activate_matching_window ( Some("notepad++.exe"), None ) }
-    pub fn proc_hot_key__switch_ide           (&self)  { self.activate_matching_window ( Some("idea64.exe"),    None ) }
-    pub fn proc_hot_key__switch_music         (&self)  { self.activate_matching_window ( Some("MusicBee.exe"),  None ) }
-    pub fn proc_hot_key__switch_browser       (&self)  { self.activate_matching_window ( Some("chrome.exe"),    None ) }
 
 
 
@@ -976,12 +949,8 @@ impl SwitcheState {
 
     pub fn emit_configs (&self) {
         println! ("** emitting .. configs-update");
-        let cfgs = Configs_Pl {
-            auto_hide_enabled  : self.auto_hide_enabled.check(),
-            .. Configs_Pl::default()
-        };
         self.app_handle .read().unwrap() .iter() .for_each ( |ah| {
-            serde_json::to_string(&cfgs) .map (|pl| {
+            serde_json::to_string (&Configs_Pl::assemble(&self)) .map (|pl| {
                 ah.emit_all::<String> ( Backend_Event::updated_configs.str(), pl )
             } ) .err() .iter() .for_each (|err| println!("configs emit failed: {:?}", err));
         } );
@@ -1069,9 +1038,10 @@ impl RenderReadyListsManager {
         INSTANCE .get_or_init ( ||
             RenderReadyListsManager ( Arc::new ( _RenderReadyListsManager {
                 self_hwnd         : AtomicIsize::default(),
-                grp_sorting_map   : Arc::new(RwLock::new(Default::default())),
-                render_list       : Arc::new(RwLock::new(Default::default())),
-                grpd_render_list  : Arc::new(RwLock::new(Default::default())),
+                grp_sorting_map   : RwLock::new(Default::default()),
+                render_list       : RwLock::new(Default::default()),
+                grpd_render_list  : RwLock::new(Default::default()),
+                exes_excl_set     : RwLock::new(Default::default()),
             } ) )
         ) .clone()
     }
@@ -1086,21 +1056,21 @@ impl RenderReadyListsManager {
         //wde.is_vis == Some(false) ||  wde.is_uncloaked == Some(false) ||    // already covered during enum-filtering
         self.check_self_hwnd(wde.hwnd) || wde.win_text.is_none() ||
             wde.exe_path_name.as_ref() .filter (|p| !p.full_path.is_empty()) .is_none() ||
-            wde.exe_path_name.as_ref() .filter (|p| !self.filter_exe_match(&p.name)) .is_none()
+            wde.exe_path_name.as_ref() .filter (|p| !self.exes_excl_check(&p.name)) .is_none()
     }
     pub fn runtime_should_excl_check (&self, wde:&WinDatEntry) -> bool {
         wde.should_exclude .unwrap_or_else ( move || self.calc_excl_flag(wde) )
     }
-
-    fn filter_exe_match (&self, estr:&String) -> bool {
-        // we'll set up some default exclusions here, but if we need more, prob should setup loading via configs etc
-        static EXE_MATCH_SET : Lazy <RwLock <HashSet <String>>> = Lazy::new ( || {
-            let mut m = HashSet::new();
-            m.insert ("WDADesktopService.exe".to_string());
-            RwLock::new(m)
-        } );
-        EXE_MATCH_SET.read().unwrap().contains(estr)
+    pub fn reload_exes_excl_set (&self, exes:Vec<String>) {
+        let mut ees = self.exes_excl_set.write().unwrap();
+        ees.clear();
+        exes.into_iter() .for_each (|e| { ees.insert(e); });
     }
+    fn exes_excl_check (&self, estr:&str) -> bool {
+        self.exes_excl_set.read().unwrap().contains(estr)
+    }
+
+
 
 
 

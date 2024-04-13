@@ -22,24 +22,36 @@ object SwitcheFaceConfig {
 
 
 // some type defs for the various modes and states for various ui sections
+
+/** GrpType represents whether the element is of type non-grouped, head-of-grouped, or rest-of-grouped */
 sealed abstract class GrpT (val cls:String)
 object GrpTs {
-   case object NG extends GrpT ("ng")   // Non-Grouped
-   case object GH extends GrpT ("gh")   // Group-Head
-   case object GT extends GrpT ("gt")   // Group-Tail
+   /** Non-Grouped */
+   case object NG extends GrpT ("ng")
+   /** Group-Head */
+   case object GH extends GrpT ("gh")
+   /** Group-Tail */
+   case object GT extends GrpT ("gt")
 }
 
+/** ElemType represents whether we are part of recents, grouped-recetns, or grouped sections */
 sealed abstract class ElemT (val cls:String)
 object ElemTs {
-   case object R  extends ElemT ("r")     // recents-mode recents block
-   case object G  extends ElemT ("g")     // grouped mode grouped block
-   case object GR extends ElemT ("gr")    // grouped mode recents block
+   /** recents-mode recents block */
+   case object R  extends ElemT ("r")
+   /** grouped mode grouped block */
+   case object G  extends ElemT ("g")
+   /** grouped mode recents block */
+   case object GR extends ElemT ("gr")
 }
 
+/** StateT represents whether we are in search state or not */
 sealed abstract class StateT (val cls:String)
 object StateTs {
-   case object L  extends StateT ("l")    // listing state (search not activated)
-   case object S  extends StateT ("s")    // searching state
+   /** listing state (search not activated) */
+   case object L  extends StateT ("l")
+   /** searching state */
+   case object S  extends StateT ("s")
 }
 
 
@@ -83,7 +95,7 @@ object SwitcheFacePage {
    }
    
    def procMouse_Click (e:MouseEvent) = { //println ("mouse lbtn click!")
-      triggerHoverLockTimeout(); scrollEnd_disarm()
+      triggerHoverLockTimeout(); scrollEnd_disarm(); RibbonDisplay.closeMenuDropdown()
       e.preventDefault(); e.stopPropagation()
       //e.target.closest(".elemBox").foreach(_=>handleReq_CurElemActivation())
       Some(e.target) .filter(_.isInstanceOf[Element]) .flatMap { e =>
@@ -224,22 +236,9 @@ object SwitcheFacePage {
          
          // alt-f4 .. we'll directly exit app ..  (although just doing doStopProp = false would also work indirectly)
          case (_, _, true, _, "F4")   =>  handleReq_SwitcheQuit()
-         
-         // alt w ctrl/shift ... used for specific app switching
-         case (_, _, true, _, _)  if (e.ctrlKey || e.shiftKey) => {
-            preventDefault = true
-            e.key.toLowerCase match {
-               case "l"  => SendMsgToBack.FE_Req_Switch_Last()
-               case "o"  => SendMsgToBack.FE_Req_Switch_TabsOutliner()
-               case "n"  => SendMsgToBack.FE_Req_Switch_NotepadPP()
-               case "i"  => SendMsgToBack.FE_Req_Switch_IDE()
-               case "m"  => SendMsgToBack.FE_Req_Switch_Music()
-               case "b"  => SendMsgToBack.FE_Req_Switch_Browser()
-               case _ =>
-            }
-         }
-         
+        
          // alt-key or scroll-end-armed ..  we'll setup alt-tab state key nav options
+         //   (arm, srch, alt, ctrl, key)
          case (_, _, true, _, _) | (true, _, _, _, _) => {
             e.key match {
                case "i"  => focusElem_Prev()
@@ -248,6 +247,7 @@ object SwitcheFacePage {
                case "m"  => focusElem_Bottom()
                case "j"  => focusGroup_Prev()
                case "k"  => focusGroup_Next()
+               case "r"  => RibbonDisplay.handleRefreshBtnClick()
                
                case " " | "s" | "l" | "S" | "L" =>
                   e.preventDefault(); scrollEnd_disarm(); setupSearchbox (doPassthrough = false)
@@ -258,7 +258,8 @@ object SwitcheFacePage {
          
          
          // ctrl specific hotkeys .. typically for switche specific actions
-         case (_, _, false, true, _) => {
+         //   (arm, srch,  alt,  ctrl,  key)
+         case (_,   _,    false, true,  _) => {
             preventDefault = true
             e.key.toLowerCase match {
                case "r"  => RibbonDisplay.handleRefreshBtnClick()
@@ -323,7 +324,7 @@ object SwitchePageState {
 
 
    def handleReq_SwitcheEscape (fromBkndHotkey:Boolean = false) = { //println("dismissed")
-      scrollEnd_disarm(); setDismissed()
+      scrollEnd_disarm(); setDismissed(); RibbonDisplay.closeMenuDropdown()
       if (!fromBkndHotkey) { SendMsgToBack.FE_Req_SwitcheEscape() }
       // we'll do a delayed focus-reset so the visual flip happens out of sight after switche window is gone
       js.timers.setTimeout(300) {  SwitchePageState.resetFocus(); SwitchePageState.exitSearchState(); }
@@ -333,7 +334,7 @@ object SwitchePageState {
    }
    
    def handleReq_CurElemActivation() : Unit = {
-      scrollEnd_disarm(); setDismissed()
+      scrollEnd_disarm(); setDismissed(); RibbonDisplay.closeMenuDropdown()
       idToHwnd (curElemId) .foreach ( SendMsgToBack.FE_Req_WindowActivate )
       // we'll reset focus w small delay to avoid visible change
       //js.timers.setTimeout(300) { SwitchePageState.exitSearchState(); SwitchePageState.resetFocus(); }
@@ -517,6 +518,7 @@ object SwitchePageState {
       var cachedSearchBoxTxt = ""
       // ^^ we only need to cache it for this fn, so we're wrapping the whole thing into a closured val (instead of a fn)
       (e: KeyboardEvent) => {
+         RibbonDisplay.closeMenuDropdown()
          val curSearchBoxTxt = RibbonDisplay.searchBox.value.trim
          if (curSearchBoxTxt.isEmpty || e.key == "Escape") {
             cachedSearchBoxTxt = ""
@@ -602,6 +604,7 @@ object SwitchePageState {
       if (elemT == ElemTs.G) { (groupedId _, groupedIdsVec, groupedElemsMap) } else { (recentsId _, recentsIdsVec, recentsElemsMap) }
    }
    def resetFocus() = { println("reset-focus")
+      RibbonDisplay.closeMenuDropdown()
       recentsIdsVec.headOption.foreach(setCurElem); focusElem_Next()
    }
    def resetSearchMatchFocus() : Unit = {
@@ -736,10 +739,10 @@ object ElemsDisplay {
 object RibbonDisplay {
    import SwitcheFaceConfig._
    import Switche._
-   val countSpan = span (`class`:="dragSpan").render
-   val debugLinks = span ().render
-   val armedIndicator = span (`class`:="armedIndicator", "").render   // content is set in css
-   val searchBox = input (`type`:="text", autocomplete:="off", id:="searchBox", placeholder:="").render
+   val countSpan      = span  (`class`:="dragSpan", ondblclick:={() => SendMsgToBack.FE_Req_SelfAutoResize()} ).render
+   val debugLinks     = span  ().render
+   val armedIndicator = span  (`class`:="armedIndicator", "").render   // content is set in css
+   val searchBox      = input (`type`:="text", autocomplete:="off", id:="searchBox", placeholder:="").render
    
    def blurSearchBox() = {
       //searchBox.blur()
@@ -756,7 +759,7 @@ object RibbonDisplay {
    // note: ^^ all key handling is now done at doc level capture phase (which selectively allows char updates etc to filter down to searchBox)
    def updateCountsSpan () : Unit = {
       val count = renderList.length
-      clearedElem(countSpan) .appendChild ( span ( nbsp(3), s"($count)", nbsp(2), " ※ ", nbsp(2) ).render )
+      clearedElem(countSpan) .appendChild ( span ( nbsp(3), " ※ ", nbsp(4), s"($count)", nbsp(2) ).render )
    }
    def updateDebugLinks() : Unit = {
       clearElem(debugLinks)
@@ -777,15 +780,24 @@ object RibbonDisplay {
       js.timers.setTimeout(50 ) { setArmedIndicator_On() }
       js.timers.setTimeout(250) { setArmedIndicator_Off() }
    }
+
+   object MenuDropdown {
+      val refresh = a ( href:="#",  "Refresh",         onclick := {() => handleRefreshBtnClick()}            ).render
+      val reload  = a ( href:="#",  "Reload",          onclick := {() => dom.window.location.reload()}       ).render
+      val grp_tgl = a ( href:="#",  "Toggle Grouping", onclick := {() => handleReq_GroupModeToggle()}        ).render
+      val conf    = a ( href:="#",  "Edit Config",     onclick := {() => SendMsgToBack.FE_Req_EditConfig()}  ).render
+      val quit    = a ( href:="#",  "Quit",            onclick := {() => SendMsgToBack.FE_Req_SwitcheQuit()} ).render
+      
+      val dropdown = div (`class`:="dropdown", refresh, reload, grp_tgl, conf, quit).render
+      val menu_link = span (`class`:="menulink", onclick := {()=> dropdown.classList.toggle("show")}, nbsp(4) ).render
+      val menu_dropdown = div (`class`:="menubox", onclick := {(e:MouseEvent) => e.stopPropagation()}, menu_link, dropdown ).render
+      // ^^ the stop propagation prevents the click from bubbling up to the document where we have set clicks to close the dropdown
+   }
+   def closeMenuDropdown() = { MenuDropdown.dropdown.classList.remove("show") }
    
    def getTopRibbonDiv() = {
-      val reloadLink = a (href:="#", "Reload", onclick:={(e:MouseEvent) => g.window.location.reload()} )
-      val refreshLink = a (href:="#", "Refresh", onclick:={(e:MouseEvent) => handleRefreshBtnClick()} )
-      val groupModeLink = a (href:="#", "ToggleGrouping", onclick:={(e:MouseEvent) => handleReq_GroupModeToggle()} )
-      //val dragSpot = span (style:="-webkit-app-region:drag", nbsp(3), "※", nbsp(3)) // combined with count instead
       div ( id:="top-ribbon",
-         nbsp(0), reloadLink, nbsp(4), refreshLink, nbsp(4), groupModeLink,
-         countSpan, armedIndicator, debugLinks, nbsp(2), searchBox
+         nbsp(0), MenuDropdown.menu_dropdown, nbsp(1), armedIndicator, nbsp(1), countSpan, debugLinks, nbsp(2), searchBox
       ).render
    }
 }

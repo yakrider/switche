@@ -1,14 +1,18 @@
 #![ allow (non_snake_case) ]
 
-use std::thread::{sleep, spawn};
-use std::sync::atomic::{AtomicIsize, Ordering};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicIsize, AtomicU32, Ordering};
 use std::os::raw::c_int;
+use std::ops::Deref;
 use std::time;
+use std::thread::{sleep, spawn};
+
+use once_cell::sync::OnceCell;
 
 use windows::Win32::Foundation::{HINSTANCE, HWND, LPARAM, WPARAM, LRESULT, POINT, BOOL, GetLastError};
 use windows::Win32::System::Threading::GetCurrentThreadId;
 use windows::Win32::UI::WindowsAndMessaging::{GetMessageW, MSG, SetWindowsHookExW, UnhookWindowsHookEx, WH_KEYBOARD_LL, CallNextHookEx, HHOOK, KBDLLHOOKSTRUCT, WM_SYSKEYDOWN, WM_SYSKEYUP, WM_KEYUP, WH_MOUSE_LL, WINDOWS_HOOK_ID, WM_RBUTTONDOWN, WM_RBUTTONUP, WM_MOUSEWHEEL, MSLLHOOKSTRUCT, SetCursorPos, GetCursorPos, WM_USER, PostThreadMessageW};
-use windows::Win32::UI::Input::KeyboardAndMouse::{INPUT, INPUT_0, INPUT_KEYBOARD, INPUT_MOUSE, KEYBD_EVENT_FLAGS, KEYBDINPUT, KEYEVENTF_KEYUP, MOUSE_EVENT_FLAGS, MOUSEEVENTF_ABSOLUTE, MOUSEEVENTF_RIGHTUP, MOUSEINPUT, SendInput, VIRTUAL_KEY, VK_LMENU, VK_MENU, VK_RMENU, VK_TAB};
+use windows::Win32::UI::Input::KeyboardAndMouse::{INPUT, INPUT_0, INPUT_KEYBOARD, INPUT_MOUSE, KEYBD_EVENT_FLAGS, KEYBDINPUT, KEYEVENTF_KEYUP, MOUSE_EVENT_FLAGS, MOUSEEVENTF_ABSOLUTE, MOUSEEVENTF_RIGHTUP, MOUSEINPUT, SendInput, VIRTUAL_KEY, VK_LMENU, VK_MENU, VK_RMENU, VK_SPACE, VK_TAB};
 
 use crate::*;
 use crate::switche::SwitcheState;
@@ -20,9 +24,109 @@ use crate::switche::SwitcheState;
 //const INJECTED_IDENTIFIER_EXTRA_INFO: usize = 0xFFC3D44F;     // ahk/krusty stamp
 const SWITCHE_INJECTED_IDENTIFIER_EXTRA_INFO: usize = 0x5317C7EE;      // switche's own stamp
 
+const KILL_MSG : u32 = WM_USER + 1;
+
 fn hi_word(l: u32) -> u16 { ((l >> 16) & 0xffff) as u16 }
 
 
+# [ derive (Debug) ]
+pub struct _InputProcessor {
+    kbd_hook     : AtomicIsize,
+    mouse_hook   : AtomicIsize,
+    iproc_thread : AtomicU32,
+}
+
+# [ derive (Debug, Clone) ]
+pub struct InputProcessor ( Arc <_InputProcessor> );
+
+impl Deref for InputProcessor {
+    type Target = _InputProcessor;
+    fn deref (&self) -> &_InputProcessor { &self.0 }
+}
+
+impl InputProcessor {
+
+    pub fn instance () -> InputProcessor {
+        static INSTANCE: OnceCell <InputProcessor> = OnceCell::new();
+        INSTANCE .get_or_init ( || {
+            InputProcessor ( Arc::new ( _InputProcessor {
+                kbd_hook     : AtomicIsize::default(),
+                mouse_hook   : AtomicIsize::default(),
+                iproc_thread : AtomicU32::default(),
+            } ) )
+        } ) .clone()
+    }
+
+
+    fn store_iproc_thread (&self) { unsafe {
+        self.iproc_thread.store (GetCurrentThreadId(), Ordering::SeqCst);
+    } }
+    fn kill_iproc_thread (&self) {
+        if self.iproc_thread.load(Ordering::SeqCst) != 0 { unsafe {
+            let _ = PostThreadMessageW ( self.iproc_thread.load(Ordering::SeqCst), KILL_MSG, WPARAM::default(), LPARAM::default() );
+            self.iproc_thread.store (0, Ordering::SeqCst);
+        } }
+    }
+
+    fn set_kbd_hook   (&self)  { set_hook ( WH_KEYBOARD_LL,  &self.kbd_hook,   kbd_hook_cb   ) }
+    fn set_mouse_hook (&self)  { set_hook ( WH_MOUSE_LL,     &self.mouse_hook, mouse_hook_cb ) }
+
+    pub fn unset_kbd_hook   (&self) -> bool  { unset_hook (&self.kbd_hook  ) }
+    pub fn unset_mouse_hook (&self) -> bool  { unset_hook (&self.mouse_hook) }
+
+    pub fn re_set_hooks (&self) {
+        // first we'll unhook any prior hooks and signal prior input-processing thread to terminate
+        self.unset_kbd_hook();
+        self.unset_mouse_hook();
+        self.kill_iproc_thread();
+
+        // then we can re-set hooks and start the input-proc thread
+        self.begin_input_processing();
+    }
+
+
+    /// Starts listening for bound input events.
+    pub fn begin_input_processing (&self) {
+
+        spawn ( || unsafe {
+
+            let ss = SwitcheState::instance();
+            let mut some_hook_set = false;
+
+            if ss.conf.check_flag__alt_tab_enabled() {
+                ss.i_proc.set_kbd_hook(); some_hook_set = true;
+            }
+            if ss.conf.check_flag__rbtn_scroll_enabled() {
+                ss.i_proc.set_mouse_hook(); some_hook_set = true;
+            }
+            if !some_hook_set {
+                println! ("WARNING: no hooks set .. no input-processing started !!");
+                return
+            }
+
+            // we'll store this thread's id in case we need to unhook the hooks later and want to terminate this thread
+            ss.i_proc.store_iproc_thread();
+
+            // before starting to listen to events, lets set this thread dpi-aware
+            win_apis::win_set_thread_dpi_aware();
+
+            // also, we might as well set the whole process higher priority, as we dont want lag in basic input processing
+            let _ = win_apis::win_set_cur_process_priority_high();
+
+            // win32 sends hook events to a thread with a 'message loop', but we dont create any windows,
+            //  so we wont get any actual messages, so we can just leave a forever waiting GetMessage instead of setting up a msg-loop
+            // .. basically while its waiting, the thread is awakened simply to call kbd hook (for an actual msg, itd awaken give the msg)
+            let mut msg: MSG = MSG::default();
+            while BOOL(0) != GetMessageW (&mut msg, HWND(0), 0, 0) {
+                if msg.message == KILL_MSG {
+                    println! ("received kill-msg in input-processing thread .. terminating thread ..");
+                    break
+                }
+            }
+        } );
+    }
+
+}
 
 
 
@@ -37,69 +141,25 @@ fn set_hook (
     );
 } }
 
-fn set_kbd_hook   (ss : &SwitcheState) { set_hook ( WH_KEYBOARD_LL, &ss.kbd_hook,   kbd_hook_cb   ); }
-fn set_mouse_hook (ss : &SwitcheState) { set_hook ( WH_MOUSE_LL,    &ss.mouse_hook, mouse_hook_cb ); }
 
 
 fn unset_hook (hhook: &AtomicIsize) -> bool {
     if hhook.load (Ordering::SeqCst) != HHOOK::default().0 {
-        if true == unsafe { UnhookWindowsHookEx ( HHOOK (hhook.load(Ordering::SeqCst)) ) } {
+        if unsafe { UnhookWindowsHookEx ( HHOOK (hhook.load(Ordering::SeqCst)) ) .is_ok() } {
             hhook.store (HHOOK::default().0, Ordering::SeqCst);
             println!("unhooking attempt .. succeeded!");
             return true
         }
-        eprintln!("unhooking attempt .. failed .. error code : {:?} !!", unsafe { GetLastError() });
+        // we'll print the error both to console, and windows debug-out (which can be checked via dbgview at runtime)
+        let err = format! ("SWITCHE : unhooking attempt failed .. error code : {:?} !!", unsafe { GetLastError().0 } );
+        eprintln!("{}", &err);
+        win_apis::write_win_dbg_string (&err)
     } else {
         println!("unhooking attempt .. no prior hook found !!");
     }
     return false
 }
-pub fn unset_kbd_hook   (ss : &SwitcheState) -> bool { unset_hook (&ss.kbd_hook) }
-pub fn unset_mouse_hook (ss : &SwitcheState) -> bool { unset_hook (&ss.mouse_hook) }
 
-
-const KILL_MSG : u32 = WM_USER + 1;
-pub fn re_set_hooks (ss : &SwitcheState) { unsafe {
-    // first we'll unhook any prior hooks and signal prior input-processing thread to terminate
-    unset_kbd_hook (ss);
-    unset_mouse_hook (ss);
-    PostThreadMessageW (ss.iproc_thread.load(Ordering::Relaxed), KILL_MSG, WPARAM::default(), LPARAM::default());
-
-    // then we can re-set hooks and start the input-proc thread
-    begin_input_processing(&ss);
-} }
-
-
-/// Starts listening for bound input events.
-pub fn begin_input_processing (ss : &SwitcheState) {
-    // todo: add config check here before we set kbd/mouse hooks
-    let ss = ss.clone();
-    spawn ( move || unsafe {
-        ss.iproc_thread.store (GetCurrentThreadId(), Ordering::Relaxed);
-        // ^^ we'll store this thread id in case we need to unhook the hooks later and want to terminate this thread
-
-        set_kbd_hook (&ss);
-        set_mouse_hook (&ss);
-
-        // before starting to listen to events, lets set this thread dpi-aware
-        win_apis::win_set_thread_dpi_aware();
-
-        // also, we might as well set the whole process higher priority, as we dont want lag in basic input processing
-        let _ = win_apis::win_set_cur_process_priority_high();
-
-        // win32 sends hook events to a thread with a 'message loop', but we dont create any windows,
-        //  so we wont get any actual messages, so we can just leave a forever waiting GetMessage instead of setting up a msg-loop
-        // .. basically while its waiting, the thread is awakened simply to call kbd hook (for an actual msg, itd awaken give the msg)
-        let mut msg: MSG = MSG::default();
-        while BOOL(0) != GetMessageW (&mut msg, HWND(0), 0, 0) {
-            if msg.message == KILL_MSG {
-                println! ("received kill-msg in input-processing thread .. terminating thread ..");
-                break
-            }
-        }
-    } );
-
-}
 
 
 
@@ -220,6 +280,7 @@ fn send_key_event (virt_key:VIRTUAL_KEY, is_key_up:bool) {
 
 
 
+
 /// mouse lower-level-hook processor
 pub unsafe extern "system"
 fn mouse_hook_cb (code: c_int, w_param: WPARAM, l_param: LPARAM) -> LRESULT {
@@ -289,16 +350,18 @@ fn right_btn_dn_scroll_action (delta:i32, ss:SwitcheState) {
 
 
 
+
 fn get_cursor_pos() -> POINT {
     unsafe {
         let mut point = POINT::default();
-        GetCursorPos (&mut point);
+        let _ = GetCursorPos (&mut point);
         point
     }
 }
-fn cursor_move_abs (x: i32, y: i32) {
-    unsafe { SetCursorPos (x, y); }
-}
+fn cursor_move_abs (x: i32, y: i32) { unsafe { 
+    let _ = SetCursorPos (x, y);
+} }
+
 
 
 fn send_mouse_rbtn_release() {
@@ -343,7 +406,7 @@ fn send_mouse_rbtn_release_masked() {
 
 
 /// Send simulated mouse events to OS for injection into events-stream
-fn send_mouse_input (flags: MOUSE_EVENT_FLAGS, data: i32, dx: i32, dy: i32) {
+fn send_mouse_input (flags: MOUSE_EVENT_FLAGS, data: u32, dx: i32, dy: i32) {
     let mut inputs = [ INPUT {
         r#type: INPUT_MOUSE,
         Anonymous: INPUT_0 {

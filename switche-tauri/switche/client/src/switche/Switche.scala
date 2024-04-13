@@ -36,14 +36,14 @@ case class BackendNotice_P  ( msg:String )                     derives ReadWrite
 
 case class Configs (
    auto_hide_enabled      : Boolean,
-   grp_mode_is_default    : Boolean,
+   group_mode_enabled     : Boolean,
    n_grp_mode_top_recents : Int,
 ) derives ReadWriter
 
 object Configs {
    def default() = Configs (
       auto_hide_enabled       =  true,
-      grp_mode_is_default     =  true,
+      group_mode_enabled      =  true,
       n_grp_mode_top_recents  =  9,
    )
 }
@@ -104,23 +104,16 @@ object SendMsgToBack {
    
    def FE_Req_Data_Load       () = send ( front_end_req ( "fe_req_data_load"        ) )
    def FE_Req_Refresh         () = send ( front_end_req ( "fe_req_refresh"          ) )
-   def FE_Req_Get_RenderLists () = send ( front_end_req ( "fe_req_get_render_lists" ) )
    def FE_Req_SwitcheEscape   () = send ( front_end_req ( "fe_req_switche_escape"   ) )
    def FE_Req_SwitcheQuit     () = send ( front_end_req ( "fe_req_switche_quit"     ) )
+   def FE_Req_SelfAutoResize  () = send ( front_end_req ( "fe_req_self_auto_resize" ) )
+   def FE_Req_EditConfig      () = send ( front_end_req ( "fe_req_edit_config"      ) )
    def FE_Req_DebugPrint      () = send ( front_end_req ( "fe_req_debug_print"      ) )
    
-   def FE_Req_Switch_Last         () = send ( front_end_req ( "fe_req_switch_tabs_last"     ) )
+   def FE_Req_GrpModeEnabled  (enable:Boolean) = send ( front_end_req (
+      if (enable) "fe_req_grp_mode_enable" else "fe_req_grp_mode_disable"
+   ) )
    
-   def FE_Req_Switch_TabsOutliner () = send ( front_end_req ( "fe_req_switch_tabs_outliner" ) )
-   def FE_Req_Switch_NotepadPP    () = send ( front_end_req ( "fe_req_switch_notepad_pp"    ) )
-   def FE_Req_Switch_IDE          () = send ( front_end_req ( "fe_req_switch_ide"           ) )
-   def FE_Req_Switch_Music        () = send ( front_end_req ( "fe_req_switch_music"         ) )
-   def FE_Req_Switch_Browser      () = send ( front_end_req ( "fe_req_switch_browser"       ) )
-   
-   
-   def _send_FE_Req_Activate_Matching (exe:String, title:String = "") = {
-      send ( front_end_req ( "fe_req_activate_matching", _hwnd = None, _params = Seq(exe, title).filterNot(_.isEmpty) ) )
-   }
 }
 
 
@@ -180,6 +173,7 @@ object Switche {
 
    def handleReq_GroupModeToggle() = {
       inGroupedMode = !inGroupedMode;
+      SendMsgToBack.FE_Req_GrpModeEnabled(inGroupedMode)
       RenderSpacer.immdtRender()
    }
    def procHotkey_Invoke() = {
@@ -233,13 +227,11 @@ object Switche {
    }
   
    def setTauriEventListeners() : Unit = {
-      // todo : the unlisten fns returned by these prob could be stored and used to unlisten during unmount (e.g. page refresh?)
       TauriEvent .listen ( "backend_notice",            backendNoticeListener _      )
       TauriEvent .listen ( "updated_render_list",       updateListener_RenderList _  )
       TauriEvent .listen ( "updated_win_dat_entry",     updateListener_WinDatEntry _ )
       TauriEvent .listen ( "updated_icon_entry",        updateListener_IconEntry _   )
       TauriEvent .listen ( "updated_configs",           updateListener_Configs _     )
-      //TauriEvent .listen ( "updated_icon_lookup_entry", updateListener_IconLookupE _ )
    }
    
    def updateListener_RenderList  (e:BackendPacket) : Unit = {
@@ -288,8 +280,8 @@ object Switche {
       println (s"got configs: ${e.payload}");
       val confs_old = configs;
       configs = upickle.default.read[Configs](e.payload)
-      if (confs_old.grp_mode_is_default != configs.grp_mode_is_default) {
-         inGroupedMode = configs.grp_mode_is_default
+      if (confs_old.group_mode_enabled != configs.group_mode_enabled) {
+         inGroupedMode = configs.group_mode_enabled
          RenderSpacer.immdtRender()
       }
       if (confs_old.auto_hide_enabled != configs.auto_hide_enabled) {

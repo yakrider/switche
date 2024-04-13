@@ -1,0 +1,99 @@
+
+
+## Config settings file for Switche appliation .. uses toml format
+# (Note that in toml format, root keys must be listed before any tables with square-brackets are started)
+#
+# The application will look for this file (switche.conf.toml) in the same directory from which it is running (if the location is writeable)
+# If that location is not writeable, the config file will pick  ~/AppData/Local/Switche/ as conf file location
+# Upon startup, if the conf file is not present in the location selected as above, a default conf file will be created in that location
+# Configurations modified at run time (e.g. window size/position etc) will be written back to this file
+# Most changes to this file (unless specified in the config) will be picked up by the application upon reload or restart
+#
+
+
+# Enable auto-hide of switche window upon losing focus .. default is true
+# Note that this will also enable always-on-top for switche window
+auto_hide_enabled = true
+
+# Use grouped mode display .. default is true
+# (This will trim the list of most recent windows, and under it will show all the windows grouped by executable)
+group_mode_enabled = true
+
+# Number of top recent windows to display in recents-list when grouped mode is enabled .. default is 9
+number_of_top_recents_in_grouped_mode = 9
+
+# Enable switche to replace windows task-switcher upon alt-tab press .. default is true
+# Note this this will install a lower-level keyboard hook to intercept alt-tab presses
+alt_tab_enabled = true
+
+# Enable invocation of switche upon mouse wheel scroll while holding right mouse button down .. default is true
+# Note that this will install a lower-level mouse hook to intercept right-mouse button/wheel events
+mouse_right_btn_scroll_enabled = true
+
+# Start Switche with elevated privileges (i.e. as admin) .. default is false
+start_as_admin = false
+
+
+# Start switche window in the same size and location as it was when last closed .. default is true
+restore_window_dimensions = true
+
+# Dimensions for switche window on startup .. this will be updated when/if the window is resized
+# The units are in pixels, x and y are distances from the top-left corner of the screen .. default is (0, 0)
+window_dimensions.location = { x = 0, y = 0 }
+
+# Size of switche window on startup in pixels .. this will be updated when/if the window is resized
+# Setting these to 0 will have switche calculate window size/placement proportional to screen size .. defaault is (0, 0)
+window_dimensions.size = { width = 0, height = 0 }
+
+
+
+# List of exes to exclude from the displayed list of windows .. default has "WDADesktopService.exe"
+exe_exclusions_list = [
+    "WDADesktopService.exe",
+    "SearchUI.exe"
+]
+
+
+# Hotkeys to invoke switche, specified as a string array .. default is ["F1", "Ctrl+Alt+F15"]
+# Hotkey specification strings map directly to tauri hotkey specs .. they are summrized below :
+#   Alt, Shift, Ctrl, Cmd, CmdOrCtrl, CmdOrAlt, A-Z, 0-9, F1-F24,
+#   ArrowUp, ArrowDown, ArrowLeft, ArrowRight, Home, End, PageUp, PageDown,
+#   Space, Enter, Backspace, Delete, Insert, Tab, Escape
+# Combinations can be created as e.g. : "Ctrl+Shift+A"
+# Note: Updates to this config are ONLY picked up upon restarting (not just reloading) the application
+switche_invocation_hotkeys = ["F1", "Ctrl+Alt+F15"]
+
+
+# Hotkeys to directly switch to the last active window, specified as a string array .. default is ["Alt+F1", "Ctrl+Alt+F16"]
+# Note: Updates to this config are ONLY picked up upon restarting (not just reloading) the application
+last_window_direct_switch_hotkeys = ["Alt+F1", "Ctrl+Alt+F16"]
+
+
+
+# Configuration for optional user-specifiable hotkeys to directly switch to specific app (if present at the time)
+# Each entry can be listed under [[flex_hotkey]] table heading, and must have a 'hotkey' specified
+# The optional 'exe' field is the executable name (without the path) of the app to switch to
+# The optional 'title' field is the window-title of the app to switch to (if present)
+# The first window matching the specs will be switched to when the hotkey is pressed
+# Note: Updates to these configs are ONLY picked up upon restarting (not just reloading) the application
+
+[[flex_hotkey]]
+hotkey = "Ctrl+Alt+F24"
+exe = "chrome.exe"
+
+[[flex_hotkey]]
+hotkey = "Ctrl+Alt+F23"
+exe = "MusicBee.exe"
+
+[[flex_hotkey]]
+hotkey = "Ctrl+Alt+F22"
+exe = "idea64.exe"
+
+[[flex_hotkey]]
+hotkey = "Ctrl+Alt+F21"
+exe = "notepad++.exe"
+
+[[flex_hotkey]]
+hotkey = "Ctrl+Alt+F20"
+exe = "chrome.exe"
+title = "Tabs Outliner"

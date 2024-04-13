@@ -32,23 +32,71 @@ body {
    margin: 0;
    height: calc(100vh - 14px);
    overflow: hidden;
+   padding: 0px 4px 0px 4px;
 }
 
 #top-ribbon {
   color: var(--ribbon-color);
+  font-family: system-ui;
   font-size: 14px;
+  display: inline-flex;
+  align-items: center;
+  width: 98%;
   padding: 4px;
 }
 #top-ribbon a { color: var(--ribbon-color); }
 
+
+.menubox {
+  display: inline-block;
+  position: relative;
+}
+.menulink { }
+.menulink:before {
+   content: "☰";
+   font-size: 18px;
+   color: var(--ribbon-color);
+}
+.dropdown {
+  display: none;
+  position: absolute;
+  background-color: var(--background-color);
+  min-width: 136px;
+  box-shadow: 1px 2px 8px 0px #AC7C1C5C;
+  z-index: 1;
+  margin-left: -1em;
+  margin-top: 4px;
+  padding-bottom: 10px;
+}
+.dropdown a {
+  color: var(--ribbon-color);
+  padding: 5px 10px 5px 15px;
+  font-size: small;
+  text-decoration: none;
+  display: block;
+}
+.dropdown a:hover { background-color: #404040; }
+.dropdown.show { display: block; }
+
+
+.armedIndicator {
+   color: var(--dim-color);
+}
+.armedIndicator.armed {
+   color: var(--armed-color);
+}
+.armedIndicator:before {
+   content: "Ⓐ";
+   font-weight: bold;
+   font-size: 14px;
+}
+
 .dragSpan {
   -webkit-app-region: drag;
   cursor: move;   /* doesnt show up due to -webkit-app-region bug in win-os, at least in this electron version */
+  width: 110px;
 }
 
-.armedIndicator { font-weight: bold; font-size: 14px; color: var(--dim-color); }
-.armedIndicator:before { content: "Ⓐ"; }
-.armedIndicator.armed { color: var(--armed-color); }
 
 #searchBox {
   background: var(--background-color);
@@ -56,6 +104,7 @@ body {
   font-size: large;
   border: none;
   min-width: 400px;
+  flex-grow: 1;
 }
 
 .searchTxt { color: var(--searched-color); }
@@ -70,7 +119,7 @@ body {
 #elemsDivs::-webkit-scrollbar { width: 4px; background: #540; }
 #elemsDivs::-webkit-scrollbar-thumb { background: #970; }
 
-.elemsDiv      { }
+.elemsDiv      { padding: 4px 0px 4px 0px; }
 .elemsDiv.r    { }
 .elemsDiv.g    { }
 .elemsDiv.gr   { }
