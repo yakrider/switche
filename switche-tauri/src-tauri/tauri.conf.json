@@ -8,7 +8,7 @@
   },
   "package": {
     "productName": "Switche",
-    "version": "2.2.1"
+    "version": "2.2.7"
   },
   "tauri": {
     "allowlist": {
@@ -37,11 +37,7 @@
     },
     "bundle": {
       "active": true,
-      "icon": [
-          "icons/switche.png",
-          "icons/switche.ico",
-          "icons/icon.ico"
-      ],
+      "icon": ["switche.ico"],
       "identifier": "com.yakrider.switche",
       "shortDescription": "Searchable Task Switcher",
       "longDescription": "Searchable Task Switcher",
@@ -71,7 +67,7 @@
       }
     ],
     "systemTray": {
-      "iconPath": "icons/icon.ico"
+      "iconPath": "switche.ico"
     }
   }
 }

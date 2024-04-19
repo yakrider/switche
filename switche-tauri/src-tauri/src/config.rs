@@ -130,7 +130,8 @@ impl Config {
         INSTANCE .get_or_init ( || {
             let conf = Config ( Arc::new ( _Config {
                 toml    : RwLock::new (None),
-                default : DocumentMut::from_str (include_str!("switche.conf.toml")).unwrap(),
+                default : DocumentMut::from_str (include_str!("../../switche.conf.toml")).unwrap(),
+                // ^^ our switche.conf.toml is at root of project, the include_str macro will load the contents at compile time
             } ) );
             conf.load();
             conf
@@ -258,7 +259,9 @@ impl Config {
     }
 
     pub fn get_n_grp_mode_top_recents (&self) -> u32 {
-        self.get_number("number_of_top_recents_in_grouped_mode")
+        let ngmtr = self.get_number("number_of_top_recents_in_grouped_mode");
+        if ngmtr > 2 { ngmtr } else { 2 }
+        // ^^ we enforce a min of 2 as that is necessary to make the basic switch-to-next work (and for scroll across grp logic etc)
     }
     pub fn deferred_update_conf__grp_mode (&self, grp_mode:bool) {
         if let Some(toml) = self.toml.write().unwrap().as_mut() {

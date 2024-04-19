@@ -6,9 +6,9 @@ use std::sync::{Arc, Mutex, RwLock};
 use once_cell::sync::Lazy;
 
 use windows::core::{GUID, PCWSTR, PSTR, PWSTR};
-use windows::Win32::Foundation::{BOOL, CloseHandle, HANDLE, HWND, LPARAM, RECT, WPARAM};
+use windows::Win32::Foundation::{BOOL, CloseHandle, GetLastError, ERROR_INSUFFICIENT_BUFFER, HANDLE, HWND, LPARAM, RECT, WPARAM};
 use windows::Win32::Graphics::Dwm::{DwmGetWindowAttribute, DWMWA_CLOAKED, DWMWA_EXTENDED_FRAME_BOUNDS};
-use windows::Win32::Security::TOKEN_READ;
+use windows::Win32::Security::{GetTokenInformation, TOKEN_ELEVATION, TOKEN_QUERY, TokenElevation};
 use windows::Win32::Storage::Packaging::Appx::{
     GetApplicationUserModelId, GetPackagePathByFullName, GetPackagesByPackageFamily, ParseApplicationUserModelId
 };
@@ -17,6 +17,7 @@ use windows::Win32::System::Threading::{
     GetCurrentProcess, HIGH_PRIORITY_CLASS, OpenProcess, OpenProcessToken, PROCESS_NAME_WIN32,
     PROCESS_QUERY_LIMITED_INFORMATION, QueryFullProcessImageNameA, SetPriorityClass
 };
+use windows::Win32::System::WindowsProgramming::GetUserNameW;
 use windows::Win32::UI::Input::KeyboardAndMouse::{GetKeyState, VK_SHIFT};
 use windows::Win32::UI::Shell::PropertiesSystem::{IPropertyStore, PROPERTYKEY, SHGetPropertyStoreForWindow};
 use windows::Win32::UI::HiDpi::{DPI_AWARENESS_CONTEXT_SYSTEM_AWARE, SetThreadDpiAwarenessContext};
@@ -233,21 +234,55 @@ pub fn get_package_path_from_hwnd (hwnd:Hwnd) -> Option<String> { unsafe {
 
 
 
-pub fn check_cur_proc_elevated() -> Option<bool> { unsafe {
-    check_proc_elevated (GetCurrentProcess())
-} }
-pub fn check_proc_elevated (h_proc:HANDLE) -> Option<bool> { unsafe {
+pub fn check_cur_proc_elevated () -> Option<bool> {
+    match check_proc_elevated ( unsafe { GetCurrentProcess()} ) {
+        Ok (res) => Some(res),
+        Err (e) => {
+            println!("Error checking process elevation : {:?}", e);
+            None
+    }  }
+}
+pub fn check_proc_elevated (h_proc:HANDLE) -> windows::core::Result<bool> { unsafe {
     let mut h_token = HANDLE::default();
-    let open_res = OpenProcessToken (h_proc, TOKEN_READ, &mut h_token);
-    if open_res.is_err() { return None }
-    //let mut token_info = 0u8;
-    //let mut token_info_len = size_of::<u8>() as u32;
-    //let get_res = GetTokenInformation (h_token, TokenElevation, &mut token_info, token_info_len, &mut token_info_len);
-    //if get_ers.is_err() { return None }
-    //Some (token_info != 0)
-    // todo .. impl elevated process checking, and later, requesting elevation as well
-    None
+    OpenProcessToken (h_proc, TOKEN_QUERY, &mut h_token)?;
+    let mut token_info : TOKEN_ELEVATION = TOKEN_ELEVATION::default();
+    let mut token_info_len = size_of::<TOKEN_ELEVATION>() as u32;
+    GetTokenInformation (h_token, TokenElevation, Some(&mut token_info as *mut _ as *mut _), token_info_len, &mut token_info_len)?;
+    Ok (token_info.TokenIsElevated != 0 )
 } }
+
+
+pub fn get_cur_user_name () -> Option<String> {
+    match _get_cur_user_name() {
+        Ok (res) => Some(res),
+        Err (e) => {
+            println!("Error getting current user name : {:?}", e);
+            None
+    }  }
+}
+pub fn _get_cur_user_name () -> Result<String, Box<dyn std::error::Error>> { unsafe {
+    // we'll put some default size enough for most cases, but if name too long, we'll allocate and requery
+    let mut name_len = 512;
+    let mut buf = vec![0u16; name_len as usize];
+    if GetUserNameW  (PWSTR::from_raw(buf.as_mut_ptr()), &mut name_len) .is_ok() {
+        let name = PWSTR::from_raw (buf.as_mut_ptr()) .to_string()?;
+        return Ok(name)
+    }
+    if GetLastError() != ERROR_INSUFFICIENT_BUFFER {
+        return Err (Box::new(windows::core::Error::from_win32()))
+    }
+    // buffer wasnt large enough, we'll resize and try again
+    if name_len > 8192 {
+        return Err ("User name too long".into())
+    }
+    buf.resize (name_len as usize, 0);
+    GetUserNameW  (PWSTR::from_raw(buf.as_mut_ptr()), &mut name_len)?;
+    let name = PWSTR::from_raw(buf.as_mut_ptr()).to_string()?;
+    Ok (name)
+} }
+
+
+
 pub fn win_set_cur_process_priority_high() -> bool { unsafe {
     SetPriorityClass (GetCurrentProcess(), HIGH_PRIORITY_CLASS) .is_ok()
 } }

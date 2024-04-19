@@ -8,7 +8,6 @@
 # Upon startup, if the conf file is not present in the location selected as above, a default conf file will be created in that location
 # Configurations modified at run time (e.g. window size/position etc) will be written back to this file
 # Most changes to this file (unless specified in the config) will be picked up by the application upon reload or restart
-#
 
 
 # Enable auto-hide of switche window upon losing focus .. default is true
@@ -19,7 +18,7 @@ auto_hide_enabled = true
 # (This will trim the list of most recent windows, and under it will show all the windows grouped by executable)
 group_mode_enabled = true
 
-# Number of top recent windows to display in recents-list when grouped mode is enabled .. default is 9
+# Number of top recent windows to display in recents-list when grouped mode is enabled .. default is 9, minimum is 2
 number_of_top_recents_in_grouped_mode = 9
 
 # Enable switche to replace windows task-switcher upon alt-tab press .. default is true
@@ -30,11 +29,10 @@ alt_tab_enabled = true
 # Note that this will install a lower-level mouse hook to intercept right-mouse button/wheel events
 mouse_right_btn_scroll_enabled = true
 
-# Start Switche with elevated privileges (i.e. as admin) .. default is false
-start_as_admin = false
 
 
 # Start switche window in the same size and location as it was when last closed .. default is true
+# If this is true, when switche window is resized, its new dimensions are written back to this file
 restore_window_dimensions = true
 
 # Dimensions for switche window on startup .. this will be updated when/if the window is resized
@@ -42,7 +40,7 @@ restore_window_dimensions = true
 window_dimensions.location = { x = 0, y = 0 }
 
 # Size of switche window on startup in pixels .. this will be updated when/if the window is resized
-# Setting these to 0 will have switche calculate window size/placement proportional to screen size .. defaault is (0, 0)
+# Setting these to 0 will have switche auto-calculate window size/placement to place it about middle of screen .. defaault is (0, 0)
 window_dimensions.size = { width = 0, height = 0 }
 
 
@@ -55,7 +53,7 @@ exe_exclusions_list = [
 
 
 # Hotkeys to invoke switche, specified as a string array .. default is ["F1", "Ctrl+Alt+F15"]
-# Hotkey specification strings map directly to tauri hotkey specs .. they are summrized below :
+# Hotkey specification strings map directly to tauri hotkey specs .. they are summarized below :
 #   Alt, Shift, Ctrl, Cmd, CmdOrCtrl, CmdOrAlt, A-Z, 0-9, F1-F24,
 #   ArrowUp, ArrowDown, ArrowLeft, ArrowRight, Home, End, PageUp, PageDown,
 #   Space, Enter, Backspace, Delete, Insert, Tab, Escape
@@ -74,7 +72,7 @@ last_window_direct_switch_hotkeys = ["Alt+F1", "Ctrl+Alt+F16"]
 # Each entry can be listed under [[flex_hotkey]] table heading, and must have a 'hotkey' specified
 # The optional 'exe' field is the executable name (without the path) of the app to switch to
 # The optional 'title' field is the window-title of the app to switch to (if present)
-# The first window matching the specs will be switched to when the hotkey is pressed
+# The hotkey will toggle between the cur window and the first not-currently-top window matching the specs
 # Note: Updates to these configs are ONLY picked up upon restarting (not just reloading) the application
 
 [[flex_hotkey]]

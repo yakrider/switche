@@ -1,6 +1,6 @@
 [package]
 name = "switche"
-version = "2.2.1"
+version = "2.2.7"
 # ^^ remember to also update this in tauri.conf.js
 description = "Searchable Window Switcher"
 authors = ["yakrider"]
@@ -43,6 +43,9 @@ rand = "0.8.5"
 quick-xml = "0.28.2"
 toml_edit = "0.22.9"
 
+#planif = "1.0.0"
+planif = { git = "https://github.com/yakrider/planif.git", branch = "check_task" }
+
 
 
 
@@ -57,6 +60,7 @@ features = [
     "Win32_System_SystemServices",
     "Win32_System_ProcessStatus",
     "Win32_System_Threading",
+    "Win32_System_WindowsProgramming",
     "Win32_System_Diagnostics_Debug",
     "Win32_Graphics_Dwm",
     "Win32_Graphics_Gdi",
