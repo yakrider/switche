@@ -199,7 +199,7 @@ pub unsafe extern "system" fn kbd_hook_cb (code:c_int, w_param:WPARAM, l_param:L
         // the spawning in thread is VERY important, as that gives OS time to process msgs before we try to bring switche fgnd
         //send_dummy_key_release();
         spawn ( move || {
-            sleep(time::Duration::from_millis(20));
+            sleep(time::Duration::from_millis(50));
             // ^^ this allows krusty to get the tab-up out as well, so we dont get interspersed (and thereby lose our last-input status?)
             // (plus it avoids possible races w krusty hooks, or win report handling etc that can interefere w bringing us fgnd)
             send_dummy_key_release();
@@ -237,7 +237,7 @@ pub unsafe extern "system" fn kbd_hook_cb (code:c_int, w_param:WPARAM, l_param:L
             // .. esp while there's something else like krusty behind us in the hook chain (and therefore gets the last input?) etc
             // .. Not even a dummy-key release seems to work, has to be an alt press or rel .. presumably win32 has special case for alt-tab?
             spawn ( move || {
-                sleep(time::Duration::from_millis(20));
+                sleep(time::Duration::from_millis(50));
                 ss.proc_hot_key__scroll_end();
                 ss.in_alt_tab.clear();
             } );

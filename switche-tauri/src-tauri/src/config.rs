@@ -165,6 +165,10 @@ impl Config {
             let _ = std::process::Command::new("cmd").arg("/c").arg("start").arg(conf_path).spawn();
         }
     }
+    pub fn trigger_config_file_reset (&self) {
+        self.toml.write().unwrap() .replace (self.default.clone());
+        self.write_back_toml();
+    }
 
 
     pub fn load (&self) {
@@ -175,14 +179,9 @@ impl Config {
                         // successfully read and parsed a writeable non-empty toml, we'll use that
                         self.toml.write().unwrap().replace(toml);
                         return
-            }   }   }
-            // a writeable conf file existed, but it was empty, or we failed to read or parse it .. we'll load default and write back
-            self.toml.write().unwrap() .replace (self.default.clone());
-            self.write_back_toml();
-            return
-        }
-        // there's no writable conf location, we'll just load default
-        self.toml.write().unwrap() .replace (self.default.clone());
+        }   }   }  }
+        // there's no writeable location, or the file was empty, or we failed to read or parse it .. load default and write back
+        self.trigger_config_file_reset();
     }
 
 
@@ -218,37 +217,20 @@ impl Config {
             .and_then (|t| t.as_bool())
             .unwrap_or (self.default.get(flag_name).unwrap().as_bool().unwrap())
     }
+    # [ allow (dead_code) ]
     fn set_flag (&self, flag_name:&str, flag_val:bool) {
         if let Some(toml) = self.toml.write().unwrap().as_mut() {
             toml [flag_name] = toml_edit::value (flag_val);
             self.deferred_write_back_toml();
         }
     }
+    # [ allow (dead_code) ]
     fn toggle_flag (&self, flag_name:&str) -> bool {
-        // WARNING: this fn is not synchronized, it is NOT suitable for high-frequency or multi-threaded use
+        // WARNING: this fn is not synchronized, it is NOT suitable for unguarded high-freq or multi-threaded use
         let flag_val = self.check_flag(flag_name);
         self.set_flag(flag_name, flag_val.not());
         flag_val.not()
     }
-
-
-    // all the config flags we can check
-    pub fn check_flag__auto_hide_enabled          (&self) -> bool { self.check_flag ( "auto_hide_enabled"              ) }
-    pub fn check_flag__group_mode_enabled         (&self) -> bool { self.check_flag ( "group_mode_enabled"             ) }
-    pub fn check_flag__alt_tab_enabled            (&self) -> bool { self.check_flag ( "alt_tab_enabled"                ) }
-    pub fn check_flag__rbtn_scroll_enabled        (&self) -> bool { self.check_flag ( "mouse_right_btn_scroll_enabled" ) }
-    pub fn check_flag__start_as_admin             (&self) -> bool { self.check_flag ( "start_as_admin"                 ) }
-    pub fn check_flag__restore_window_dimensions  (&self) -> bool { self.check_flag ( "restore_window_dimensions"      ) }
-
-
-    // only a few flags are settable via code/UI .. (the rest can be changed directly in config file)
-    pub fn set_flag__auto_hide_enabled  (&self, auto_hide:bool) { self.set_flag ( "auto_hide_enabled",  auto_hide ) }
-    //pub fn set_flag__group_mode_enabled (&self, grp_mode:bool ) { self.set_flag ( "group_mode_enabled", grp_mode  ) }
-    // ^^ disabled since we only want to use the deferred update functionality for group-mode toggles
-
-
-    // for some few flags, toggling semantics makes sense (e.g from ui w/o having to know cur state)
-    pub fn toggle_flag__auto_hide_enabled (&self) -> bool { self.toggle_flag("auto_hide_enabled") }
 
 
     fn get_number (&self, key:&str) -> u32 {
@@ -258,14 +240,50 @@ impl Config {
             .unwrap_or (self.default.get(key).unwrap().as_integer().unwrap() as u32)
     }
 
+    fn get_string_array (&self, key:&str) -> Vec<String> {
+        self.toml.read().unwrap().as_ref()
+            .and_then (|t| t.get(key))
+            .and_then (|t| t.as_array())
+            .map (|t| t.iter() .map (|v| v.as_str().map(|s| s.to_string())) .flatten() .collect())
+            .unwrap_or ( self.default.get(key).unwrap().as_array().unwrap().iter() .map (|v| v.as_str().unwrap().to_string()) .collect() )
+    }
+
+
+
+    // all the config flags we can check
+    pub fn check_flag__auto_hide_enabled          (&self) -> bool { self.check_flag ( "auto_hide_enabled"              ) }
+    pub fn check_flag__group_mode_enabled         (&self) -> bool { self.check_flag ( "group_mode_enabled"             ) }
+    pub fn check_flag__alt_tab_enabled            (&self) -> bool { self.check_flag ( "alt_tab_enabled"                ) }
+    pub fn check_flag__rbtn_scroll_enabled        (&self) -> bool { self.check_flag ( "mouse_right_btn_scroll_enabled" ) }
+    pub fn check_flag__restore_window_dimensions  (&self) -> bool { self.check_flag ( "restore_window_dimensions"      ) }
+
+
+    // only a few flags are settable via code/UI .. (the rest can be changed directly in config file)
+    //pub fn set_flag__auto_hide_enabled  (&self, auto_hide:bool) { self.set_flag ( "auto_hide_enabled",  auto_hide ) }
+    //pub fn set_flag__group_mode_enabled (&self, grp_mode:bool ) { self.set_flag ( "group_mode_enabled", grp_mode  ) }
+    // ^^ disabled since we only want to use the deferred update functionality for these
+
+
+    pub fn deferred_update_conf__auto_hide_toggle (&self) -> Option<bool> {
+        if let Some(toml) = self.toml.write().unwrap().as_mut() { // serves as re-entrancy guard too
+            //let new_state = self.toggle_flag("auto_hide_enabled");
+            // ^^ cant do this as rust read/write guards (even in the same thread) are not recursion capable and will panic
+            if let Some(old_state) = toml["auto_hide_enabled"].as_bool() {
+                toml["auto_hide_enabled"] = toml_edit::value (old_state.not());
+                self.deferred_write_back_toml();
+                return Some(old_state.not())
+        }  }
+        None
+    }
+
     pub fn get_n_grp_mode_top_recents (&self) -> u32 {
         let ngmtr = self.get_number("number_of_top_recents_in_grouped_mode");
         if ngmtr > 2 { ngmtr } else { 2 }
         // ^^ we enforce a min of 2 as that is necessary to make the basic switch-to-next work (and for scroll across grp logic etc)
     }
     pub fn deferred_update_conf__grp_mode (&self, grp_mode:bool) {
-        if let Some(toml) = self.toml.write().unwrap().as_mut() {
-            toml["group_mode_is_default"] = toml_edit::value (grp_mode);
+        if let Some(toml) = self.toml.write().unwrap().as_mut() {   // serves as re-entrancy guard too
+            toml["group_mode_enabled"] = toml_edit::value (grp_mode);
             self.deferred_write_back_toml();
         }
     }
@@ -312,13 +330,6 @@ impl Config {
 
 
 
-    fn get_string_array (&self, key:&str) -> Vec<String> {
-        self.toml.read().unwrap().as_ref()
-            .and_then (|t| t.get(key))
-            .and_then (|t| t.as_array())
-            .map (|t| t.iter() .map (|v| v.as_str().map(|s| s.to_string())) .flatten() .collect())
-            .unwrap_or ( self.default.get(key).unwrap().as_array().unwrap().iter() .map (|v| v.as_str().unwrap().to_string()) .collect() )
-    }
 
     pub fn get_switche_invocation_hotkeys        (&self)  -> Vec<String> { self.get_string_array ("switche_invocation_hotkeys") }
     pub fn get_direct_last_window_switch_hotkeys (&self)  -> Vec<String> { self.get_string_array ("last_window_direct_switch_hotkeys") }

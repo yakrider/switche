@@ -55,6 +55,7 @@ pub struct WinDatEntry {
     pub exe_path_name     : Option<ExePathName>,
     pub uwp_icon_path     : Option<String>,
     pub should_exclude    : Option<bool>,
+    pub icons_requeried   : bool,
     //pub icon_cache_idx    : usize,        // <- we'd rather populate this at render-list emission time
 }
 
@@ -119,12 +120,18 @@ pub struct RenderList_Pl {
 # [ derive (Debug, Eq, PartialEq, Hash, Default, Clone, Serialize, Deserialize) ]
 /// Configs-payload contains the subset of configs that is sent to the front-end
 pub struct Configs_Pl {
+    is_elevated            : bool,
+    alt_tab_enabled        : bool,
+    rbtn_whl_enabled       : bool,
     auto_hide_enabled      : bool,
     group_mode_enabled     : bool,
     n_grp_mode_top_recents : u32,
 }
 impl Configs_Pl {
     pub fn assemble (ss:&SwitcheState) -> Configs_Pl { Configs_Pl {
+        is_elevated            : win_apis::check_cur_proc_elevated().is_some_and(|b| b==true),
+        alt_tab_enabled        : ss.conf.check_flag__alt_tab_enabled(),
+        rbtn_whl_enabled       : ss.conf.check_flag__rbtn_scroll_enabled(),
         auto_hide_enabled      : ss.conf.check_flag__auto_hide_enabled(),
         group_mode_enabled     : ss.conf.check_flag__group_mode_enabled(),
         n_grp_mode_top_recents : ss.conf.get_n_grp_mode_top_recents(),
@@ -293,7 +300,7 @@ impl SwitcheState {
     fn trigger_enum_windows_query_pending (&self, do_light:bool) {
         static trigger_pending : Lazy<Flag> = Lazy::new (|| {Flag::default()});
         // we'll first update the do_light flag whether we're ready to trigger or not
-        self.enum_do_light.0 .fetch_and (do_light, Ordering::Relaxed);
+        self.enum_do_light.0 .fetch_and (do_light, Ordering::SeqCst);
         // and if we're not already pending, we'll set it up
         if !trigger_pending.is_set() {
             trigger_pending.set();
@@ -338,18 +345,21 @@ impl SwitcheState {
             println! ("WARNING: got callbacks @cur-call-id {} from stale cb-id: {} .. ending it!!", latest_call_id, call_id.0);
             return BOOL (false as i32)
         };
-        let passed = ss.process_discovered_hwnd (hwnd.0, ss.enum_do_light.check());
+        let passed = if ss.enum_do_light.check() { ss.check_hwnd_renderable_pre_passed(hwnd.0) } else { ss.process_discovered_hwnd(hwnd.0) };
         if passed { ss.hwnds_acc .write().unwrap() .push (hwnd.0) }
         BOOL (true as i32)
     }
 
+    fn check_hwnd_renderable_pre_passed (&self, hwnd:Hwnd) -> bool {
+        if let Some(wde) = self.hwnd_map.read().unwrap().get(&hwnd) {
+            if wde.should_exclude == Some(false) {
+                return true
+        }  }
+        false
+    }
 
-    fn process_discovered_hwnd (&self, hwnd:Hwnd, do_light:bool) -> bool {
+    fn process_discovered_hwnd (&self, hwnd:Hwnd) -> bool {
         use win_apis::*;
-
-        if do_light { // for light enum calls, passing condition is to already have excl flag set Some(false) beforehand
-            return self.hwnd_map.read().unwrap() .get(&hwnd) .map (|wde| wde.should_exclude != Some(true)) .is_some();
-        }
 
         if self.render_lists_m.check_self_hwnd (hwnd) { return false }
 
@@ -429,6 +439,10 @@ impl SwitcheState {
         std::mem::swap (&mut *self.hwnds_ordered.write().unwrap(), &mut *self.hwnds_acc.write().unwrap());
         //println!("hwnds:{}, hacc:{}", self.hwnds_ordered.read().unwrap().len(), self.hwnds_acc.read().unwrap().len());
 
+        // we'll also check/trigger the top in rendering list for once-only backed-off icon requeries
+        let fgnd_hwnd_opt = self.hwnds_ordered.read().unwrap().iter().next().cloned(); // avoiding if-let to reduce lock scope
+        if let Some(hwnd) = fgnd_hwnd_opt { self.check_for_once_only_backed_off_icon_requeries(hwnd) }
+
         self.emit_render_lists_queued(false);    // we'll queue it as icon upates might tack on more in a bit
     }
 
@@ -461,10 +475,10 @@ impl SwitcheState {
         if self.conf.check_flag__auto_hide_enabled() {
             self.handle_req__switche_escape()
         } else {
-            //self.app_handle .read().unwrap() .as_ref() .map ( |ah| {
+            //self.app_handle .read().unwrap() .iter() .for_each ( |ah| {
             //    ah .windows() .get("main") .map (|w| w.set_always_on_top (false))
             //} );
-            // ^^ disabled because removeing always-on-top here seems to be too late for the window coming to fgnd ..
+            // ^^ disabled because removing always-on-top here seems to be too late for the window coming to fgnd ..
             // .. in theory we could then try to re-bring the 'fgnd' to fgnd, but eitherway, the topmost enablement here has minimal utility
             // .. esp since, w auto-hide-enabled all those issues are avoided anyway (by always keeping always-on-top)
         }
@@ -581,55 +595,101 @@ impl SwitcheState {
         }
     }
 
-    pub fn _stamp (&self) -> u128 { SystemTime::UNIX_EPOCH.elapsed().unwrap().as_millis() }
-
-    pub fn proc_win_report__title_changed (&self, hwnd:Hwnd) {
-        //println! ("@{:?} title-changed: {:?}", self._stamp(), hwnd);
-        // first off, if its for something not in renderlist, just ignore it
-        if self.hwnd_map.read().unwrap() .get(&hwnd) .filter (|wde| wde.should_exclude == Some(false)) .is_none() { return }
-        // things like this IDE seem to give piles of window-level title-change events just while typing, w/o title change .. so filter them
-        if let Some(wde) = self.hwnd_map.read().unwrap().get(&hwnd) {
-            if wde.win_text.as_ref() == Some(& win_apis::get_window_text(hwnd)) {
-                return
-        } }
-        // we'll fully update this hwnd, but only queue up a light enum-query (only ordering update, no data updates)
-        self.hwnd_map.read().unwrap() .get(&hwnd) .map (|wde| self.icons_m.mark_cached_icon_mapping_stale(wde));
-        // calling processing will get this hwnd updated, incl updating icons if marked stale (which happens off-thread)
-        if self.process_discovered_hwnd (hwnd, false) {
-            self.emit_render_lists_queued (true);
-        }
+    // some supoort fns
+    pub fn _stamp (&self) -> u128 {
+        SystemTime::UNIX_EPOCH.elapsed().unwrap().as_millis()
     }
-
-    pub fn check_owner_chain_in_render_list (&self, hwnd:Hwnd) -> bool {
-        if self.process_discovered_hwnd(hwnd, true) { return true }
+    # [ allow (dead_code) ]
+    fn check_owner_chain_in_render_list (&self, hwnd:Hwnd) -> bool {
+        if self.check_hwnd_renderable_pre_passed(hwnd) { return true }
         let owner_hwnd = win_apis::get_window_owner(hwnd);
         //println! ("owner-chain: {:?} -> {:?}", hwnd, owner_hwnd);
         if owner_hwnd == 0 || owner_hwnd == hwnd { return false }
         self.check_owner_chain_in_render_list (owner_hwnd)
     }
-    pub fn check_parent_chain_in_render_list (&self, hwnd:Hwnd) -> bool {
-        if self.process_discovered_hwnd(hwnd, true) { return true }
+    # [ allow (dead_code) ]
+    fn check_parent_chain_in_render_list (&self, hwnd:Hwnd) -> bool {
+        if self.check_hwnd_renderable_pre_passed(hwnd) { return true }
         let parent_hwnd = win_apis::get_window_parent(hwnd);
         //println! ("parent-chain: {:?} -> {:?}", hwnd, owner_hwnd);
         if parent_hwnd == 0 || parent_hwnd == hwnd { return false }
         self.check_parent_chain_in_render_list (parent_hwnd)
     }
-    pub fn proc_win_report__fgnd_hwnd (&self, hwnd:Hwnd) {
-        println! ("@{:?} fgnd: {:?}", self._stamp(), hwnd);
-        // we'll set its icon to be refreshed, then process it, and queue up a 'light' (ordering only) enum-windows call
-        // plus, we'll update self-fgnd state if either this is self hwnd, or if its a valid renderable hwnd coming to fgnd
-        self.hwnd_map.read().unwrap() .get(&hwnd) .map (|wde| self.icons_m.mark_cached_icon_mapping_stale(wde));
-        if self.render_lists_m.check_self_hwnd(hwnd) {
-            self.handle_event__switche_fgnd();
-        //} else if self.process_discovered_hwnd (hwnd, false) {
-        //} else if self.process_discovered_hwnd (hwnd, false) || self.check_owner_chain_in_render_list(hwnd) {
-        //} else if self.process_discovered_hwnd (hwnd, false) || self.check_parent_chain_in_render_list(hwnd) {
-        } else {
-            // ^^ we want to catch all z-order changes, it seems only possible if we check (light) everytime a fgnd report comes in
-            self.trigger_enum_windows_query_pending(true);
-            if self.is_fgnd.is_set() { self.handle_event__switche_fgnd_lost() }
+    fn check_for_once_only_backed_off_icon_requeries(&self, hwnd:Hwnd) {
+        // some freshly created windows like chrome apps seem to take forever to put up real icons instead of just placeholders ..
+        // .. to catch those, when some hwnd is seen to be fgnd/show for first time ever, we'll set up backed-off icon requeries for it
+
+        // but first, if its already queried, we return
+        if self.hwnd_map.read().unwrap() .get(&hwnd) .filter (|wde| wde.icons_requeried) .is_some() { return }
+
+        // else we mark the flag before setting up requeries
+        if let Some(wde) = self.hwnd_map.write().unwrap() .get_mut(&hwnd) {
+            if wde.should_exclude == Some(true) { return }
+            wde.icons_requeried = true;
+        } else { return }
+
+        // and if all checks out, we can set off the once-only backed-off requeries for this renderable hwnd
+        println!("## triggering backed-off icon requeries for {:?}", hwnd);
+        let ss = self.clone();
+        spawn ( move || {
+            for i in 1..15 {
+                // quadratic backoff seems reasonable .. 6 backoffs accumulates to x100, 11 to x500, 15 to 1240
+                sleep (Duration::from_millis (100 * i*i));   // w 100ms multiplier, 15th backoff happens by around 2 mins
+                ss.hwnd_map.read().unwrap().get(&hwnd) .map (|wde| ss.icons_m.queue_icon_refresh(wde));
+            }
+        } );
+    }
+
+    pub fn proc_win_report__title_changed (&self, hwnd:Hwnd) {
+        //println! ("@{:?} title-changed: {:?}", self._stamp(), hwnd);
+
+        let hmap = self.hwnd_map.read().unwrap();   // acquired read lock
+        let wdeOpt = hmap.get(&hwnd);
+
+        // if its not even in our map, or its not excl-check passed, we can ignore it
+        if wdeOpt .filter (|wde| wde.should_exclude == Some(false)) .is_none() { return }
+
+        // somethings like IDE seem to give many window-level title-changes just from typing, w/o title change .. we'll filter those
+        if wdeOpt .filter (|wde| wde.win_text.as_ref() == Some(& win_apis::get_window_text(hwnd))) .is_some() { return }
+
+        // so it looks legit .. we'll fully update this hwnd, and queue up an ordering-only enum-query ..
+        // .. but first, we'll mark icon stale so the icon gets refreshed (off-thread) upon reprocessing
+        wdeOpt .iter() .for_each (|wde| self.icons_m.mark_cached_icon_mapping_stale(wde));
+
+        drop(hmap);   // release lock before lengthier calls
+
+        if self.process_discovered_hwnd (hwnd) {    // this processing will update hwnd data, and refresh stale-marked icon
+            self.emit_render_lists_queued (true);
         }
     }
+
+
+    pub fn proc_win_report__fgnd_hwnd (&self, hwnd:Hwnd) {
+        println! ("@{:?} fgnd: {:?}", self._stamp(), hwnd);
+
+        // first, we'll update self-fgnd state if either this is self hwnd, or if its a valid renderable hwnd coming to fgnd
+        if self.render_lists_m.check_self_hwnd(hwnd) {
+            self.handle_event__switche_fgnd();
+            return
+        }
+        // for everything that came to fgnd, we definitely want to reprocess it first (so its state, excl, icons can be updated)
+        // but first we'll set its icon to be refreshed upon reprocessing
+        self.hwnd_map.read().unwrap() .get(&hwnd) .map (|wde| self.icons_m.mark_cached_icon_mapping_stale(wde));
+        let render_check_passed = self.process_discovered_hwnd(hwnd);
+
+        // and if its renderable, we'll also check/set this for first-timer icon requeries
+        if render_check_passed { self.check_for_once_only_backed_off_icon_requeries(hwnd) }
+
+        // now, we'd normally only requery for ordering if this was render-check passed ..
+        // .. but windows often reorders the parent window if its child or owned window etc etc comes to fgnd ..
+        // .. and checking for owner/parent directly, didnt seem to catch all such cases,
+        // .. so we'll just requery light everytime .. (and profiling shows its pretty low cost anyway)
+        self.trigger_enum_windows_query_pending(true);
+
+        // we'll do the fgnd-lost handling at last .. it might require FE messaging etc
+        if self.is_fgnd.is_set() { self.handle_event__switche_fgnd_lost() }
+    }
+
     pub fn proc_win_report__minimize_end (&self, hwnd:Hwnd) {
         println! ("@{:?} minimize-ended: {:?}", self._stamp(), hwnd);
         // ehh, we can just treat this as a fgnd report (other than the printout above for identification)
@@ -639,7 +699,7 @@ impl SwitcheState {
     pub fn proc_win_report__minimized (&self, hwnd:Hwnd) {
         println! ("@{:?} minimized: {:?}", self._stamp(), hwnd);
         // we only really want to query/update z-order here if this was in our windows list
-        if self.process_discovered_hwnd (hwnd, false) {
+        if self.check_hwnd_renderable_pre_passed (hwnd) {
             self.trigger_enum_windows_query_pending(true);
         }
     }
@@ -654,24 +714,13 @@ impl SwitcheState {
             self.handle_event__switche_fgnd();
             return
         }
-        fn setup_backed_off_icon_requeries (hwnd:Hwnd, ss:SwitcheState) {
-            println!("## triggering backed-off icon requeries for {:?}", hwnd);
-            // for first created/shown/uncloaked valid windows, we'll set up exponentially backing off icon requeries ..
-            // (.. since things like chrome apps seem to take many seconds at times to put up real icons instead of just placeholders)
-            spawn ( move || {
-                for i in 1..10 {
-                    sleep (Duration::from_millis (200 * i*i));      // quadratic backoff .. 6 backoffs accumulates to x100, 11 to x500
-                    ss.hwnd_map.read().unwrap().get(&hwnd) .map (|wde| ss.icons_m.queue_icon_refresh(wde));
-                }
-            } );
-        }
-        // now before we reprocess, if this was in our list, we'll prime it to have icon refreshed upon processing
+        // before we reprocess, if this was in our list, we'll prime it to have icon refreshed upon processing
         self.hwnd_map.read().unwrap() .get(&hwnd) .map (|wde| self.icons_m.mark_cached_icon_mapping_stale(wde));
 
-        // now we can do the initial processing attempt and set up the requeries
-        if self.process_discovered_hwnd(hwnd, false) {
+        // then do the initial processing, and if that returns renderable-passed, set up ordering-only enum-query
+        if self.process_discovered_hwnd(hwnd) {
+            self.check_for_once_only_backed_off_icon_requeries(hwnd);
             self.trigger_enum_windows_query_pending(true);
-            setup_backed_off_icon_requeries (hwnd, self.clone());
         }
     }
 
@@ -687,7 +736,7 @@ impl SwitcheState {
         // if we werent even showing this object, we're done, else queue up a enum-trigger
         if self.hwnd_map.read().unwrap() .get(&hwnd) .filter (|wde| wde.should_exclude == Some(false)) .is_some() {
             // its in our maps, so lets process it, but if processing now rejects it, we should remove it from map
-            if !self.process_discovered_hwnd (hwnd, false) { self.hwnd_map.write().unwrap().remove(&hwnd); }
+            if !self.process_discovered_hwnd (hwnd) { self.hwnd_map.write().unwrap().remove(&hwnd); }
             // and a 'light' enum call should take care of ordering changes (whether it is now passing or not)
             self.trigger_enum_windows_query_pending(true);
         } // else the destoryed hwnd wasnt even in our list .. we can ignore it
@@ -742,7 +791,7 @@ impl SwitcheState {
 
     fn self_window_activate (&self) {
         self.is_dismissed.clear();
-        self.app_handle .read().unwrap() .as_ref() .map ( |ah| {
+        self.app_handle .read().unwrap() .iter() .for_each ( |ah| {
             ah .windows() .get("main") .map (|w| {
                 let (_, _) = ( w.show(), w.set_focus() );
                 //let (_, _, _) = ( w.show(), w.set_focus(), w.set_always_on_top(true) );
@@ -753,8 +802,8 @@ impl SwitcheState {
     }
     fn self_window_hide (&self) {
         self.is_dismissed.set();
-        self.app_handle .read().unwrap() .as_ref() .map ( |ah| {
-            ah .windows() .get("main") .map (|w| w.hide() )
+        self.app_handle .read().unwrap() .iter() .for_each ( |ah| {
+            ah .windows() .get("main") .map (|w| w.hide() );
         } );
     }
 
@@ -769,8 +818,8 @@ impl SwitcheState {
     fn handle_req__switche_dismiss (&self) {
         // this is called after some window-activation
         self.self_window_hide();
-        self.trigger_enum_windows_query_immdt(true);
-        // ^^ we'll do an immdt light query so we'll have the latest ordering when we come back
+        self.trigger_enum_windows_query_pending(true);
+        // ^^ we'll do a light query so we'll have the latest ordering when we come back
     }
     fn handle_req__switche_escape (&self) {
         // this is called specifically upon escape from switche
@@ -786,6 +835,15 @@ impl SwitcheState {
     fn handle_req__self_auto_resize (&self) {
         crate::tauri::auto_setup_self_window (self.render_lists_m.self_hwnd.load(Ordering::Relaxed));
     }
+    fn handle_req__toggle_auto_hide (&self) {
+        //let auto_hide_state = self.conf.toggle_flag__auto_hide_enabled();
+        if let Some(auto_hide_state) = self.conf.deferred_update_conf__auto_hide_toggle() {
+            self.emit_configs();
+            self.app_handle .read().unwrap() .iter() .for_each ( |ah| {
+                ah .windows() .get("main") .map (|w| w.set_always_on_top (auto_hide_state));
+            } )
+    }  }
+
     fn handle_req__second_recent_window_activate (&self) {
         self.handle_req__nth_recent_window_activate(1);
     }
@@ -832,11 +890,15 @@ impl SwitcheState {
             "fe_req_switche_escape"       => { self.handle_req__switche_escape()   }
             "fe_req_switche_quit"         => { self.handle_req__switche_quit()     }
             "fe_req_self_auto_resize"     => { self.handle_req__self_auto_resize() }
-            "fe_req_debug_print"          => { self.handle_req__debug_print()      }
 
-            "fe_req_edit_config"          => { self.conf.trigger_config_file_edit() }
             "fe_req_grp_mode_enable"      => { self.conf.deferred_update_conf__grp_mode (true)  }
             "fe_req_grp_mode_disable"     => { self.conf.deferred_update_conf__grp_mode (false) }
+            "fe_req_auto_hide_toggle"     => { self.handle_req__toggle_auto_hide() }
+
+            "fe_req_edit_config"          => { self.conf.trigger_config_file_edit() }
+            "fe_req_reset_config"         => { self.conf.trigger_config_file_reset(); self.handle_req__data_load() }
+
+            "fe_req_debug_print"          => { self.handle_req__debug_print() }
 
             _ => { println! ("unrecognized frontend cmd: {}", r.req) }
         }
@@ -1054,7 +1116,9 @@ impl RenderReadyListsManager {
 
     pub fn calc_excl_flag (&self, wde:&WinDatEntry) -> bool {
         //wde.is_vis == Some(false) ||  wde.is_uncloaked == Some(false) ||    // already covered during enum-filtering
-        self.check_self_hwnd(wde.hwnd) || wde.win_text.is_none() ||
+        // self.check_self_hwnd(wde.hwnd) || wde.win_text.is_none() ||
+        // ^^ no good reason to exclude legit windows w/o titles
+        self.check_self_hwnd(wde.hwnd) ||
             wde.exe_path_name.as_ref() .filter (|p| !p.full_path.is_empty()) .is_none() ||
             wde.exe_path_name.as_ref() .filter (|p| !self.exes_excl_check(&p.name)) .is_none()
     }
@@ -1102,7 +1166,7 @@ impl RenderReadyListsManager {
     // --- render lists calculations ---
 
     fn grl_cmp_ext (&self, po:&Option<&String> ) -> Option<f32> {
-        po.as_ref() .map (|&p| self.grp_sorting_map.read().unwrap().get(p).copied()) .flatten() .map (|gse| gse.mean_perc_idx)
+        po.as_ref() .map (|&p| self.grp_sorting_map.read().unwrap().get(p) .as_ref() .map (|gse| gse.mean_perc_idx) ) .flatten()
     }
 
     fn recalc_render_ready_lists (&self, ss:&SwitcheState) -> (Vec<RenderListEntry>, Vec<Vec<RenderListEntry>>) {
@@ -1129,9 +1193,13 @@ impl RenderReadyListsManager {
                 .map (|(fp,rlepv)| (*fp, rlepv.iter().map(|&(_,rle)| *rle).collect::<Vec<RenderListEntry>>()))
                 .collect::<Vec<(&Option<&String>,Vec<RenderListEntry>)>>()
         };
-        grpd_render_list_builder .sort_by ( |&(pa,_), &(pb,_)| {
-            self.grl_cmp_ext (pa) .partial_cmp (&self.grl_cmp_ext(pb)) .unwrap()
-            // note ^^ that unwrap is ok because it would fail only for NaN
+        grpd_render_list_builder .sort_unstable_by ( |&(pa,_), &(pb,_)| {
+            // we'll break ties w exe path so there's no instability in ui ordering when two groups have equal perc_idx
+            match  self.grl_cmp_ext (pa) .partial_cmp (&self.grl_cmp_ext(pb)) .unwrap() {
+                // note ^^ that unwrap is ok because it would fail only for NaN
+                std::cmp::Ordering::Equal => pa.cmp(pb),
+                ord => ord
+            }
         } );
         let grpd_render_list = grpd_render_list_builder .into_iter() .map (|(_,rlev)| rlev) .collect::<Vec<Vec<RenderListEntry>>>();
         //println!("render-ready-list recalc -- rl:{:?}", filt_rl.len() ); println!();

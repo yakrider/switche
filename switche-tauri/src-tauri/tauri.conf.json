@@ -39,8 +39,8 @@
       "active": true,
       "icon": ["switche.ico"],
       "identifier": "com.yakrider.switche",
-      "shortDescription": "Searchable Task Switcher",
-      "longDescription": "Searchable Task Switcher",
+      "shortDescription": "Switche",
+      "longDescription": "Switche - Searchable Task Switcher",
       "resources": [],
       "targets": "nsis"
     },

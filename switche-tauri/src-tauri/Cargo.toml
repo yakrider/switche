@@ -2,7 +2,7 @@
 name = "switche"
 version = "2.2.7"
 # ^^ remember to also update this in tauri.conf.js
-description = "Searchable Window Switcher"
+description = "Switche - Searchable Task Switcher"
 authors = ["yakrider"]
 keywords = ["switcher", "alt-tab", "task-switcher", "window-switcher" ]
 license = "MIT"

@@ -17,11 +17,9 @@ pub fn run_switche_tauri (ss:&SwitcheState) {
             .add_item ( CustomMenuItem::new ( "auto_start_admin",  "Auto-Start as Admin" ) )
             .add_native_item ( SystemTrayMenuItem::Separator )
 
-            .add_item ( CustomMenuItem::new ( "auto_hide",  "Auto-Hide" ) )
-            .add_native_item ( SystemTrayMenuItem::Separator )
-
             // the special entry to trigger opening the config file for editing
-            .add_item ( CustomMenuItem::new ( "edit_conf",  "Edit Config" ) )
+            .add_item ( CustomMenuItem::new ( "edit_conf",   "Edit Config"  ) )
+            .add_item ( CustomMenuItem::new ( "reset_conf",  "Reset Config" ) )
             .add_native_item ( SystemTrayMenuItem::Separator )
 
             // then the actions
@@ -52,10 +50,10 @@ pub fn run_switche_tauri (ss:&SwitcheState) {
         .expect ("error while building tauri application")
     };
 
-    // lets sync up the menu selection states w whats in switche-state
-    let auto_hide_enabled = ss.conf.check_flag__auto_hide_enabled();
-    app .windows() .get("main") .map (|w| w.set_always_on_top (auto_hide_enabled));
-    app .tray_handle() .try_get_item("auto_hide") .map (|e| e.set_selected (auto_hide_enabled) );
+    // we'll setup the switche window always-on-top behavior based on configs
+    app .windows() .get("main") .map (|w|
+        w.set_always_on_top (ss.conf.check_flag__auto_hide_enabled())
+    );
 
     // we'll also check if we're admin, or the corresponding auto-start tasks are active and sync our tray flag accordingly
     autostart::update_tray_auto_start_admin_flags (&app.app_handle());
@@ -132,13 +130,6 @@ pub fn tauri_run_events_handler (ss:&SwitcheState, ah:&AppHandle<Wry>, event:Run
 
 
 
-fn proc_tray_event__toggle_auto_hide (ss:&SwitcheState, ah:&AppHandle<Wry>) {
-    let auto_hide_state = ss.conf.toggle_flag__auto_hide_enabled();
-    ss .emit_configs();
-    ah .tray_handle() .try_get_item("auto-hide") .map (|e| e.set_selected (auto_hide_state) );
-    ah .windows() .get("main") .map (|w| w.set_always_on_top (auto_hide_state));
-}
-
 fn proc_tray_event__show (ss:&SwitcheState) {
     ss.checked_self_activate();   // also updates the is-dismissed etc flags
 }
@@ -152,8 +143,8 @@ fn proc_tray_event__menu_click (ss:&SwitcheState, ah:&AppHandle<Wry>, menu_id:St
         "auto_start"       =>  { autostart::proc_tray_event__toggle_switche_autostart (false, ah) }
         "auto_start_admin" =>  { autostart::proc_tray_event__toggle_switche_autostart (true,  ah) }
 
-        "auto_hide" =>  { proc_tray_event__toggle_auto_hide (ss, ah) }
-        "edit_conf" =>  { ss.conf.trigger_config_file_edit() }
+        "edit_conf"  =>  { ss.conf.trigger_config_file_edit() }
+        "reset_conf" =>  { ss.conf.trigger_config_file_reset() }
 
         "reload"    =>  { proc_tray_event__reload(ss) }
         "restart"   =>  { ah.restart() }

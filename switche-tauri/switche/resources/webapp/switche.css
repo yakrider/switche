@@ -12,14 +12,25 @@
 :root {
   --background-color: #202020;
   --ribbon-color: #bd9d2c;
+  --ribbon-color-dim: #bd9d2ce0;
   --curElem-color: #dbe4d7;
   --primary-color: #e0d180;
   --secondary-color: #a8c77d;
   --searched-color: #7aff00;
   --exe-color: #bbc18f;
   --yspan-color: #5c9d4d;
-  --dim-color: grey;
+  --dim-color: #808080;
+  --menu-hover-color: #404040;
+  --box-shadow-color: #61450fe3;
+  --tooltip-color: #d0c0a0;
+  --tooltip-bg-color: #404040;
+  --alt-tab-color: var(--ribbon-color);
+  --rbtn-whl-color: var(--ribbon-color);
+  --elev-color: #00b000;
   --armed-color: #ff8080;
+  --warn-color: #d050f0;
+  --help-color: #60d060;
+  --help-text-color: #d0c0a0;
 }
 
 body {
@@ -35,6 +46,7 @@ body {
    padding: 0px 4px 0px 4px;
 }
 
+
 #top-ribbon {
   color: var(--ribbon-color);
   font-family: system-ui;
@@ -47,9 +59,11 @@ body {
 #top-ribbon a { color: var(--ribbon-color); }
 
 
+
 .menubox {
   display: inline-block;
   position: relative;
+  width: 32px;
 }
 .menulink { }
 .menulink:before {
@@ -61,41 +75,114 @@ body {
   display: none;
   position: absolute;
   background-color: var(--background-color);
-  min-width: 136px;
-  box-shadow: 1px 2px 8px 0px #AC7C1C5C;
+  width: 150px;
+  box-shadow: 2px 2px 8px 2px var(--box-shadow-color);
   z-index: 1;
   margin-left: -1em;
   margin-top: 4px;
   padding-bottom: 10px;
 }
-.dropdown a {
+.dropdown.show { display: block; }
+.menuItem {
   color: var(--ribbon-color);
   padding: 5px 10px 5px 15px;
   font-size: small;
   text-decoration: none;
-  display: block;
+  display: flex;
+  align-items: baseline;
 }
-.dropdown a:hover { background-color: #404040; }
-.dropdown.show { display: block; }
+.menuItem:hover { background-color: var(--menu-hover-color); }
+.menuHotkey {
+   float: right;
+   font-size: smaller;
+   margin-left: auto;
+   color: var(--ribbon-color-dim);
+}
 
 
-.armedIndicator {
-   color: var(--dim-color);
+
+
+.indicator {
+  display: inline-block;
+  position: relative;
+  width: 40px;
+  text-align: center;
 }
-.armedIndicator.armed {
-   color: var(--armed-color);
+.indicator.left { }
+.indicator.right { text-align: right; }
+
+.tooltip {
+   display: none;
+   position: absolute;
+   font: status-bar;
+   color: var(--tooltip-color);
+   background-color: var(--tooltip-bg-color);
+   box-shadow: 2px 2px 4px 1px var(--box-shadow-color);
+   z-index: 1;
+   padding: 10px 12px 10px 12px;
+   min-width: max-content;
 }
+.tooltip.left  { left:  30px; }
+.tooltip.right { right: 10px; }
+.tooltip.show { display: block; }
+.tooltip span { }
+
+.altTabIndicator { color: var(--dim-color); }
+.altTabIndicator.on { color: var(--alt-tab-color); }
+.altTabIndicator:before {
+   content: "Ⓐ"; font-size: 14px;
+}
+
+.rbtnWheelIndicator { color: var(--dim-color); }
+.rbtnWheelIndicator.on { color: var(--rbtn-whl-color); }
+.rbtnWheelIndicator:before {
+   content: "Ⓜ"; font-size: 14px;
+}
+
+.elevIndicator { color: var(--dim-color); }
+.elevIndicator.on { color: var(--elev-color); }
+.elevIndicator:before {
+   content: "⚿"; font-size: 16px;
+}
+
+.armedIndicator { color: var(--dim-color); }
+.armedIndicator.on { color: var(--armed-color); }
 .armedIndicator:before {
-   content: "Ⓐ";
-   font-weight: bold;
-   font-size: 14px;
+   content: "Ⓡ"; font-size: 16px; font-weight: bold;
 }
 
-.dragSpan {
-  -webkit-app-region: drag;
-  cursor: move;   /* doesnt show up due to -webkit-app-region bug in win-os, at least in this electron version */
-  width: 110px;
+.dragIndicator {
+   color: var(--drag-color);
+   -webkit-app-region: drag; /*cursor: move;*/
+   /* webkit drag doesnt work in windows webview */
 }
+.dragIndicator:before {
+   content: "※"; font-size: 18px;
+}
+
+.countSpan {
+   display: inline-block;
+   width: 40px;
+   text-align: center;
+}
+
+.warnIndicator { color: var(--dim-color); }
+.warnIndicator.on { color: var(--warn-color); }
+.warnIndicator:before {
+   content: "⚠"; font-size: 18px;
+}
+
+.helpIndicator { color: var(--help-color); }
+.helpIndicator.on { color: var(--help-color); }
+.helpIndicator:before {
+   content: "⍰"; font-size: 14px; vertical-align: top;
+}
+.helpText {
+   font: status-bar;
+   color: var(--help-text-color);
+   text-align: left;
+}
+
 
 
 #searchBox {
@@ -103,17 +190,22 @@ body {
   color: var(--searched-color);
   font-size: large;
   border: none;
-  min-width: 400px;
+  min-width: 200px;
+  padding-left: 20px;
   flex-grow: 1;
 }
 
 .searchTxt { color: var(--searched-color); }
 /*.elemBox.curElem .searchTxt { color: #9fef02; }*/
 
+
+
 .modeHeader    { /*color: var(--mode-header-color);*/ }
 .modeHeader.r  { color: var(--primary-color); }
 .modeHeader.g  { color: var(--primary-color); }
 .modeHeader.gr { color: var(--secondary-color); }
+
+
 
 #elemsDivs { height: calc(100vh - 60px); overflow-y: auto; }
 #elemsDivs::-webkit-scrollbar { width: 4px; background: #540; }

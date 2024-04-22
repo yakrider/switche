@@ -23,6 +23,8 @@ number_of_top_recents_in_grouped_mode = 9
 
 # Enable switche to replace windows task-switcher upon alt-tab press .. default is true
 # Note this this will install a lower-level keyboard hook to intercept alt-tab presses
+# Also note that when not running elevated/as-admin, hooks can miss key events while elevated windows are foreground ..
+# .. this can lead to unexpected behavior. As such, it is recommended to run switche elevated/as-admin if this is enabled
 alt_tab_enabled = true
 
 # Enable invocation of switche upon mouse wheel scroll while holding right mouse button down .. default is true
@@ -41,6 +43,7 @@ window_dimensions.location = { x = 0, y = 0 }
 
 # Size of switche window on startup in pixels .. this will be updated when/if the window is resized
 # Setting these to 0 will have switche auto-calculate window size/placement to place it about middle of screen .. defaault is (0, 0)
+# (Note also that double-clicking on the drag-spot around the count in the top-ribbon will also auto-size the window on demand)r
 window_dimensions.size = { width = 0, height = 0 }
 
 

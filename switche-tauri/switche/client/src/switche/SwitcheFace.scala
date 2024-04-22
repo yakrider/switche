@@ -1,24 +1,14 @@
 package switche
 
+import scala.collection.{IndexedSeq, Map, mutable}
+import scala.util.Try
+
+import scala.scalajs.js
 import org.scalajs.dom
-import org.scalajs.dom.{Element, EventTarget, HTMLElement, KeyboardEvent, MouseEvent, UIEvent, WheelEvent, window, document => doc}
+import org.scalajs.dom.{Element, KeyboardEvent, MouseEvent, WheelEvent, window, document => doc}
 import org.scalajs.dom.html.{Div, Span}
 import scalatags.JsDom.all._
 
-import scala.collection.{IndexedSeq, Map, mutable}
-import scala.scalajs.js
-import scala.scalajs.js.Dynamic.{global => g}
-import scala.util.Try
-
-
-object SwitcheFaceConfig {
-   //val groupedModeTopRecentsCount = 9      // moved to configs.n_grp_mode_top_recents
-   val hoverLockTime = 200 // ms
-   val minScrollSpacingMs = 15d // ms
-   def nbsp(n:Int=1) = raw((1 to n).map(i=>"&nbsp;").mkString)
-   def clearElem (e:dom.Element): Unit = { e.innerHTML = ""}
-   def clearedElem (e:dom.Element) = { e.innerHTML = ""; e }
-}
 
 
 // some type defs for the various modes and states for various ui sections
@@ -55,13 +45,26 @@ object StateTs {
 }
 
 
+
+object SwitcheFaceConfig {
+   //val groupedModeTopRecentsCount = 9      // moved to configs.n_grp_mode_top_recents
+   val hoverLockTime = 200 // ms
+   val minScrollSpacingMs = 15d // ms
+   def nbsp(n:Int=1) = raw((1 to n).map(i=>"&nbsp;").mkString)
+   def clearElem (e:dom.Element): Unit = { e.innerHTML = ""}
+   def clearedElem (e:dom.Element) = { e.innerHTML = ""; e }
+}
+
+
+
 object SwitcheFacePage {
-   import SwitchePageState._
    import Switche._
+   import SwitchePageState._
+   import ElemsDisplay._
 
    def getShellPage () = {
       setPageEventHandlers()
-      div ( id:="scala-js-root-div", RibbonDisplay.getTopRibbonDiv(), ElemsDisplay.getElemsDiv ) .render
+      div ( id:="scala-js-root-div", RibbonDisplay.topRibbon, ElemsDisplay.elemsDiv ) .render
    }
    // NOTE that the intention now is to always call this via RenderSpacer (spaced or immdt) instead of directly, so the render time can be recorded
    def updatePageElems () : Unit = { //println(s"rendering @${js.Date.now()}")
@@ -82,8 +85,8 @@ object SwitcheFacePage {
       doc.addEventListener ("contextmenu", procMouse_ContextMenu _)
       doc.addEventListener ("auxclick",    procMouse_AuxClick _)
       doc.addEventListener ("mouseup",     procMouse_Up _)
-      //doc.addEventListener ("wheel",       procMouse_Wheel _, )    // see below
-      doc.addEventListener ("keyup",       capturePhaseKeyUpHandler _, useCapture=true)
+      //doc.addEventListener ("wheel",       procMouse_Wheel _, )        // see below
+      doc.addEventListener ("keyup",       capturePhaseKeyUpHandler _,   useCapture=true)
       doc.addEventListener ("keydown",     capturePhaseKeyDownHandler _, useCapture=true)
       //doc.addEventListener ("keypress",    capturePhaseKeyPressHandler _, useCapture=true)
       //dom.document.addEventListener ("mouseenter", procMouse_Enter _, useCapture=true) // done from element for efficiency
@@ -95,7 +98,7 @@ object SwitcheFacePage {
    }
    
    def procMouse_Click (e:MouseEvent) = { //println ("mouse lbtn click!")
-      triggerHoverLockTimeout(); scrollEnd_disarm(); RibbonDisplay.closeMenuDropdown()
+      triggerHoverLockTimeout(); scrollEnd_disarm(); RibbonDisplay.closeDropdowns()
       e.preventDefault(); e.stopPropagation()
       //e.target.closest(".elemBox").foreach(_=>handleReq_CurElemActivation())
       Some(e.target) .filter(_.isInstanceOf[Element]) .flatMap { e =>
@@ -164,7 +167,7 @@ object SwitcheFacePage {
    def capturePhaseKeyUpHandler (e:KeyboardEvent) = {    printKeyDebugInfo(e,"up")
       // note: escape can cause app hide, and when doing that, we dont want that to leak outside app, hence on keyup
       if (inSearchState) { // && RibbonDisplay.searchBox.value.nonEmpty) {
-         handle_SearchModeKeyup(e)   // let it recalc matches if necessary etc
+         SearchDisplay.handle_SearchModeKeyup(e)   // let it recalc matches if necessary etc
       } else { // not in search state
          if (e.key == "Escape")  handleReq_SwitcheEscape()
       }
@@ -172,8 +175,6 @@ object SwitcheFacePage {
    
    //val modifierKeys = Set ("Meta","Alt","Control","Shift")
    val passthroughKeys = Set ("MediaPlayPause","MediaTrackNext","MediaTrackPrevious","AudioVolumeUp","AudioVolumeDown")
-   val searchBoxCtrlKeys = Set ("ArrowLeft","ArrowRight","Delete","Backspace", "a", "x", "c", "v", "z", "y")
-   val searchBoxExclKeys = Set ("Meta","Alt","Control","Shift", "AudioVolumeUp","AudioVolumeDown")
    
    
    def capturePhaseKeyDownHandler (e:KeyboardEvent) = {    printKeyDebugInfo(e,"down")
@@ -181,12 +182,8 @@ object SwitcheFacePage {
       var (doStopProp, preventDefault) = (true, false)
       // ^^ note that we're setting default to stop further propagation (but preventing default is uncommon)
       
-      // we'll call this whenever we want to setup selective propagation to searchbox
-      @inline def setupSearchbox (doPassthrough:Boolean) = {
-         doStopProp = searchBoxExclKeys.contains(e.key) || (!doPassthrough && !inSearchState)
-         if (!searchBoxExclKeys.contains(e.key)) { inSearchState = true; activateSearchBox() }
-      }
-      // and at the end, this can setup event prop and default based on flags we'll have updated
+
+      // at the end, this can setup event prop and default based on flags we'll have updated
       @inline def eventPassthroughGuarded() = { //println(s"doStopProp=$doStopProp")
          if (preventDefault) { e.preventDefault() }
          if (!passthroughKeys.contains(e.key) && doStopProp) { e.stopPropagation(); e.preventDefault(); }
@@ -228,7 +225,7 @@ object SwitcheFacePage {
          // space key .. usually for cur elem activation .. but in search state, it'll pass through to searchbox
          // note that the alt versions are for reference, as OS never lets those through (and we do the eqv via LL-hook callbacks)
          //   (arm,    srch,   alt,   ctrl,  key)
-         case (true,   _,      true,  _,     " ")  => scrollEnd_disarm()               // alt-space disarms if scroll-armed
+         case (true,   _,      _,     _,     " ")  => scrollEnd_disarm()               // space disarms if scroll-armed
          case (false,  _,      true,  _,     " ")  => handleReq_CurElemActivation()    // alt-space activates if NOT scroll-armed
          case (_,      false,  _,     _,     " ")  => handleReq_CurElemActivation()    // activation in non-search state
          case (_,      true,   _,     true,  " ")  => handleReq_CurElemActivation()    // activation in search-state w/ ctrl key
@@ -236,6 +233,9 @@ object SwitcheFacePage {
          
          // alt-f4 .. we'll directly exit app ..  (although just doing doStopProp = false would also work indirectly)
          case (_, _, true, _, "F4")   =>  handleReq_SwitcheQuit()
+         
+         // alt-ctrl-a .. toggle auto-hide mode .. (for easy switch during dev, else via configs is sufficient)
+         case (_, _, true, true, "a") =>  SendMsgToBack.FE_Req_AutoHideToggle()
         
          // alt-key or scroll-end-armed ..  we'll setup alt-tab state key nav options
          //   (arm, srch, alt, ctrl, key)
@@ -247,10 +247,11 @@ object SwitcheFacePage {
                case "m"  => focusElem_Bottom()
                case "j"  => focusGroup_Prev()
                case "k"  => focusGroup_Next()
-               case "r"  => RibbonDisplay.handleRefreshBtnClick()
+               case "r"  => handleReq_Refresh()
                
                case " " | "s" | "l" | "S" | "L" =>
-                  e.preventDefault(); scrollEnd_disarm(); setupSearchbox (doPassthrough = false)
+                  e.preventDefault(); scrollEnd_disarm();
+                  doStopProp = SearchDisplay.checkSearchBox_StopProp (e, doPassthrough = false)
                   
                case _ => // all other alt combos, or while dis-armed can be ignored
             }
@@ -262,25 +263,27 @@ object SwitcheFacePage {
          case (_,   _,    false, true,  _) => {
             preventDefault = true
             e.key.toLowerCase match {
-               case "r"  => RibbonDisplay.handleRefreshBtnClick()
-               case "f"  => RibbonDisplay.handleRefreshBtnClick()
+               case "r"  => handleReq_Refresh()
+               case "f"  => handleReq_Refresh()
                case "g"  => handleReq_GroupModeToggle()
                case "w"  => handleReq_CurElemClose()
                case "p"  => handleReq_CurElemPeek()
                //case "z"  => handleReq_CurElemMinimize()   // disabled to allow for use in search-box instead
                //case "x"  => handleReq_CurElemMaximize()
                
-               case _  if (searchBoxCtrlKeys.contains(e.key)) => {
+               case _  if (SearchDisplay.searchBoxCtrlKeys.contains(e.key)) => {
                   // ^^ we'll support some ctrl-combos for searchbox .. e.g left-right arrows, delete/bksp, ctr-a/x/c/v/z/y
                   preventDefault = false
-                  setupSearchbox (doPassthrough = true)
+                  doStopProp = SearchDisplay.checkSearchBox_StopProp (e, doPassthrough = true)
                }
                case _ =>   // other ctrl hotkeys can be ignored
             }
          }
          
          // all other non-alt non-ctrl events can be passed through to searchbox
-         case (_, _, false, false, _) => setupSearchbox (doPassthrough = true)
+         case (_, _, false, false, _) => {
+            doStopProp = SearchDisplay.checkSearchBox_StopProp (e, doPassthrough = true)
+         }
          
          case _ =>   // we shouldnt even get this far, but either way we'd just drop it
 
@@ -292,6 +295,7 @@ object SwitcheFacePage {
    }
 
 }
+
 
 
 
@@ -322,19 +326,39 @@ object SwitchePageState {
    def groupedId (hwnd:Int) = s"${hwnd}_g"
    def idToHwnd (idStr:String) = idStr.split("_") .headOption .flatMap (s => Try(s.toInt).toOption)
 
+   def setCurElem (id:String) = {
+      curElemId = id;
+   }
+   def resetFocus() = { //println("reset-focus")
+      RibbonDisplay.closeDropdowns()
+      recentsIdsVec.headOption.foreach(setCurElem); ElemsDisplay.focusElem_Next()
+   }
 
    def handleReq_SwitcheEscape (fromBkndHotkey:Boolean = false) = { //println("dismissed")
-      scrollEnd_disarm(); setDismissed(); RibbonDisplay.closeMenuDropdown()
+      scrollEnd_disarm(); setDismissed()
       if (!fromBkndHotkey) { SendMsgToBack.FE_Req_SwitcheEscape() }
-      // we'll do a delayed focus-reset so the visual flip happens out of sight after switche window is gone
-      js.timers.setTimeout(300) {  SwitchePageState.resetFocus(); SwitchePageState.exitSearchState(); }
+      // we'll do delayed ui updates so the visual flip happens out of sight after switche window is gone
+      js.timers.setTimeout(300) {
+         //SwitchePageState.resetFocus();
+         // ^^ reset will auto happen when search-state exit triggers rendering and it sees switche is dismissedd
+         SearchDisplay.exitSearchState()
+      }
    }
    def handleReq_SwitcheQuit () = {
       SendMsgToBack.FE_Req_SwitcheQuit()
    }
+   def handleReq_Refresh () = {
+      SendMsgToBack.FE_Req_Refresh()
+      RibbonDisplay.blipIndicator()
+   }
+   def handleReq_GroupModeToggle() = {
+      inGroupedMode = !inGroupedMode;
+      SendMsgToBack.FE_Req_GrpModeEnabled(inGroupedMode)
+      RenderSpacer.queueSpacedRender()
+   }
    
    def handleReq_CurElemActivation() : Unit = {
-      scrollEnd_disarm(); setDismissed(); RibbonDisplay.closeMenuDropdown()
+      scrollEnd_disarm(); setDismissed(); RibbonDisplay.closeDropdowns()
       idToHwnd (curElemId) .foreach ( SendMsgToBack.FE_Req_WindowActivate )
       // we'll reset focus w small delay to avoid visible change
       //js.timers.setTimeout(300) { SwitchePageState.exitSearchState(); SwitchePageState.resetFocus(); }
@@ -345,8 +369,8 @@ object SwitchePageState {
    def handleReq_CurElemPeek()     = { idToHwnd (curElemId) .foreach ( SendMsgToBack.FE_Req_WindowPeek     ) }
    def handleReq_CurElemClose()    = {
       val toClose = idToHwnd(curElemId)
-      //focusElem_Next()
-      pickNextElem (isReverseDir = false, isGrpNext = false) .map(_.id) .foreach(setCurElem)
+      //ElemsDisplay.focusElem_Next()
+      ElemsDisplay.pickNextElem (isReverseDir = false, isGrpNext = false) .map(_.id) .foreach(setCurElem)
       // ^^ instead of immdtly focusing on next elem, we'll just pick it out and let it be highligted upon next repaint
       toClose .foreach ( SendMsgToBack.FE_Req_WindowClose    )
    }
@@ -374,7 +398,7 @@ object SwitchePageState {
          // we'll ignore these spurious mouse-enters triggered due to elem repaints (but we'll invalidate first render bounds)
          fresh_render_under_mouse_elem_bounds = None
       } else if (!isHoverLocked) {
-         setCurElemHighlight(elem)
+         ElemsDisplay.setCurElemHighlight(elem)
       }
       last_mouse_enter_xy = Some (ev.clientX, ev.clientY)
    }
@@ -386,9 +410,54 @@ object SwitchePageState {
             fresh_render_under_mouse_elem_bounds.exists { bounds =>
                ev.clientX >= bounds.left && ev.clientX <= bounds.right && ev.clientY >= bounds.top && ev.clientY <= bounds.bottom
             }
-      ) { setCurElemHighlight(elem) }
+      ) { ElemsDisplay.setCurElemHighlight(elem) }
    }
 
+}
+
+
+
+
+object ElemsDisplay {
+   import SwitcheFaceConfig._
+   import SwitchePageState._
+   import Switche._
+
+   val elemsDiv = div (id:="elemsDivs").render
+   
+   // note the use of elemsDiv for each section and elevsDivs for the outer div
+
+   def makeElemsDiv (elemT:ElemT, stateT:StateT) = {
+      val headerTxt = if (elemT == ElemTs.G) "Grouped:" else "Recents:"
+      val header = div (`class`:=s"modeHeader ${elemT.cls}", nbsp(1), headerTxt) .render
+      val elemsMap = if (elemT == ElemTs.G) groupedElemsMap else recentsElemsMap
+      div ( `class`:=s"elemsDiv ${elemT.cls} ${stateT.cls}", header, elemsMap.values.map(_.elem).toSeq ) .render
+   }
+   def updateElemsDiv () = {
+      //updateRenderReadyLists()
+      // ^^ no longer relevant as we get latest built renderlists from backend instead
+      val searchedDiv : Div = {
+         if (inSearchState) {
+            SearchDisplay.rebuildSearchStateElems()
+            if (inGroupedMode) {
+               //makeElemsDiv (ElemTs.G, StateTs.S)      // uncommenting this instead of below will remove top-recents in grpd search state
+               div ( makeElemsDiv (ElemTs.GR, StateTs.S), makeElemsDiv (ElemTs.G, StateTs.S) ) .render
+            } else { makeElemsDiv (ElemTs.R,  StateTs.S) }
+         } else {
+            rebuildRecentsElems()
+            if (inGroupedMode) {
+               rebuildGroupedElems()
+               div ( makeElemsDiv (ElemTs.GR, StateTs.L), makeElemsDiv (ElemTs.G, StateTs.L) ) .render
+            } else { makeElemsDiv (ElemTs.R,  StateTs.L) }
+      } }
+      clearedElem(elemsDiv) .appendChild (searchedDiv.render)
+      if (isFgnd && !isDismissed) { reSyncCurFocusIdAfterRebuild() } else { resetFocus() }
+      // ^^ we typically want to resync on rebuild so our selection remains where we placed it despite z-order changing ..
+      // however, while dismissed, we'll want to always have the second-top selected, as thats what we want when swi is invoked next
+      last_mouse_enter_xy = None
+      // ^^ this helps avoid spurious mouse-enter triggering elem-highlight upon repaint
+   }
+   
 
    def makeElemBox (idStr:String, wde:WinDatEntry, y:Int, elemT:ElemT, grpT:GrpT) : Div = {
       val exeInnerSpan = span ( wde.exe_path_name.map(_.name).getOrElse("exe..").toString ).render
@@ -413,6 +482,7 @@ object SwitchePageState {
       elem.onmousemove  = { (ev:MouseEvent) => handleElemMouseMove  (elem,ev) }
       elem
    }
+
 
    def rebuildRecentsElems() = {
       // this needs the elems table, and a vec to navigate through it
@@ -453,101 +523,8 @@ object SwitchePageState {
       groupedIdsVec = elemsMap.keys.toVector
       groupsHeadsIdsVec = groupsHeadsIdsBuf
    }
-
-   def rebuildSearchStateElems() : Unit = {
-      // we'll build both recents and grouped for search-state together to reuse common mechanisms
-      // note that in search state, there will be no group nav, nav will be restricted to search matches, and if grouped, nav will use that block
-      val matchStr = RibbonDisplay.searchBox.value.trim
-      case class SearchedElem (id:String, elem:Div, chkPassed:Boolean)
-      def getSearchElem (rle:RenderListEntry, elemT:ElemT, grpT:GrpT, r:CheckSearchExeTitleRes) = {
-         hwndMap .get(rle.hwnd) .map { wde =>
-            val id = if (elemT == ElemTs.G) groupedId(wde.hwnd) else recentsId(wde.hwnd)
-            val elem = makeElemBox (id, wde, rle.y, elemT, grpT, r.exeSpan, r.ySpan, r.titleSpan)
-            SearchedElem (id, elem, r.chkPassed)
-      } }
-      def getSearchMatchRes (rle:RenderListEntry) = {
-         hwndMap .get(rle.hwnd) .map { wde =>
-            SearchHelper.checkSearchExeTitle (wde.exe_path_name.map(_.name).getOrElse(""), wde.win_text.getOrElse(""), matchStr, rle.y)
-      } }
-      def getSearchStateMapAndVec (sElems:Seq[SearchedElem]) = {
-         val searchedElemsMap = mutable.LinkedHashMap[String,OrderedElemsEntry]()
-         // this creates a separate matchIdxs table for only the matching elems ids (in place of regular recents/grouped ids nav vec)
-         val matchIdxs = sElems .filter(_.chkPassed) .zipWithIndex .view .map { case (e,i) => e.id -> i } .to(mutable.LinkedHashMap)
-         // then using that we can build out the search-state elems-map and nav-ids-vec
-         sElems .foreach { e =>
-            val y = matchIdxs.getOrElse(e.id, -1)
-            searchedElemsMap .put (e.id, OrderedElemsEntry(y,e.elem))
-         }
-         (searchedElemsMap, matchIdxs.keys.toVector)
-      }
-      if (!inGroupedMode) {
-         // lets do the simpler case of non-grouped mode
-         val sElems = renderList .flatMap (e => getSearchMatchRes(e) .flatMap (res => getSearchElem (e, ElemTs.R, GrpTs.NG, res)))
-         getSearchStateMapAndVec(sElems) match { case (m,v) => recentsElemsMap = m; recentsIdsVec = v }
-      } else {
-         // in grouped mode, we'll do navs in grouped block, but do simpler eqv match highlighting in dimmed top-recents where available
-         // the searchElemsMap idxs need to have not the zipWithIndex, but sequential idxs of only matching elems ..
-         val sElems = groupedRenderList .map {_ .flatMap {e => getSearchMatchRes(e).map(res => e -> res) } } .flatMap {ll => Seq (
-            ll .take(1) .flatMap { case (e,r) => getSearchElem (e, ElemTs.G, GrpTs.GH, r) },
-            ll .tail    .flatMap { case (e,r) => getSearchElem (e, ElemTs.G, GrpTs.GT, r) }
-         ) } .flatten
-         getSearchStateMapAndVec(sElems) match { case (m,v) => groupedElemsMap = m; groupedIdsVec = v }
-
-         // now lets build the recents w similar search-match highlighting as well .. (we wont need nav idxs for it)
-         val elemsMap = mutable.LinkedHashMap[String,OrderedElemsEntry]()
-         renderList .take(configs.n_grp_mode_top_recents) .zipWithIndex .foreach { case (e,i) =>
-            getSearchMatchRes(e) .flatMap (res => getSearchElem (e, ElemTs.GR, GrpTs.NG, res)) .foreach { se =>
-               elemsMap .put (se.id, OrderedElemsEntry (i, se.elem))
-         } }
-         recentsElemsMap = elemsMap
-         recentsIdsVec = elemsMap.keys.toVector
-      }
-   }
-
-   def activateSearchBox () = {
-      RibbonDisplay.searchBox.disabled = false;
-      RibbonDisplay.searchBox.focus()
-   }
-   def exitSearchState() = {
-      inSearchState = false; RibbonDisplay.searchBox.value = "";
-      RibbonDisplay.blurSearchBox()
-      RenderSpacer.immdtRender()
-   }
-
-   val handle_SearchModeKeyup: KeyboardEvent => Unit = {
-      var cachedSearchBoxTxt = ""
-      // ^^ we only need to cache it for this fn, so we're wrapping the whole thing into a closured val (instead of a fn)
-      (e: KeyboardEvent) => {
-         RibbonDisplay.closeMenuDropdown()
-         val curSearchBoxTxt = RibbonDisplay.searchBox.value.trim
-         if (curSearchBoxTxt.isEmpty || e.key == "Escape") {
-            cachedSearchBoxTxt = ""
-            exitSearchState()
-         } else if (curSearchBoxTxt != cachedSearchBoxTxt) {
-            cachedSearchBoxTxt = curSearchBoxTxt
-            RenderSpacer.immdtRender()
-            resetSearchMatchFocus()
-      } }
-   }
-
-   def handle_TitleUpdate (dat:WinDatEntry) = {
-      def replaceTitleSpan (oe:OrderedElemsEntry) : Unit = {
-         val titleSpan = if (!inSearchState) {
-            span ( dat.win_text.getOrElse("title.."):String ).render
-         } else {
-            SearchHelper.checkSearchExeTitle (
-               dat.exe_path_name.map(_.name).getOrElse(""), dat.win_text.getOrElse(""), RibbonDisplay.searchBox.value.trim, oe.y
-            ) .titleSpan
-         }
-         clearedElem (oe.elem.getElementsByClassName("titleSpan").item(0)) .appendChild (titleSpan)
-      }
-      recentsElemsMap .get(recentsId(dat.hwnd)) .foreach (replaceTitleSpan)
-      groupedElemsMap .get(groupedId(dat.hwnd)) .foreach (replaceTitleSpan)
-   }
-
-
-
-   def setCurElem (id:String) = { curElemId = id; }
+   
+   
    def setCurElemHighlight (newFocusElem:Div) = {
       // we manage 'focus' ourselves so that remains even when actual focus is moved to search-box etc
       clearCurElemHighlight()       // note that this will clear curElemId too
@@ -577,7 +554,8 @@ object SwitchePageState {
          Option (doc.querySelector(s".curElem")) .foreach(_.classList.remove("curElem"))
       }
    }
-   
+
+ 
    def shouldScrollIntoView (elem:Element) = {
       val scrolledTop = ElemsDisplay.elemsDiv.scrollTop == 0
       
@@ -600,16 +578,26 @@ object SwitchePageState {
       (!scrolledTop && topTooHigh) || (!scrolledBtm && btmTooLow)
    }
 
+   def handle_TitleUpdate (dat:WinDatEntry) = {
+      def replaceTitleSpan (oe:OrderedElemsEntry) : Unit = {
+         val titleSpan = if (!inSearchState) {
+            span ( dat.win_text.getOrElse("title.."):String ).render
+         } else {
+            SearchHelper.checkSearchExeTitle (
+               dat.exe_path_name.map(_.name).getOrElse(""),
+               dat.win_text.getOrElse(""),
+               SearchDisplay.getSearchBoxText(),
+               oe.y
+            ) .titleSpan
+         }
+         clearedElem (oe.elem.getElementsByClassName("titleSpan").item(0)) .appendChild (titleSpan)
+      }
+      recentsElemsMap .get(recentsId(dat.hwnd)) .foreach (replaceTitleSpan)
+      groupedElemsMap .get(groupedId(dat.hwnd)) .foreach (replaceTitleSpan)
+   }
+
    def getIdfnVecAndMap(elemT:ElemT) = {
       if (elemT == ElemTs.G) { (groupedId _, groupedIdsVec, groupedElemsMap) } else { (recentsId _, recentsIdsVec, recentsElemsMap) }
-   }
-   def resetFocus() = { println("reset-focus")
-      RibbonDisplay.closeMenuDropdown()
-      recentsIdsVec.headOption.foreach(setCurElem); focusElem_Next()
-   }
-   def resetSearchMatchFocus() : Unit = {
-      val (_, idsVec, elemsMap) = getIdfnVecAndMap (if (inGroupedMode) ElemTs.G else ElemTs.R)
-      idsVec.headOption .flatMap(elemsMap.get) .map(_.elem) .map(setCurElemHighlight) .getOrElse(clearCurElemHighlight())
    }
 
    def reSyncCurFocusIdAfterRebuild() = {
@@ -688,79 +676,220 @@ object SwitchePageState {
       if (inGroupedMode) { groupedIdsVec.lastOption.flatMap(groupedElemsMap.get) }
       else               { recentsIdsVec.lastOption.flatMap(recentsElemsMap.get) }
    } .map(_.elem) .foreach (setCurElemHighlight)
-
+  
 }
 
 
 
-object ElemsDisplay {
-   import SwitcheFaceConfig._
+
+
+object SearchDisplay {
    import SwitchePageState._
    import Switche._
-
-   val elemsDiv = div (id:="elemsDivs").render
-   def getElemsDiv = elemsDiv
    
-   // note the use of elemsDiv for each section and elevsDivs for the outer div
-
-   def makeElemsDiv (elemT:ElemT, stateT:StateT) = {
-      val headerTxt = if (elemT == ElemTs.G) "Grouped:" else "Recents:"
-      val header = div (`class`:=s"modeHeader ${elemT.cls}", nbsp(1), headerTxt) .render
-      val elemsMap = if (elemT == ElemTs.G) groupedElemsMap else recentsElemsMap
-      div ( `class`:=s"elemsDiv ${elemT.cls} ${stateT.cls}", header, elemsMap.values.map(_.elem).toSeq ) .render
-   }
-   def updateElemsDiv () = {
-      //updateRenderReadyLists()
-      // ^^ no longer relevant as we get latest built renderlists from backend instead
-      val searchedDiv : Div = {
-         if (inSearchState) {
-            rebuildSearchStateElems()
-            if (inGroupedMode) {
-               //makeElemsDiv (ElemTs.G, StateTs.S)      // uncommenting this instead of below will remove top-recents in grpd search state
-               div ( makeElemsDiv (ElemTs.GR, StateTs.S), makeElemsDiv (ElemTs.G, StateTs.S) ) .render
-            } else { makeElemsDiv (ElemTs.R,  StateTs.S) }
-         } else {
-            rebuildRecentsElems()
-            if (inGroupedMode) {
-               rebuildGroupedElems()
-               div ( makeElemsDiv (ElemTs.GR, StateTs.L), makeElemsDiv (ElemTs.G, StateTs.L) ) .render
-            } else { makeElemsDiv (ElemTs.R,  StateTs.L) }
-      } }
-      clearedElem(elemsDiv) .appendChild (searchedDiv.render)
-      if (!isDismissed) { reSyncCurFocusIdAfterRebuild() } else { resetFocus() }
-      // ^^ we typically want to resync on rebuild so our selection remains where we placed it despite z-order changing ..
-      // however, while dismissed, we'll want to always have the second-top selected, as thats what we want when swi is invoked next
-      last_mouse_enter_xy = None
-      // ^^ this helps avoid spurious mouse-enter triggering elem-highlight upon repaint
-   }
-}
-
-
-object RibbonDisplay {
-   import SwitcheFaceConfig._
-   import Switche._
-   val countSpan      = span  (`class`:="dragSpan", ondblclick:={() => SendMsgToBack.FE_Req_SelfAutoResize()} ).render
-   val debugLinks     = span  ().render
-   val armedIndicator = span  (`class`:="armedIndicator", "").render   // content is set in css
-   val searchBox      = input (`type`:="text", autocomplete:="off", id:="searchBox", placeholder:="").render
    
+   val searchBox      = input (
+      `type`:="text", autocomplete:="off", id:="searchBox", placeholder:=""
+   ).render
+   
+   var cachedSearchBoxTxt = ""
+   
+   val searchBoxCtrlKeys = Set ("ArrowLeft","ArrowRight","Delete","Backspace", "a", "x", "c", "v", "z", "y")
+   val searchBoxExclKeys = Set ("Meta","Alt","Control","Shift", "AudioVolumeUp","AudioVolumeDown")
+   
+   
+   def getSearchBoxText () = {
+      searchBox.value.trim
+   }
+   def activateSearchBox () = {
+      searchBox.disabled = false;
+      searchBox.focus()
+   }
    def blurSearchBox() = {
       //searchBox.blur()
       //Try { doc.activeElement.asInstanceOf[HTMLElement] } .toOption .foreach(_.blur())
       //Option (doc.querySelector(s".curElem")) .flatMap (e => Try { e.asInstanceOf[HTMLElement] }.toOption) .foreach(_.blur())
-      //window.focus()
-      //countSpan.focus()
-      
       // gaah .. in theory, any of ^^ these should work, and they do remove the blinking cursor from there ..
       // however, in our particular case, we had added text cursor highlight in windows, and that seems to persist even w/o focus!
       // .. so we'll just disable the whole searchbox instead .. oh well
       searchBox.disabled = true
    }
-   // note: ^^ all key handling is now done at doc level capture phase (which selectively allows char updates etc to filter down to searchBox)
-   def updateCountsSpan () : Unit = {
-      val count = renderList.length
-      clearedElem(countSpan) .appendChild ( span ( nbsp(3), " ※ ", nbsp(4), s"($count)", nbsp(2) ).render )
+
+   def handle_SearchModeKeyup (e:KeyboardEvent) = { //println(s"searchbox keyup: ${e.key}")
+      // Note: all search-box key handling is now done at doc level capture phase
+      // (which selectively allows char updates etc to filter down to searchBox)
+      RibbonDisplay.closeDropdowns()
+      val curSearchBoxTxt = searchBox.value.trim
+      if (curSearchBoxTxt.isEmpty || e.key == "Escape") {
+         cachedSearchBoxTxt = ""
+         exitSearchState()
+      } else if (curSearchBoxTxt != cachedSearchBoxTxt) {
+         cachedSearchBoxTxt = curSearchBoxTxt
+         RenderSpacer.queueSpacedRender()
+         resetSearchMatchFocus()
+      }
    }
+   // this is called whenever we want to setup selective propagation to searchbox
+   def checkSearchBox_StopProp(e:KeyboardEvent, doPassthrough:Boolean): Boolean = {
+      val doStopProp = searchBoxExclKeys.contains(e.key) || (!doPassthrough && !inSearchState)
+      if (!searchBoxExclKeys.contains(e.key)) { inSearchState = true; activateSearchBox() }
+      doStopProp
+   }
+   def resetSearchMatchFocus() : Unit = {
+      import ElemsDisplay._;
+      val (_, idsVec, elemsMap) = getIdfnVecAndMap (if (inGroupedMode) ElemTs.G else ElemTs.R)
+      idsVec.headOption .flatMap(elemsMap.get) .map(_.elem) .map(setCurElemHighlight) .getOrElse(clearCurElemHighlight())
+   }
+   def exitSearchState() = { //println("exit-search-state")
+      inSearchState = false
+      searchBox.value = ""
+      blurSearchBox()
+      RenderSpacer.queueSpacedRender()
+   }
+
+   def rebuildSearchStateElems() : Unit = {
+      // we'll build both recents and grouped for search-state together to reuse common mechanisms
+      // note that in search state, there will be no group nav, nav will be restricted to search matches, and if grouped, nav will use that block
+      val matchStr = SearchDisplay.searchBox.value.trim
+      case class SearchedElem (id:String, elem:Div, chkPassed:Boolean)
+      def getSearchElem (rle:RenderListEntry, elemT:ElemT, grpT:GrpT, r:CheckSearchExeTitleRes) = {
+         hwndMap .get(rle.hwnd) .map { wde =>
+            val id = if (elemT == ElemTs.G) groupedId(wde.hwnd) else recentsId(wde.hwnd)
+            val elem = ElemsDisplay.makeElemBox (id, wde, rle.y, elemT, grpT, r.exeSpan, r.ySpan, r.titleSpan)
+            SearchedElem (id, elem, r.chkPassed)
+      } }
+      def getSearchMatchRes (rle:RenderListEntry) = {
+         hwndMap .get(rle.hwnd) .map { wde =>
+            SearchHelper.checkSearchExeTitle (wde.exe_path_name.map(_.name).getOrElse(""), wde.win_text.getOrElse(""), matchStr, rle.y)
+      } }
+      def getSearchStateMapAndVec (sElems:Seq[SearchedElem]) = {
+         val searchedElemsMap = mutable.LinkedHashMap[String,OrderedElemsEntry]()
+         // this creates a separate matchIdxs table for only the matching elems ids (in place of regular recents/grouped ids nav vec)
+         val matchIdxs = sElems .filter(_.chkPassed) .zipWithIndex .view .map { case (e,i) => e.id -> i } .to(mutable.LinkedHashMap)
+         // then using that we can build out the search-state elems-map and nav-ids-vec
+         sElems .foreach { e =>
+            val y = matchIdxs.getOrElse(e.id, -1)
+            searchedElemsMap .put (e.id, OrderedElemsEntry(y,e.elem))
+         }
+         (searchedElemsMap, matchIdxs.keys.toVector)
+      }
+      if (!inGroupedMode) {
+         // lets do the simpler case of non-grouped mode
+         val sElems = renderList .flatMap (e => getSearchMatchRes(e) .flatMap (res => getSearchElem (e, ElemTs.R, GrpTs.NG, res)))
+         getSearchStateMapAndVec(sElems) match { case (m,v) => recentsElemsMap = m; recentsIdsVec = v }
+      } else {
+         // in grouped mode, we'll do navs in grouped block, but do simpler eqv match highlighting in dimmed top-recents where available
+         // the searchElemsMap idxs need to have not the zipWithIndex, but sequential idxs of only matching elems ..
+         val sElems = groupedRenderList .map {_ .flatMap {e => getSearchMatchRes(e).map(res => e -> res) } } .flatMap {ll => Seq (
+            ll .take(1) .flatMap { case (e,r) => getSearchElem (e, ElemTs.G, GrpTs.GH, r) },
+            ll .tail    .flatMap { case (e,r) => getSearchElem (e, ElemTs.G, GrpTs.GT, r) }
+         ) } .flatten
+         getSearchStateMapAndVec(sElems) match { case (m,v) => groupedElemsMap = m; groupedIdsVec = v }
+
+         // now lets build the recents w similar search-match highlighting as well .. (we wont need nav idxs for it)
+         val elemsMap = mutable.LinkedHashMap[String,OrderedElemsEntry]()
+         renderList .take(configs.n_grp_mode_top_recents) .zipWithIndex .foreach { case (e,i) =>
+            getSearchMatchRes(e) .flatMap (res => getSearchElem (e, ElemTs.GR, GrpTs.NG, res)) .foreach { se =>
+               elemsMap .put (se.id, OrderedElemsEntry (i, se.elem))
+         } }
+         recentsElemsMap = elemsMap
+         recentsIdsVec = elemsMap.keys.toVector
+      }
+   }
+   
+}
+
+
+
+
+
+object RibbonDisplay {
+   import SwitcheFaceConfig._
+   import Switche._
+   import SwitchePageState._
+  
+   
+   // -- setup for all the various indicators and their tooltips --
+   class Indicator (cls:String) {
+      
+      val content = span ( `class`:=cls ).render
+      def setContent (e:Element) = { content .replaceChildren (e); this }
+      
+      val tooltip = div (`class`:="tooltip left" ).render
+      var isToggledOn = false
+      
+      def showTooltip () = { tooltip.classList.add ("show") }
+      def hideTooltip () = { if (!isToggledOn) { tooltip.classList.remove ("show") } }
+      
+      def toggleTooltip () = {
+         isToggledOn = !isToggledOn;
+         if (isToggledOn) { showTooltip() } else { hideTooltip() }
+      }
+      def clearToggle () = { isToggledOn = false; hideTooltip() }
+      
+      def setTooltip (e:Element)  = { tooltip .replaceChildren (e); this }
+      def setTooltip (tip:String) = { tooltip .replaceChildren (span(tip).render); this }
+      
+      
+      val indicator = div ( `class`:="indicator left",
+         content, tooltip, onmouseover:={() => showTooltip()}, onmouseout:={() => hideTooltip()}
+      ).render
+      def alignRight() = {
+         indicator.classList.remove("left"); tooltip.classList.remove("left");
+         indicator.classList.add("right");   tooltip.classList.add("right");
+         this
+      }
+      def set (turn_on:Boolean) = {
+         if (turn_on) { content.classList.add("on") }
+         else         { content.classList.remove("on") }
+      }
+      def blip () = {
+         js.timers.setTimeout(50 ) { set (true ) }
+         js.timers.setTimeout(250) { set (false) }
+      }
+      
+   }
+   
+   private val altTabIndicator   = new Indicator ("altTabIndicator" )
+   private val rbtnWhlIndicator  = new Indicator ("rbtnWheelIndicator" )
+   private val elevIndicator     = new Indicator ("elevIndicator" )
+   
+   private val armedIndicator    = new Indicator ("armedIndicator")
+   armedIndicator .setTooltip ("Key Release Activation: Inactive")
+   
+   private val dragIndicator  = new Indicator ("dragIndicator" )
+   dragIndicator.content.ondblclick = {_ => SendMsgToBack.FE_Req_SelfAutoResize()}
+   dragIndicator .setTooltip ("Double-click here to Auto-Size")
+   
+   private val warnIndicator  = new Indicator ("warnIndicator" ) .alignRight()
+   warnIndicator .setTooltip ("No Warnings or Errors")
+   
+   private val helpIndicator  = new Indicator ("helpIndicator" ) .alignRight()
+   helpIndicator.content.onclick = {(e:MouseEvent) => { helpIndicator.toggleTooltip(); e.stopPropagation() } }
+   helpIndicator .setTooltip (HelpText.helpText)
+   
+   def setAltTabEnabled (isEnabled:Boolean) = {
+      altTabIndicator.set(isEnabled)
+      altTabIndicator.setTooltip ( if (isEnabled) "Alt-Tab Replacement: Enabled" else "Alt-Tab Replacement: Disabled" )
+   }
+   def setRbtnWheelEnabled (isEnabled:Boolean) = {
+      rbtnWhlIndicator.set(isEnabled)
+      rbtnWhlIndicator.setTooltip ( if (isEnabled) "Mouse Right Btn with Wheel Activation: Enabled" else "Mouse Right Btn with Wheel Activation: Disabled" )
+   }
+   def setElevated (isElevated:Boolean) = {
+      elevIndicator.set(isElevated)
+      elevIndicator.setTooltip (if (isElevated) "Running Elevated: Yes" else "Running Elevated: No")
+   }
+   def setReleaseArmed(isArmed:Boolean) = {
+      armedIndicator.set(isArmed)
+      armedIndicator.setTooltip (if (isArmed) "Key Release Activation: Active" else "Key Release Activation: Inactive")
+   }
+   
+   private val countSpan = span (`class`:="countSpan").render
+   def updateCountsSpan () : Unit = { countSpan .replaceChildren ( span ( s"(${renderList.length})" ).render ) }
+   
+   
+   private val debugLinks = span () .render
    def updateDebugLinks() : Unit = {
       clearElem(debugLinks)
       if (inElectronDevMode) {
@@ -768,37 +897,46 @@ object RibbonDisplay {
          debugLinks.appendChild ( printExclLink )
    } }
    def debugDisplayMsg (msg:String) = { debugLinks.innerHTML = s"$msg (${js.Date.now().toString})"; }
-   def handleRefreshBtnClick() : Unit = {
-      // we want to refresh too (as do periodic calls elsewhere), but here we want to also force icons-refresh
-      blipArmedIndicator()    // some visual indicator on refresh click is useful since often it causes no visible change
-      SendMsgToBack.FE_Req_Refresh()
-   }
-   def setArmedIndicator_On  () = { armedIndicator.classList.add("armed") }
-   def setArmedIndicator_Off () = { armedIndicator.classList.remove("armed") }
-   def blipArmedIndicator () = {
-      // delay both on and off a bit, as typically we might be doing repaints etc when this is triggered
-      js.timers.setTimeout(50 ) { setArmedIndicator_On() }
-      js.timers.setTimeout(250) { setArmedIndicator_Off() }
-   }
-
+   
+   
+   
+   // -- menu dropdown management --
    object MenuDropdown {
-      val refresh = a ( href:="#",  "Refresh",         onclick := {() => handleRefreshBtnClick()}            ).render
-      val reload  = a ( href:="#",  "Reload",          onclick := {() => dom.window.location.reload()}       ).render
-      val grp_tgl = a ( href:="#",  "Toggle Grouping", onclick := {() => handleReq_GroupModeToggle()}        ).render
-      val conf    = a ( href:="#",  "Edit Config",     onclick := {() => SendMsgToBack.FE_Req_EditConfig()}  ).render
-      val quit    = a ( href:="#",  "Quit",            onclick := {() => SendMsgToBack.FE_Req_SwitcheQuit()} ).render
       
-      val dropdown = div (`class`:="dropdown", refresh, reload, grp_tgl, conf, quit).render
+      def menuItem (text:String, hotkey:String, action:() => Unit) = {
+         val menuSpan = span (`class`:="menuItem", text, span (`class`:="menuHotkey", hotkey) ).render
+         a (menuSpan, onclick:= {() => blipIndicator(); action()} ).render
+      }
+      
+      val refresh    = menuItem ("Refresh"      ,   "Ctrl+R" ,   {() => SendMsgToBack.FE_Req_Refresh()      } )
+      val reload     = menuItem ("Reload"       ,   "F5"     ,   {() => dom.window.location.reload()        } )
+      val grp_tgl    = menuItem ("Group Mode"   ,   "Ctrl+G" ,   {() => handleReq_GroupModeToggle()         } )
+      val conf_edit  = menuItem ("Edit Config"  ,   ""       ,   {() => SendMsgToBack.FE_Req_EditConfig()   } )
+      val conf_reset = menuItem ("Reset Config" ,   ""       ,   {() => SendMsgToBack.FE_Req_ResetConfig()  } )
+      val quit       = menuItem ("Quit"         ,   "Alt+F4" ,   {() => SendMsgToBack.FE_Req_SwitcheQuit()  } )
+      
+      val dropdown = div (`class`:="dropdown", refresh, reload, grp_tgl, conf_edit, conf_reset, quit).render
       val menu_link = span (`class`:="menulink", onclick := {()=> dropdown.classList.toggle("show")}, nbsp(4) ).render
       val menu_dropdown = div (`class`:="menubox", onclick := {(e:MouseEvent) => e.stopPropagation()}, menu_link, dropdown ).render
       // ^^ the stop propagation prevents the click from bubbling up to the document where we have set clicks to close the dropdown
    }
-   def closeMenuDropdown() = { MenuDropdown.dropdown.classList.remove("show") }
    
-   def getTopRibbonDiv() = {
-      div ( id:="top-ribbon",
-         nbsp(0), MenuDropdown.menu_dropdown, nbsp(1), armedIndicator, nbsp(1), countSpan, debugLinks, nbsp(2), searchBox
-      ).render
+   def closeDropdowns () = {
+      MenuDropdown.dropdown.classList.remove("show")
+      helpIndicator.clearToggle()
    }
+   def blipIndicator () = { armedIndicator.blip() }
+   
+   
+   
+   // -- pulling together all the pieces of the top ribbon --
+   val topRibbon =  div (
+      id:="top-ribbon", MenuDropdown.menu_dropdown,
+      altTabIndicator.indicator, rbtnWhlIndicator.indicator,
+      elevIndicator.indicator, armedIndicator.indicator, dragIndicator.indicator,
+      countSpan, debugLinks, SearchDisplay.searchBox,
+      warnIndicator.indicator, helpIndicator.indicator
+   ).render
+   
 }
 
