@@ -1,0 +1,7 @@
+{
+  "name": "switche-front",
+  "type": "module",
+  "dependencies": {
+    "@tauri-apps/api": "^1.5.4"
+  }
+}

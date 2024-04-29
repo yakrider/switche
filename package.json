@@ -1,0 +1,14 @@
+{
+  "name": "switche-tauri-app",
+  "type": "module",
+  "scripts": {
+    "tauri": "tauri",
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "devDependencies": {
+    "typescript": "^5.4.5",
+    "vite": "^4.5.3"
+  }
+}

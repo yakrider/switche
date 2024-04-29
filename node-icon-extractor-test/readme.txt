@@ -1,3 +1,0 @@
--- note that this is mostly from https://github.com/SkaceKamen/win-icon-extractor .. 
-- changes added to take hicon directly, then updates to go directly from hwnd, but most of the core logic is from there
-- if ever putting outside, gotta find a more reasonable way of doing crediting.. (it has MIT licencse)

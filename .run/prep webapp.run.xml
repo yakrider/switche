@@ -1,0 +1,9 @@
+<component name="ProjectRunConfigurationManager">
+  <configuration default="false" name="prep webapp" type="js.build_tools.npm">
+    <package-json value="$PROJECT_DIR$/switche-front/package.json" />
+    <command value="install" />
+    <node-interpreter value="project" />
+    <envs />
+    <method v="2" />
+  </configuration>
+</component>
