@@ -7,25 +7,65 @@ use crate::switche::{Hwnd, SwitcheState};
 
 
 
+const MENU_AUTO_START       : &str = "auto_start";
+const MENU_AUTO_START_ADMIN : &str = "auto_start_admin";
+const MENU_EDIT_CONF        : &str = "edit_conf";
+const MENU_RESET_CONF       : &str = "reset_conf";
+const MENU_RELOAD           : &str = "reload";
+const MENU_RESTART          : &str = "restart";
+const MENU_QUIT             : &str = "quit";
+// note: ^^ its easier to define these as consts instead of enums as that makes it easier to match against id-strings later
+
+
+fn make_menu_item (id:&str) -> CustomMenuItem {
+    let disp_str = match id {
+        MENU_AUTO_START       => "Auto-Start on Login",
+        MENU_AUTO_START_ADMIN => "Auto-Start as Admin",
+        MENU_EDIT_CONF        => "Edit Config",
+        MENU_RESET_CONF       => "Reset Config",
+        MENU_RELOAD           => "Reload",
+        MENU_RESTART          => "Restart",
+        MENU_QUIT             => "Quit",
+        _ => ""
+    };
+    CustomMenuItem::new (id, disp_str)
+}
+
+fn exec_menu_action (id:&str, ss:&SwitcheState, ah:&AppHandle<Wry>) {
+    match id {
+        MENU_AUTO_START       => { autostart::proc_tray_event__toggle_switche_autostart (false, ah) }
+        MENU_AUTO_START_ADMIN => { autostart::proc_tray_event__toggle_switche_autostart (true,  ah) }
+        MENU_EDIT_CONF        => { ss.conf.trigger_config_file_edit() }
+        MENU_RESET_CONF       => { ss.conf.trigger_config_file_reset() }
+        MENU_RELOAD           => { ss.handle_req__data_load() }
+        MENU_RESTART          => { ah.restart() }
+        MENU_QUIT             => { ah.exit(0) }
+        _ => { }
+    }
+}
+
+
+
+
 pub fn run_switche_tauri (ss:&SwitcheState) {
 
     // we'll setup tray-icon support to pass into app builder
     let tray = SystemTray::new() .with_tooltip("Switche") .with_menu (
         SystemTrayMenu::new ()
             // first we'll put the configs
-            .add_item ( CustomMenuItem::new ( "auto_start",        "Auto-Start on Login" ) )
-            .add_item ( CustomMenuItem::new ( "auto_start_admin",  "Auto-Start as Admin" ) )
+            .add_item ( make_menu_item (MENU_AUTO_START) )
+            .add_item ( make_menu_item (MENU_AUTO_START_ADMIN) )
             .add_native_item ( SystemTrayMenuItem::Separator )
 
             // the special entry to trigger opening the config file for editing
-            .add_item ( CustomMenuItem::new ( "edit_conf",   "Edit Config"  ) )
-            .add_item ( CustomMenuItem::new ( "reset_conf",  "Reset Config" ) )
+            .add_item ( make_menu_item (MENU_EDIT_CONF) )
+            .add_item ( make_menu_item (MENU_RESET_CONF) )
             .add_native_item ( SystemTrayMenuItem::Separator )
 
             // then the actions
-            .add_item ( CustomMenuItem::new ( "reload",     "Reload"  ) )
-            .add_item ( CustomMenuItem::new ( "restart",    "Restart" ) )
-            .add_item ( CustomMenuItem::new ( "quit",       "Quit"    ) )
+            .add_item ( make_menu_item (MENU_RELOAD) )
+            .add_item ( make_menu_item (MENU_RESTART) )
+            .add_item ( make_menu_item (MENU_QUIT) )
     );
 
 
@@ -130,33 +170,8 @@ pub fn tauri_run_events_handler (ss:&SwitcheState, ah:&AppHandle<Wry>, event:Run
 
 
 
-fn proc_tray_event__show (ss:&SwitcheState) {
-    ss.checked_self_activate();   // also updates the is-dismissed etc flags
-}
-fn proc_tray_event__reload (ss:&SwitcheState) {
-    ss.handle_req__data_load();   // will also re-setup kbd/mouse hooks
-}
-
-fn proc_tray_event__menu_click (ss:&SwitcheState, ah:&AppHandle<Wry>, menu_id:String) {
-
-    match menu_id.as_str() {
-        "auto_start"       =>  { autostart::proc_tray_event__toggle_switche_autostart (false, ah) }
-        "auto_start_admin" =>  { autostart::proc_tray_event__toggle_switche_autostart (true,  ah) }
-
-        "edit_conf"  =>  { ss.conf.trigger_config_file_edit() }
-        "reset_conf" =>  { ss.conf.trigger_config_file_reset() }
-
-        "reload"    =>  { proc_tray_event__reload(ss) }
-        "restart"   =>  { ah.restart() }
-        "quit"      =>  { ah.exit(0) }
-        _ => { }
-    }
-}
-
-
-
 fn proc_tray_event__left_click (ss:&SwitcheState) {
-    proc_tray_event__show(ss)
+    ss.checked_self_activate();
 }
 fn proc_tray_event__right_click (_ss:&SwitcheState) {
     // nothign to do to bring up the menu?
@@ -170,13 +185,10 @@ pub fn tray_events_handler (ss:&SwitcheState, ah:&AppHandle<Wry>, event:SystemTr
         SystemTrayEvent::LeftClick   { .. }  =>  { proc_tray_event__left_click(ss) },
         SystemTrayEvent::RightClick  { .. }  =>  { proc_tray_event__right_click(ss) },
         SystemTrayEvent::DoubleClick { .. }  =>  { proc_tray_event__double_click(ss) },
-        SystemTrayEvent::MenuItemClick { id, .. }  =>  { proc_tray_event__menu_click(ss, ah, id) },
+        SystemTrayEvent::MenuItemClick { id, .. }  =>  { exec_menu_action (&*id, ss, ah) },
         _ => { }
     }
 }
-
-
-
 
 
 
