@@ -343,7 +343,7 @@ object RenderSpacer {
 object HelpText {
    
    val helpText = div (`class`:="helpText",
-      br, h3 ("Switche - ", small("A Searchable Task Switcher")),
+      br, h3 ("Switche - ", small("A Searchable Task Switcher ", raw("&nbsp;&nbsp;"), " (v2.2.8)")),
       br,
       p ("Switche is designed to be a fast, ergonomic, and search-first task switcher."),
       br,

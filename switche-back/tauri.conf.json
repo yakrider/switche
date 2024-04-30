@@ -8,7 +8,7 @@
   },
   "package": {
     "productName": "Switche",
-    "version": "2.2.7"
+    "version": "2.2.8"
   },
   "tauri": {
     "allowlist": {
@@ -42,7 +42,12 @@
       "shortDescription": "Switche",
       "longDescription": "Switche - Searchable Task Switcher",
       "resources": [],
-      "targets": "nsis"
+      "targets": "nsis",
+      "windows": {
+        "nsis": {
+          "installerIcon": "switche.ico"
+        }
+      }
     },
     "security": {
       "csp": null

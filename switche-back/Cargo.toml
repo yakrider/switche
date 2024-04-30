@@ -1,7 +1,7 @@
 [package]
 name = "switche"
-version = "2.2.7"
-# ^^ remember to also update this in tauri.conf.js
+version = "2.2.8"
+# ^^ reminder to update this in all places (cargo.toml, tauri.conf.json, Readme.md, help-text)
 description = "Switche - Searchable Task Switcher"
 authors = ["yakrider"]
 keywords = ["switcher", "alt-tab", "task-switcher", "window-switcher" ]

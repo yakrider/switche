@@ -1,6 +1,6 @@
 
 
-### Switche - <small>A Searchable Task Switcher</small>
+### Switche - <small>A Searchable Task Switcher &nbsp;&nbsp; (v2.2.8)</small>
 
 Switche is designed to be a fast, ergonomic, and search-first task switcher.
 
@@ -46,4 +46,11 @@ Some other key features are explained below:
 Repository: https://github.com/yakrider/switche
 
 Copyright @ 2024 yakrider  
-Distributed under MIT license  
+Distributed under MIT license
+
+---
+Screenshot of Switche v2.2.7 :
+
+<img width="721" src="https://github.com/yakrider/switche/assets/15984611/947d55f8-064b-48f9-a772-d9214ee8f8bb">
+
+

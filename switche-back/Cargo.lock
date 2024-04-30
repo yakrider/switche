@@ -2697,7 +2697,7 @@ dependencies = [
 
 [[package]]
 name = "switche"
-version = "2.2.7"
+version = "2.2.8"
 dependencies = [
  "base64 0.21.7",
  "grouping_by",
