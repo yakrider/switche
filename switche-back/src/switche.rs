@@ -126,6 +126,7 @@ pub struct Configs_Pl {
     auto_hide_enabled      : bool,
     group_mode_enabled     : bool,
     n_grp_mode_top_recents : u32,
+    grp_ordering_is_auto   : bool,
 }
 impl Configs_Pl {
     pub fn assemble (ss:&SwitcheState) -> Configs_Pl { Configs_Pl {
@@ -135,6 +136,7 @@ impl Configs_Pl {
         auto_hide_enabled      : ss.conf.check_flag__auto_hide_enabled(),
         group_mode_enabled     : ss.conf.check_flag__group_mode_enabled(),
         n_grp_mode_top_recents : ss.conf.get_n_grp_mode_top_recents(),
+        grp_ordering_is_auto   : ss.conf.check_flag__auto_order_window_groups(),
     } }
 }
 
@@ -187,6 +189,31 @@ impl Flag {
     pub fn toggle   (&self) -> bool { ! self.0 .fetch_xor (true, Ordering::SeqCst) }
 }
 
+
+# [ atomic_enum::atomic_enum ]
+# [ derive (PartialEq) ]
+pub enum EnumWindowsReqType { Light, Full }
+// ^^ the atomic_enum crate will generate an AtomicEnumWindowsReqType for us
+
+# [ derive ( ) ]
+pub struct EnumWindowsReqType_A (AtomicEnumWindowsReqType);
+
+impl EnumWindowsReqType_A {
+    pub fn new () -> EnumWindowsReqType_A {
+        EnumWindowsReqType_A ( AtomicEnumWindowsReqType::new(EnumWindowsReqType::Light) )
+    }
+    pub fn get (&self) -> EnumWindowsReqType {
+        self.0 .load (Ordering::SeqCst)
+    }
+    pub fn set (&self, req_type: EnumWindowsReqType) {
+        let _ = self.0 .store (req_type, Ordering::SeqCst);
+    }
+    pub fn is_light (&self) -> bool {
+        self.0 .load (Ordering::SeqCst) == EnumWindowsReqType::Light
+    }
+}
+
+
 # [ derive ( ) ]
 pub struct _SwitcheState {
 
@@ -195,8 +222,9 @@ pub struct _SwitcheState {
     pub hwnds_ordered : RwLock <Vec <Hwnd>>,
     pub hwnds_acc     : RwLock <Vec <Hwnd>>,
 
-    pub cur_call_id   : AtomicIsize,
-    pub enum_do_light : Flag,
+    pub cur_call_id       : AtomicIsize,
+    pub cur_win_enum_type : EnumWindowsReqType_A,
+
     pub is_dismissed  : Flag,
     pub is_fgnd       : Flag,
     pub in_alt_tab    : Flag,
@@ -238,6 +266,7 @@ pub struct _RenderReadyListsManager {
     render_list      : RwLock <Vec <RenderListEntry>>,
     grpd_render_list : RwLock <Vec <Vec <RenderListEntry>>>,
     exes_excl_set    : RwLock <HashSet <String>>,
+    ordering_ref_map : RwLock <HashMap <String, usize>>,
 }
 
 
@@ -262,8 +291,9 @@ impl SwitcheState {
                 hwnds_ordered  : RwLock::new (Vec::new()),
                 hwnds_acc      : RwLock::new (Vec::new()),
 
-                cur_call_id    : AtomicIsize::default(),
-                enum_do_light  : Flag::default(),
+                cur_call_id       : AtomicIsize::default(),
+                cur_win_enum_type : EnumWindowsReqType_A::new(),
+
                 is_dismissed   : Flag::default(),
                 is_fgnd        : Flag::default(),
                 in_alt_tab     : Flag::default(),
@@ -297,27 +327,29 @@ impl SwitcheState {
 
     /*****  win-api windows-enumeration setup and processing  ******/
 
-    fn trigger_enum_windows_query_pending (&self, do_light:bool) {
+
+    fn trigger_enum_windows_query_pending (&self, req_type: EnumWindowsReqType) {
         static trigger_pending : Lazy<Flag> = Lazy::new (|| {Flag::default()});
-        // we'll first update the do_light flag whether we're ready to trigger or not
-        self.enum_do_light.0 .fetch_and (do_light, Ordering::SeqCst);
+        // we'll first update the enum type whether we're ready to trigger or not
+        if req_type == EnumWindowsReqType::Full { self.cur_win_enum_type .set (EnumWindowsReqType::Full); }
+        // ^^ default is light, and if any pending call wants full, we set it to full
         // and if we're not already pending, we'll set it up
         if !trigger_pending.is_set() {
             trigger_pending.set();
             let ss = self.clone();
             let tp = trigger_pending.clone();
             // we'll set up a delay to reduce thrashing from bunched up trains of events that the OS often sends
-            let delay = if self.enum_do_light.check() {20} else {100};
+            let delay = if self.cur_win_enum_type.is_light() {20} else {100};
             spawn ( move || {
                 sleep (Duration::from_millis(delay));
                 tp.clear();
-                ss .trigger_enum_windows_query_immdt (ss.enum_do_light.check());
+                ss .trigger_enum_windows_query_immdt (ss.cur_win_enum_type.get());
             } );
         }
     }
-    fn trigger_enum_windows_query_immdt (&self, do_light:bool) {
-        println!("***** starting new enum-windows query! **** (doLight:{:?})",do_light);
-        self.enum_do_light.store(do_light);    // we might be getting called directly, so gotta cache it up for that
+    fn trigger_enum_windows_query_immdt (&self, qt: EnumWindowsReqType) {
+        println!("***** starting new enum-windows query! **** (query type: {:?})",qt);
+        self.cur_win_enum_type.set(qt);    // we might be getting called directly, so gotta cache it up for that
         let call_id_old = self.cur_call_id.fetch_add (1, Ordering::Relaxed);
         *self.hwnds_acc.write().unwrap() = Vec::new();
         // enum windows is blocking, and returns a bool which is false if it fails or either of its callback calls returns false
@@ -335,17 +367,20 @@ impl SwitcheState {
 
     pub unsafe extern "system" fn enum_windows_streamed_callback (hwnd:HWND, call_id:LPARAM) -> BOOL {
         let ss = SwitcheState::instance();
-        let latest_call_id = ss.cur_call_id.load(Ordering::Relaxed);
+        let latest_call_id = ss.cur_call_id .load (Ordering::Relaxed);
         if call_id.0 > latest_call_id {
             println! ("WARNING: got win-api callback w higher call_id than last triggered .. will restart enum-call! !");
-            ss.trigger_enum_windows_query_immdt (ss.enum_do_light.check());
+            ss.trigger_enum_windows_query_immdt (ss.cur_win_enum_type.get());
             return BOOL (false as i32)
         } else if call_id.0 < latest_call_id {
             // if we're still getting callbacks with stale call_id, signal that call to stop
             println! ("WARNING: got callbacks @cur-call-id {} from stale cb-id: {} .. ending it!!", latest_call_id, call_id.0);
             return BOOL (false as i32)
         };
-        let passed = if ss.enum_do_light.check() { ss.check_hwnd_renderable_pre_passed(hwnd.0) } else { ss.process_discovered_hwnd(hwnd.0) };
+        let passed = {
+            if ss.cur_win_enum_type.is_light() { ss.check_hwnd_renderable_pre_passed(hwnd.0) }
+            else { ss.process_discovered_hwnd(hwnd.0) }
+        };
         if passed { ss.hwnds_acc .write().unwrap() .push (hwnd.0) }
         BOOL (true as i32)
     }
@@ -427,7 +462,8 @@ impl SwitcheState {
 
     fn post_enum_win_call_cleanup (&self) {
         // we want to clean up both map entries and any icon-cache mappings for any hwnds that are no longer present
-        self.enum_do_light.set();   // for next call .. since it needs all pending calls to specify light, its init should be light too
+        self.cur_win_enum_type .set (EnumWindowsReqType::Light);
+        // ^^ this is for next call .. since it needs all pending calls to specify light, its init should be light too
         let cur_hwnds_set = self.hwnds_acc.read().unwrap() .iter() .map(|h| *h) .collect::<HashSet<Hwnd>>();
         let dead_hwnds = self.hwnds_ordered.read().unwrap() .iter() .map(|h| *h)
             .filter (|hwnd| !cur_hwnds_set.contains(hwnd)) .collect::<Vec<Hwnd>>();
@@ -457,6 +493,9 @@ impl SwitcheState {
     fn handle_event__switche_fgnd (&self) {
         //println! ("switche self-fgnd report .. refreshing window-list-top icon");
         if self.is_fgnd.is_set() { return }
+
+        // we'll trigger an immdt query if its only just coming to fgnd .. (no time to queue, and its only about ~1ms)
+        self .trigger_enum_windows_query_immdt (EnumWindowsReqType::Light);
 
         self.is_dismissed.clear(); self.is_fgnd.set();
         self.emit_backend_notice (Backend_Notice::switche_event__in_fgnd);
@@ -684,7 +723,7 @@ impl SwitcheState {
         // .. but windows often reorders the parent window if its child or owned window etc etc comes to fgnd ..
         // .. and checking for owner/parent directly, didnt seem to catch all such cases,
         // .. so we'll just requery light everytime .. (and profiling shows its pretty low cost anyway)
-        self.trigger_enum_windows_query_pending(true);
+        self .trigger_enum_windows_query_pending (EnumWindowsReqType::Light);
 
         // we'll do the fgnd-lost handling at last .. it might require FE messaging etc
         if self.is_fgnd.is_set() { self.handle_event__switche_fgnd_lost() }
@@ -700,7 +739,7 @@ impl SwitcheState {
         println! ("@{:?} minimized: {:?}", self._stamp(), hwnd);
         // we only really want to query/update z-order here if this was in our windows list
         if self.check_hwnd_renderable_pre_passed (hwnd) {
-            self.trigger_enum_windows_query_pending(true);
+            self .trigger_enum_windows_query_pending (EnumWindowsReqType::Light);
         }
     }
 
@@ -720,7 +759,7 @@ impl SwitcheState {
         // then do the initial processing, and if that returns renderable-passed, set up ordering-only enum-query
         if self.process_discovered_hwnd(hwnd) {
             self.check_for_once_only_backed_off_icon_requeries(hwnd);
-            self.trigger_enum_windows_query_pending(true);
+            self .trigger_enum_windows_query_pending (EnumWindowsReqType::Light);
         }
     }
 
@@ -738,7 +777,7 @@ impl SwitcheState {
             // its in our maps, so lets process it, but if processing now rejects it, we should remove it from map
             if !self.process_discovered_hwnd (hwnd) { self.hwnd_map.write().unwrap().remove(&hwnd); }
             // and a 'light' enum call should take care of ordering changes (whether it is now passing or not)
-            self.trigger_enum_windows_query_pending(true);
+            self .trigger_enum_windows_query_pending (EnumWindowsReqType::Light);
         } // else the destoryed hwnd wasnt even in our list .. we can ignore it
     }
 
@@ -818,7 +857,7 @@ impl SwitcheState {
     fn handle_req__switche_dismiss (&self) {
         // this is called after some window-activation
         self.self_window_hide();
-        self.trigger_enum_windows_query_pending(true);
+        self .trigger_enum_windows_query_pending (EnumWindowsReqType::Light);
         // ^^ we'll do a light query so we'll have the latest ordering when we come back
     }
     fn handle_req__switche_escape (&self) {
@@ -826,14 +865,14 @@ impl SwitcheState {
         self.self_window_hide();
         //self.handle_req__nth_recent_window_activate(0);
         // ^^ should we reactivate last active window before we dismiss .. nah .. should rather maintain 'least-surprise'
-        self.trigger_enum_windows_query_pending(false);
+        self .trigger_enum_windows_query_pending (EnumWindowsReqType::Full);
         // ^^ this is also a good time to do a full query to keep things in sync if any weird events etc have fallen through the cracks
     }
     fn handle_req__switche_quit (&self) {
         self.app_handle.read().unwrap().as_ref() .map (|ah| ah.exit(0));
     }
     fn handle_req__self_auto_resize (&self) {
-        crate::tauri::auto_setup_self_window (self.render_lists_m.self_hwnd.load(Ordering::Relaxed));
+        crate::tauri::auto_setup_self_window (&self, self.render_lists_m.self_hwnd.load(Ordering::Relaxed));
     }
     fn handle_req__toggle_auto_hide (&self) {
         //let auto_hide_state = self.conf.toggle_flag__auto_hide_enabled();
@@ -853,7 +892,8 @@ impl SwitcheState {
     pub(crate) fn handle_req__data_load(&self) {
         // ^ this triggers on reload .. we'll use that to refresh our hooks, configs etc too
         self.conf.load();
-        self.render_lists_m.reload_exes_excl_set(self.conf.get_exe_exclusions_list());
+        self.render_lists_m .reload_exes_excl_set (self.conf.get_exe_exclusions_list());
+        self.render_lists_m .reload_ordering_ref_map (self.conf.get_exe_manual_ordering_seq());
         self.i_proc.re_set_hooks();
         // first we'll send what data we have
         self.emit_configs();
@@ -866,11 +906,12 @@ impl SwitcheState {
         // then we'll trigger a refresh too
         self.render_lists_m.clear_grouping();
         self.icons_m.mark_all_cached_icon_mappings_stale();
-        self.trigger_enum_windows_query_pending(false);    // this will also trigger a renderlist push once the call is done
+        self .trigger_enum_windows_query_pending (EnumWindowsReqType::Full);
+        // ^^ this will also trigger a renderlist push once the call is done
     }
     fn handle_req__refresh (&self) {
         self.icons_m.mark_all_cached_icon_mappings_stale();
-        self.trigger_enum_windows_query_pending(false)
+        self .trigger_enum_windows_query_pending (EnumWindowsReqType::Full)
     }
 
 
@@ -934,6 +975,8 @@ impl SwitcheState {
 
     pub fn checked_self_activate (&self) {
         if self.is_dismissed.is_set() || self.is_fgnd.is_clear() || self.render_lists_m.self_hwnd() != win_apis::get_fgnd_window() {
+            //self .trigger_enum_windows_query_immdt (EnumWindowsReqType::Light);
+            // ^^ will happen on fgnd anyway, and is fast enough to not notice difference between those two
             self.self_window_activate();
             //self.handle_event__switche_fgnd();
             // ^^ this should trigger from win-event fgnd report anyway .. and calling this triggers icon refresh, so we'll let it happen then
@@ -968,6 +1011,7 @@ impl SwitcheState {
     }
 
     pub fn proc_hot_key__switch_last (&self)  {
+        self .trigger_enum_windows_query_immdt (EnumWindowsReqType::Light);
         self.handle_req__second_recent_window_activate()
     }
     pub fn proc_hot_key__switch_app (&self, exe:Option<&str>, title:Option<&str>) {
@@ -1104,9 +1148,27 @@ impl RenderReadyListsManager {
                 render_list       : RwLock::new(Default::default()),
                 grpd_render_list  : RwLock::new(Default::default()),
                 exes_excl_set     : RwLock::new(Default::default()),
+                ordering_ref_map  : RwLock::new(Default::default()),
             } ) )
         ) .clone()
     }
+
+    pub fn reload_exes_excl_set (&self, exes:Vec<String>) {
+        let mut ees = self.exes_excl_set.write().unwrap();
+        ees.clear();
+        exes.into_iter() .for_each (|e| { ees.insert(e); });
+    }
+    pub fn reload_ordering_ref_map (&self, exes:Vec<String>) {
+        let mut orm = self.ordering_ref_map.write().unwrap();
+        orm.clear();
+        exes .into_iter() .enumerate() .for_each (|(i,s)| { orm.insert(s,i); });
+        if !orm.contains_key(Config::UNKNOWN_EXE_STR) {
+            let next_idx = orm.len();
+            orm.insert(Config::UNKNOWN_EXE_STR.to_string(), next_idx);
+        }
+    }
+
+
 
     // --- rendering exclusions ---
 
@@ -1125,11 +1187,6 @@ impl RenderReadyListsManager {
     pub fn runtime_should_excl_check (&self, wde:&WinDatEntry) -> bool {
         wde.should_exclude .unwrap_or_else ( move || self.calc_excl_flag(wde) )
     }
-    pub fn reload_exes_excl_set (&self, exes:Vec<String>) {
-        let mut ees = self.exes_excl_set.write().unwrap();
-        ees.clear();
-        exes.into_iter() .for_each (|e| { ees.insert(e); });
-    }
     fn exes_excl_check (&self, estr:&str) -> bool {
         self.exes_excl_set.read().unwrap().contains(estr)
     }
@@ -1137,8 +1194,7 @@ impl RenderReadyListsManager {
 
 
 
-
-    // --- groups ordering registry ----
+    // --- groups auto-ordering registry ----
 
     fn update_entry (&self, exe_path:&String, ge:GroupSortingEntry, perc_idx:f32) {
         let mean_perc_idx = (ge.mean_perc_idx * ge.seen_count as f32 + perc_idx) / (ge.seen_count + 1) as f32;
@@ -1163,10 +1219,16 @@ impl RenderReadyListsManager {
 
 
 
+
     // --- render lists calculations ---
 
-    fn grl_cmp_ext (&self, po:&Option<&String> ) -> Option<f32> {
-        po.as_ref() .map (|&p| self.grp_sorting_map.read().unwrap().get(p) .as_ref() .map (|gse| gse.mean_perc_idx) ) .flatten()
+    fn grl_cmp_auto_ext (&self, po:&Option<&ExePathName> ) -> Option<f32> {
+        let grm = self.grp_sorting_map.read().unwrap();
+        po.as_ref() .map (|&p| grm.get(&p.full_path) .as_ref() .map (|gse| gse.mean_perc_idx) ) .flatten()
+    }
+    fn grl_cmp_manual_ext (&self, po:&Option<&ExePathName> ) -> Option<f32> {
+        let orm = self.ordering_ref_map.read().unwrap();
+        po.as_ref() .map (|&p| orm .get(&p.name) .or (orm.get(Config::UNKNOWN_EXE_STR)) .map (|v| *v as f32) ) .flatten()
     }
 
     fn recalc_render_ready_lists (&self, ss:&SwitcheState) -> (Vec<RenderListEntry>, Vec<Vec<RenderListEntry>>) {
@@ -1177,27 +1239,30 @@ impl RenderReadyListsManager {
             .filter (|&wde| !self.runtime_should_excl_check(wde)) .collect::<Vec<&_>>();
         let filt_rlp = filt_wdes .iter() .enumerate() .map ( |(i,wde)| {
             // we'll also register these while we're creating the RLEs
-            let fp = wde.exe_path_name .as_ref() .map (|p| &p.full_path);
-            fp .iter() .for_each ( |fp| {
+            wde.exe_path_name .as_ref() .map (|p| &p.full_path) .iter() .for_each ( |fp| {
                 self.register_entry (fp, i, filt_wdes.len() as u32, is_dismissed)
             } );
-            (fp, RenderListEntry { hwnd: wde.hwnd, y: 1+i as u32 })
+            (wde.exe_path_name.as_ref(), RenderListEntry { hwnd: wde.hwnd, y: 1+i as u32 })
             // ^^ note that renderlist entries are 1 based corresponding to how we want them shown in the UI
             // (and we calc and send from here instead of just wde vecs as grpd-render-list still should use recents-ordered/sorted ids!)
-        } ) .collect::<Vec<(Option<&String>, RenderListEntry)>>();
+        } ) .collect::<Vec<(Option<&ExePathName>, RenderListEntry)>>();
 
         let filt_rl = filt_rlp .iter() .map (|(_,rle)| *rle) .collect::<Vec<RenderListEntry>>();
 
         let mut grpd_render_list_builder = {
-            filt_rlp .iter() .grouping_by (|(fp,_)| fp) .iter()
+            filt_rlp .iter() .grouping_by (|(epn,_)| epn) .iter()
                 .map (|(fp,rlepv)| (*fp, rlepv.iter().map(|&(_,rle)| *rle).collect::<Vec<RenderListEntry>>()))
-                .collect::<Vec<(&Option<&String>,Vec<RenderListEntry>)>>()
+                .collect::<Vec<(&Option<&ExePathName>,Vec<RenderListEntry>)>>()
         };
+        // we'll want to order these by perc_idx if auto-order, else by whats in configs .. we break ties by exe name
+        // .. so we'll set up the appropirate comparison extractor for those two cases
+        let cmp_ext = if ss.conf.check_flag__auto_order_window_groups() { Self::grl_cmp_auto_ext } else { Self::grl_cmp_manual_ext };
+
         grpd_render_list_builder .sort_unstable_by ( |&(pa,_), &(pb,_)| {
             // we'll break ties w exe path so there's no instability in ui ordering when two groups have equal perc_idx
-            match  self.grl_cmp_ext (pa) .partial_cmp (&self.grl_cmp_ext(pb)) .unwrap() {
+            match  cmp_ext (&self, pa) .partial_cmp ( &cmp_ext (&self, pb) ) .unwrap() {
                 // note ^^ that unwrap is ok because it would fail only for NaN
-                std::cmp::Ordering::Equal => pa.cmp(pb),
+                std::cmp::Ordering::Equal => pa.map(|e| &e.name) .cmp (&pb.map(|e| &e.name)),
                 ord => ord
             }
         } );

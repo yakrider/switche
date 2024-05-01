@@ -10,6 +10,9 @@ export default defineConfig({
     host: '127.0.0.1',
     port: 4173,
     strictPort: true,
+    watch: {
+      usePolling: true,
+    },	 	 
   },
   // to make use of `TAURI_PLATFORM`, `TAURI_ARCH`, `TAURI_FAMILY`,
   // `TAURI_PLATFORM_VERSION`, `TAURI_PLATFORM_TYPE` and `TAURI_DEBUG`

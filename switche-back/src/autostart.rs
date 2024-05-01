@@ -7,7 +7,7 @@ use tauri::{AppHandle, Wry};
 use planif::enums::TaskCreationFlags;
 use planif::schedule::TaskScheduler;
 use planif::schedule_builder::{Action, ScheduleBuilder};
-use planif::settings::RunLevel;
+use planif::settings::{Duration, LogonType, PrincipalSettings, RunLevel};
 
 use crate::win_apis;
 
@@ -76,30 +76,30 @@ fn _setup_task__switche_autostart (elev:bool) -> Result<(), Box<dyn Error>> {
     let swi_exe = std::env::current_exe().unwrap().to_string_lossy().to_string();
     println! (".. Creating auto start on logon task for:{:?}, elev:{:?}, exe:{:?}", user, elev, swi_exe);
 
-    let principal = planif::settings::PrincipalSettings {
+    let principal = PrincipalSettings {
         display_name: "".to_string(),
         group_id: None,
         id: "".to_string(),
-        logon_type: planif::settings::LogonType::InteractiveToken,
+        logon_type: LogonType::InteractiveToken,
         run_level: if elev { RunLevel::Highest } else { RunLevel::LUA },
         user_id: Some(user.clone()),
     };
 
-    //let settings = planif::settings::Settings::default();
-    //settings.execution_time_limit = Some("PT0S".to_string());
-
     sb.create_logon()
         .trigger ("", true)?
+        .author ("Switche")?
         .description ("Switche auto-start")?
         //.settings(_settings)?
         .principal (principal)?
         .user_id (&*user)?
-        .author ("Switche")?
         .in_folder (autostart_task_folder())?
         .action (Action::new ("Switche.exe", &*swi_exe, "", ""))?
+        .delay ( Duration { seconds : Some(10), ..Default::default() } )?
         .build()?
         .register (&*task, TaskCreationFlags::CreateOrUpdate as i32)
 
+    // ^^ note that the order in which the actions are called seem to be important ..
+    // .. for example, calling .trigger() later in the call seems to not have the trigger available for the delay call
 }
 
 

@@ -87,6 +87,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "atomic_enum"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "99e1aca718ea7b89985790c94aad72d77533063fe00bc497bb79a7c2dae6a661"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.60",
+]
+
+[[package]]
 name = "autocfg"
 version = "1.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2035,7 +2046,7 @@ checksum = "d231b230927b5e4ad203db57bbcbee2802f6bce620b1e4a9024a07d94e2907ec"
 [[package]]
 name = "planif"
 version = "1.0.0"
-source = "git+https://github.com/yakrider/planif.git?branch=check_task#91d797c814b655ad90aadc901ca4a779d3186864"
+source = "git+https://github.com/yakrider/planif.git?branch=check_task#322f2d737055ee919e305a7ffc18efe0632aa71a"
 dependencies = [
  "windows 0.48.0",
 ]
@@ -2699,6 +2710,7 @@ dependencies = [
 name = "switche"
 version = "2.2.8"
 dependencies = [
+ "atomic_enum",
  "base64 0.21.7",
  "grouping_by",
  "image",

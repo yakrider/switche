@@ -36,12 +36,13 @@ case class IconEntry_P      ( ico_id:Int, ico_str:String )     derives ReadWrite
 case class BackendNotice_P  ( msg:String )                     derives ReadWriter
 
 case class Configs (
-   is_elevated            : Boolean = false,
-   alt_tab_enabled        : Boolean = true,
-   rbtn_whl_enabled       : Boolean = true,
-   auto_hide_enabled      : Boolean = true,
-   group_mode_enabled     : Boolean = true,
-   n_grp_mode_top_recents : Int     = 9,
+    is_elevated            : Boolean = false,
+    alt_tab_enabled        : Boolean = true,
+    rbtn_whl_enabled       : Boolean = true,
+    auto_hide_enabled      : Boolean = true,
+    group_mode_enabled     : Boolean = true,
+    n_grp_mode_top_recents : Int     = 9,
+    grp_ordering_is_auto   : Boolean = true,
 ) derives ReadWriter
 
 
@@ -287,6 +288,7 @@ object Switche {
       RibbonDisplay.setElevated (configs.is_elevated)
       RibbonDisplay.setAltTabEnabled (configs.alt_tab_enabled)
       RibbonDisplay.setRbtnWheelEnabled (configs.rbtn_whl_enabled)
+      RibbonDisplay.setGrpOrderingAuto (configs.grp_ordering_is_auto)
       
       if (configs.group_mode_enabled != inGroupedMode) {
          inGroupedMode = configs.group_mode_enabled

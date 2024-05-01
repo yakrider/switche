@@ -12,25 +12,21 @@ import $file.scalablytyped
 
 
 object switche extends JavaModule {
-
-   def scalaVersion = "3.2.2" // "2.13.10"
-
-   // override def ivyDeps = Acc("??")
-
    
    object client extends ScalaJSModule {
      
-      def scalaVersion = "3.2.2" // "2.13.10"
+      //def scalaVersion = "2.13.13"
+      def scalaVersion = "3.3.3"
+      
       def scalaJSVersion = "1.16.0"
      
       //override def moduleKind = T { ModuleKind.CommonJSModule }
       override def moduleKind = T { ModuleKind.ESModule }
      
       override def ivyDeps = Agg(
-         ivy"org.scala-js::scalajs-dom::2.4.0",
-         ivy"com.lihaoyi::scalatags::0.12.0",
-         ivy"com.lihaoyi::upickle::3.0.0",
-         //ivy"com.lihaoyi::ujson::3.0.0"
+         ivy"org.scala-js::scalajs-dom::2.8.0",
+         ivy"com.lihaoyi::scalatags::0.13.1",
+         ivy"com.lihaoyi::upickle::3.3.0",
       )
       
       def moduleDeps = Seq(
@@ -50,19 +46,21 @@ object switche extends JavaModule {
       
    }
    
+   
    /* NOTE :
-      The following copy fns are only here because the RootModule support in mill isnt released yet
-      Once that is out, we can follow the updated examples there that should simplify setting webapp folder like here
+      Since our backend is a separate (non-scala) tauri app, which we run for dev w vite, we want to prep a webapp folder it can watch
+      .. hence the webapp target to copy over of statics and generated js to a serve-ready webapp folder
     */
    
-   
-   def copyStatics = T {
+   def webapp = T {
+      // the goal here is to have the webapp statics and generated js copied everytime we rebuild/update (as the webapp folder gets cleaned)
+      
+      // first we'll copy the statics (and so changing things like css will trigger rebuild while watching switche.webapp)
       super.resources() .foreach {p =>
          os.copy.over (p.path / "webapp", T.workspace / "out" / "webapp")
       }
-      ()
-   }
-   def copyFastLinkOut = T {
+      
+      // then we'll copy the generated js (and since it depends on fastLinkJS, it will trigger when any code file changes)
       val jsPath = switche.client.fastLinkJS().dest.path
       val webappPath = T.workspace / "out" / "webapp"
       os.copy.over (jsPath / "main.js", webappPath / "main.js")
@@ -70,13 +68,7 @@ object switche extends JavaModule {
       
       //val touchFile = T.workspace / "src-tauri" / "src" / "main.rs"
       //os.proc("touch", touchFile.wrapped.toString).call()
-      // ^^ shouldnt need this now that we're using vite for hot-reload dev server
-   }
-   def webapp = T {
-      switche.copyStatics()
-      //switche.client.fastLinkJS()
-      copyFastLinkOut()
-      ()
+      // ^^ shouldnt need this now that we're using vite for hot-reload dev server (gotta usePolling in watch there)
    }
    
 }

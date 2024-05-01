@@ -35,15 +35,16 @@
 
 body {
    background: var(--background-color);
-   border: 1px solid #8e8600;
-   padding: 4px 8px 8px 8px;
+   padding: 1px 1px 1px 1px;
 }
 
 #scala-js-root-div {
-   margin: 0;
-   height: calc(100vh - 14px);
    overflow: hidden;
-   padding: 0px 4px 0px 4px;
+   padding: 4px 12px 4px 12px;
+   border: 1px solid var(--ribbon-color);
+   border-radius: 8px;
+   height: calc(100vh - 12px);
+   width: calc(100vw - 28px);
 }
 
 
@@ -53,8 +54,8 @@ body {
   font-size: 14px;
   display: inline-flex;
   align-items: center;
-  width: 98%;
-  padding: 4px;
+  width: -webkit-fill-available;
+  padding: 2px 8px 2px 4px;
 }
 #top-ribbon a { color: var(--ribbon-color); }
 
@@ -63,12 +64,12 @@ body {
 .menubox {
   display: inline-block;
   position: relative;
-  width: 32px;
+  width: 36px;
 }
 .menulink { }
 .menulink:before {
    content: "☰";
-   font-size: 18px;
+   font-size: 24px;
    color: var(--ribbon-color);
 }
 .dropdown {
@@ -105,7 +106,7 @@ body {
 .indicator {
   display: inline-block;
   position: relative;
-  width: 40px;
+  width: 32px;
   text-align: center;
 }
 .indicator.left { }
@@ -126,56 +127,82 @@ body {
 .tooltip.right { right: 10px; }
 .tooltip.show { display: block; }
 .tooltip span { }
+.tooltip div { text-align: left; }
+
+
+.indicator .content {
+    border: 1px solid;
+    width: 14px;
+    height: 12px;
+    padding-bottom: 2px;
+    display: inline-flex;
+    align-items: center;
+    place-content: center;
+    font-weight: bold;
+}
 
 .altTabIndicator { color: var(--dim-color); }
 .altTabIndicator.on { color: var(--alt-tab-color); }
 .altTabIndicator:before {
-   content: "Ⓐ"; font-size: 14px;
+   content: "A"; font-size: 12px;
 }
 
 .rbtnWheelIndicator { color: var(--dim-color); }
 .rbtnWheelIndicator.on { color: var(--rbtn-whl-color); }
 .rbtnWheelIndicator:before {
-   content: "Ⓜ"; font-size: 14px;
+   content: "M"; font-size: 12px;
 }
 
+.autoOrderIndicator { color: var(--dim-color); }
+.autoOrderIndicator.on { color: var(--ribbon-color); }
+.autoOrderIndicator:before {
+   content: "⇅"; font-size: 14px;
+}
 .elevIndicator { color: var(--dim-color); }
 .elevIndicator.on { color: var(--elev-color); }
 .elevIndicator:before {
-   content: "⚿"; font-size: 16px;
+   content: "⚿"; font-size: 14px; font-weight: normal;
 }
+
 
 .armedIndicator { color: var(--dim-color); }
 .armedIndicator.on { color: var(--armed-color); }
 .armedIndicator:before {
-   content: "Ⓡ"; font-size: 16px; font-weight: bold;
+   content: "R"; font-size: 12px;
 }
 
 .dragIndicator {
-   color: var(--drag-color);
+   color: var(--ribbon-color);
    -webkit-app-region: drag; /*cursor: move;*/
    /* webkit drag doesnt work in windows webview */
 }
 .dragIndicator:before {
-   content: "※"; font-size: 18px;
+   content: "※"; font-size: 14px;
 }
+
 
 .countSpan {
    display: inline-block;
    width: 40px;
    text-align: center;
 }
+.countsIndicator { color: var(--ribbon-color); }
+.content.countsIndicator {
+    border: none;
+    padding: 0px 0px 4px 4px;
+}
+
 
 .warnIndicator { color: var(--dim-color); }
 .warnIndicator.on { color: var(--warn-color); }
 .warnIndicator:before {
-   content: "⚠"; font-size: 18px;
+   content: "!"; font-size: 12px;
 }
 
 .helpIndicator { color: var(--help-color); }
 .helpIndicator.on { color: var(--help-color); }
 .helpIndicator:before {
-   content: "⍰"; font-size: 14px; vertical-align: top;
+   content: "?"; font-size: 12px;
 }
 .helpText {
    font: status-bar;
@@ -200,18 +227,18 @@ body {
 
 
 
-.modeHeader    { /*color: var(--mode-header-color);*/ }
+.modeHeader    { font-variant: small-caps; }
 .modeHeader.r  { color: var(--primary-color); }
 .modeHeader.g  { color: var(--primary-color); }
 .modeHeader.gr { color: var(--secondary-color); }
 
 
 
-#elemsDivs { height: calc(100vh - 60px); overflow-y: auto; }
+#elemsDivs { height: -webkit-fill-available; overflow-y: auto; }
 #elemsDivs::-webkit-scrollbar { width: 4px; background: #540; }
 #elemsDivs::-webkit-scrollbar-thumb { background: #970; }
 
-.elemsDiv      { padding: 4px 0px 4px 0px; }
+.elemsDiv      { padding: 8px 0px 4px 0px; }
 .elemsDiv.r    { }
 .elemsDiv.g    { }
 .elemsDiv.gr   { }

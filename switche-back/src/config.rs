@@ -26,60 +26,6 @@ pub type Action = Arc < dyn Fn() + Send + Sync + 'static >;
 
 
 
-impl DeferredExecutor {
-
-    pub fn new () -> Self {
-        Self { deadline: Arc::new (Mutex::new (SystemTime::UNIX_EPOCH)) }
-    }
-    pub fn reset (&self) -> Self {
-        *self.deadline.lock().unwrap() = SystemTime::UNIX_EPOCH;
-        self.clone()
-    }
-    pub fn set_deferral_dur (&self, dur:time::Duration) -> Self {
-        SystemTime::now() .checked_add(dur) .map (|t| *self.deadline.lock().unwrap() = t);
-        self.clone()
-    }
-    pub fn add_deferral_dur (&self, dur:time::Duration) -> Self {
-        let _ = self.deadline.lock().unwrap().checked_add(dur);
-        self.clone()
-    }
-    pub fn is_reset (&self) -> bool {
-        *self.deadline.lock().unwrap() == SystemTime::UNIX_EPOCH
-    }
-    pub fn is_due (&self) -> bool {
-        !self.is_reset() && *self.deadline.lock().unwrap() < SystemTime::now()
-    }
-
-    fn check_defered_action (&self, action:Action) {
-        // if nobody already completed the action (and reset the time), and its time, we'll trigger it
-        // (else, someone else moved the deadline and is waiting for it, so we can exit)
-        if self.is_due() {
-            let mut deadline = self.deadline.lock().unwrap();
-            action();
-            *deadline = SystemTime::UNIX_EPOCH;
-        } else {
-            //println! ("deadline reset or pushed forward, nothing to do")
-        }
-    }
-
-    /// Sets up a deferred action which will only trigger after a deferrable deadline has passed.<br>
-    /// Any subsequent calls to setup deferred action on this deadline will postpone this deadline (if pending).<br>
-    /// When the deadline triggers, (only) the last set action will be executed.<br>
-    /// Resetting a pending deadline effectively cancels any pending actions
-    pub fn setup_deferred_action (&self, action:Action, delay:time::Duration) {
-        // we simply set up a deadline and a thread to wake up and check
-        let dfr_ex = self.clone();
-        dfr_ex.set_deferral_dur(delay);
-        std::thread::spawn ( move || {
-            std::thread::sleep (delay);
-            dfr_ex.check_defered_action(action);
-        } );
-    }
-
-}
-
-
-
 
 # [ derive (Debug) ]
 pub struct _Config {
@@ -97,7 +43,7 @@ impl Deref for Config {
 }
 
 
-const CONF_FILE_NAME : &str = "switche.conf.toml";
+
 
 
 // first some module level helper functions ..
@@ -138,9 +84,12 @@ impl Config {
         } ) .clone()
     }
 
+    pub const CONF_FILE_NAME  : &'static str = "switche.conf.toml";
+    pub const UNKNOWN_EXE_STR : &'static str = "__unknown__";
+
 
     fn get_config_file (&self) -> Option<PathBuf> {  //println! ("get_config_file");
-        let app_dir_loc = get_app_dir() .map (|p| p.join(CONF_FILE_NAME));
+        let app_dir_loc = get_app_dir() .map (|p| p.join(Self::CONF_FILE_NAME));
         //println! ("app_dir_loc: {:?}", app_dir_loc);
         //win_apis::write_win_dbg_string (&format!("SWITCHE : app_dir_loc: {:?}", &app_dir_loc));
         if app_dir_loc.as_ref() .is_some_and (|p| is_writeable(p)) {
@@ -150,7 +99,7 @@ impl Config {
         if swi_data_dir .as_ref() .is_some_and (|p| !p.exists()) {
             let _ = fs::create_dir (swi_data_dir.as_ref().unwrap());
         }
-        let swi_data_dir_loc = swi_data_dir .map (|p| p.join(CONF_FILE_NAME));
+        let swi_data_dir_loc = swi_data_dir .map (|p| p.join(Self::CONF_FILE_NAME));
         //println! ("swi_data_dir_loc: {:?}", swi_data_dir_loc);
         //win_apis::write_win_dbg_string (&format!("SWITCHE : swi_data_dir_loc: {:?}", &swi_data_dir_loc));
 
@@ -256,6 +205,7 @@ impl Config {
     pub fn check_flag__alt_tab_enabled            (&self) -> bool { self.check_flag ( "alt_tab_enabled"                ) }
     pub fn check_flag__rbtn_scroll_enabled        (&self) -> bool { self.check_flag ( "mouse_right_btn_scroll_enabled" ) }
     pub fn check_flag__restore_window_dimensions  (&self) -> bool { self.check_flag ( "restore_window_dimensions"      ) }
+    pub fn check_flag__auto_order_window_groups   (&self) -> bool { self.check_flag ( "auto_order_window_groups"       ) }
 
 
     // only a few flags are settable via code/UI .. (the rest can be changed directly in config file)
@@ -334,6 +284,7 @@ impl Config {
     pub fn get_switche_invocation_hotkeys        (&self)  -> Vec<String> { self.get_string_array ("switche_invocation_hotkeys") }
     pub fn get_direct_last_window_switch_hotkeys (&self)  -> Vec<String> { self.get_string_array ("last_window_direct_switch_hotkeys") }
     pub fn get_exe_exclusions_list               (&self)  -> Vec<String> { self.get_string_array ("exe_exclusions_list") }
+    pub fn get_exe_manual_ordering_seq           (&self)  -> Vec<String> { self.get_string_array ("exe_manual_ordering_seq") }
 
 
     pub fn get_direct_app_switch_hotkeys (&self) -> Vec < (String, Option<String>, Option<String>) > {
@@ -354,4 +305,58 @@ impl Config {
 }
 
 
+
+
+
+impl DeferredExecutor {
+
+    pub fn new () -> Self {
+        Self { deadline: Arc::new (Mutex::new (SystemTime::UNIX_EPOCH)) }
+    }
+    pub fn reset (&self) -> Self {
+        *self.deadline.lock().unwrap() = SystemTime::UNIX_EPOCH;
+        self.clone()
+    }
+    pub fn set_deferral_dur (&self, dur:time::Duration) -> Self {
+        SystemTime::now() .checked_add(dur) .map (|t| *self.deadline.lock().unwrap() = t);
+        self.clone()
+    }
+    pub fn add_deferral_dur (&self, dur:time::Duration) -> Self {
+        let _ = self.deadline.lock().unwrap().checked_add(dur);
+        self.clone()
+    }
+    pub fn is_reset (&self) -> bool {
+        *self.deadline.lock().unwrap() == SystemTime::UNIX_EPOCH
+    }
+    pub fn is_due (&self) -> bool {
+        !self.is_reset() && *self.deadline.lock().unwrap() < SystemTime::now()
+    }
+
+    fn check_defered_action (&self, action:Action) {
+        // if nobody already completed the action (and reset the time), and its time, we'll trigger it
+        // (else, someone else moved the deadline and is waiting for it, so we can exit)
+        if self.is_due() {
+            let mut deadline = self.deadline.lock().unwrap();
+            action();
+            *deadline = SystemTime::UNIX_EPOCH;
+        } else {
+            //println! ("deadline reset or pushed forward, nothing to do")
+        }
+    }
+
+    /// Sets up a deferred action which will only trigger after a deferrable deadline has passed.<br>
+    /// Any subsequent calls to setup deferred action on this deadline will postpone this deadline (if pending).<br>
+    /// When the deadline triggers, (only) the last set action will be executed.<br>
+    /// Resetting a pending deadline effectively cancels any pending actions
+    pub fn setup_deferred_action (&self, action:Action, delay:time::Duration) {
+        // we simply set up a deadline and a thread to wake up and check
+        let dfr_ex = self.clone();
+        dfr_ex.set_deferral_dur(delay);
+        std::thread::spawn ( move || {
+            std::thread::sleep (delay);
+            dfr_ex.check_defered_action(action);
+        } );
+    }
+
+}
 

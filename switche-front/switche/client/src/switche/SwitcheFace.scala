@@ -349,7 +349,7 @@ object SwitchePageState {
    }
    def handleReq_Refresh () = {
       SendMsgToBack.FE_Req_Refresh()
-      RibbonDisplay.blipIndicator()
+      RibbonDisplay.blipArmedIndicator()
    }
    def handleReq_GroupModeToggle() = {
       inGroupedMode = !inGroupedMode;
@@ -462,7 +462,7 @@ object ElemsDisplay {
    def makeElemBox (idStr:String, wde:WinDatEntry, y:Int, elemT:ElemT, grpT:GrpT) : Div = {
       val exeInnerSpan = span ( wde.exe_path_name.map(_.name).getOrElse("exe..").toString ).render
       val yInnerSpan = span (`class`:="ySpan", f"${y}%2d" ).render
-      val titleInnerSpan = span ( wde.win_text.getOrElse("title").toString ).render
+      val titleInnerSpan = span ( wde.win_text.getOrElse("-- no title --").toString ).render
       makeElemBox ( idStr, wde, y, elemT, grpT, exeInnerSpan, yInnerSpan, titleInnerSpan )
    }
    def makeElemBox (
@@ -812,8 +812,8 @@ object RibbonDisplay {
    // -- setup for all the various indicators and their tooltips --
    class Indicator (cls:String) {
       
-      val content = span ( `class`:=cls ).render
-      def setContent (e:Element) = { content .replaceChildren (e); this }
+      val content = div (`class`:=s"content $cls").render   // gets setup with a symbol in css
+      def setContent (e:Element) = { clearedElem(content).appendChild(e); this }
       
       val tooltip = div (`class`:="tooltip left" ).render
       var isToggledOn = false
@@ -850,16 +850,24 @@ object RibbonDisplay {
       
    }
    
-   private val altTabIndicator   = new Indicator ("altTabIndicator" )
-   private val rbtnWhlIndicator  = new Indicator ("rbtnWheelIndicator" )
-   private val elevIndicator     = new Indicator ("elevIndicator" )
+   private val altTabIndicator    = new Indicator ("altTabIndicator" )
+   private val rbtnWhlIndicator   = new Indicator ("rbtnWheelIndicator" )
+   private val autoOrderIndicator = new Indicator ("autoOrderIndicator" )
+   private val elevIndicator      = new Indicator ("elevIndicator" )
    
    private val armedIndicator    = new Indicator ("armedIndicator")
-   armedIndicator .setTooltip ("Key Release Activation: Inactive")
+   armedIndicator .setTooltip ("Key Release Activation : Inactive")
    
    private val dragIndicator  = new Indicator ("dragIndicator" )
    dragIndicator.content.ondblclick = {_ => SendMsgToBack.FE_Req_SelfAutoResize()}
    dragIndicator .setTooltip ("Double-click here to Auto-Size")
+   
+   
+   private val countSpan = span (`class`:="countSpan").render
+   private val countsIndicator = new Indicator ("countsIndicator")
+   countsIndicator .setContent (countSpan)
+   countsIndicator .setTooltip ("Listed Windows Counts")
+   def updateCountsSpan () : Unit = { countSpan .replaceChildren ( span ( s"(${renderList.length})" ).render ) }
    
    private val warnIndicator  = new Indicator ("warnIndicator" ) .alignRight()
    warnIndicator .setTooltip ("No Warnings or Errors")
@@ -868,25 +876,27 @@ object RibbonDisplay {
    helpIndicator.content.onclick = {(e:MouseEvent) => { helpIndicator.toggleTooltip(); e.stopPropagation() } }
    helpIndicator .setTooltip (HelpText.helpText)
    
+   
    def setAltTabEnabled (isEnabled:Boolean) = {
       altTabIndicator.set(isEnabled)
-      altTabIndicator.setTooltip ( if (isEnabled) "Alt-Tab Replacement: Enabled" else "Alt-Tab Replacement: Disabled" )
+      altTabIndicator.setTooltip ( s"Alt-Tab Replacement : ${if (isEnabled) "Enabled" else "Disabled"}" )
    }
    def setRbtnWheelEnabled (isEnabled:Boolean) = {
       rbtnWhlIndicator.set(isEnabled)
-      rbtnWhlIndicator.setTooltip ( if (isEnabled) "Mouse Right Btn with Wheel Activation: Enabled" else "Mouse Right Btn with Wheel Activation: Disabled" )
+      rbtnWhlIndicator.setTooltip ( s"Mouse Right Btn with Wheel Activation : ${if (isEnabled) "Enabled" else "Disabled"}" )
+   }
+   def setGrpOrderingAuto (isEnabled:Boolean) = {
+      autoOrderIndicator.set(isEnabled)
+      autoOrderIndicator.setTooltip ( s"Groups Ordering is : ${if (isEnabled) "Auto" else "From-Configs (Not Auto)"}" )
    }
    def setElevated (isElevated:Boolean) = {
       elevIndicator.set(isElevated)
-      elevIndicator.setTooltip (if (isElevated) "Running Elevated: Yes" else "Running Elevated: No")
+      elevIndicator.setTooltip ( s"Running Elevated : ${if (isElevated) "Yes" else "No"}")
    }
    def setReleaseArmed(isArmed:Boolean) = {
       armedIndicator.set(isArmed)
-      armedIndicator.setTooltip (if (isArmed) "Key Release Activation: Active" else "Key Release Activation: Inactive")
+      armedIndicator.setTooltip ( s"Key Release Activation : ${if (isArmed) "Active" else "Inactive"}" )
    }
-   
-   private val countSpan = span (`class`:="countSpan").render
-   def updateCountsSpan () : Unit = { countSpan .replaceChildren ( span ( s"(${renderList.length})" ).render ) }
    
    
    private val debugLinks = span () .render
@@ -905,7 +915,7 @@ object RibbonDisplay {
       
       def menuItem (text:String, hotkey:String, action:() => Unit) = {
          val menuSpan = span (`class`:="menuItem", text, span (`class`:="menuHotkey", hotkey) ).render
-         a (menuSpan, onclick:= {() => blipIndicator(); action()} ).render
+         a (menuSpan, onclick:= {() => blipArmedIndicator(); action()} ).render
       }
       
       val refresh    = menuItem ("Refresh"      ,   "Ctrl+R" ,   {() => SendMsgToBack.FE_Req_Refresh()      } )
@@ -925,17 +935,16 @@ object RibbonDisplay {
       MenuDropdown.dropdown.classList.remove("show")
       helpIndicator.clearToggle()
    }
-   def blipIndicator () = { armedIndicator.blip() }
+   def blipArmedIndicator () = { armedIndicator.blip() }
    
    
    
    // -- pulling together all the pieces of the top ribbon --
    val topRibbon =  div (
       id:="top-ribbon", MenuDropdown.menu_dropdown,
-      altTabIndicator.indicator, rbtnWhlIndicator.indicator,
-      elevIndicator.indicator, armedIndicator.indicator, dragIndicator.indicator,
-      countSpan, debugLinks, SearchDisplay.searchBox,
-      warnIndicator.indicator, helpIndicator.indicator
+      altTabIndicator.indicator, rbtnWhlIndicator.indicator, autoOrderIndicator.indicator,
+      elevIndicator.indicator, armedIndicator.indicator, dragIndicator.indicator, countsIndicator.indicator,
+      debugLinks, SearchDisplay.searchBox, warnIndicator.indicator, helpIndicator.indicator
    ).render
    
 }

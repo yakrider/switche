@@ -131,9 +131,25 @@ fn extract_self_hwnd (ss:&SwitcheState) -> Option<Hwnd> {
     } ) .flatten() .next() .map (|h| h.0)
 }
 
-pub fn auto_setup_self_window (self_hwnd:Hwnd) {
+pub fn auto_setup_self_window (ss:&SwitcheState, self_hwnd:Hwnd) {
     let wa = win_apis::win_get_work_area();
-    let (x, y, width, height) = ( wa.left + (wa.right-wa.left)/3, 0, (wa.right-wa.left)/2,  wa.bottom - wa.top);
+
+    //let (x, y, width, height) = ( wa.left + (wa.right-wa.left)/3, 0, (wa.right-wa.left)/2,  wa.bottom - wa.top);
+    // ^^ reasonable initial version .. half screen width, full screen height, starting 1/3 from left edge
+
+    // vertically we'll span the full usable height
+    let (y, height) = (0, wa.bottom - wa.top);
+
+    // horizontally we'll span upto half the screen width, but no more than dpi scaled 860px
+    let max_width = ss.app_handle.read().unwrap().as_ref() .and_then (|ah|
+        ah .get_window("main") .and_then (|w| w.scale_factor().ok())
+    ) .unwrap_or (1.0)  * 860.0;
+    let width = std::cmp::min ( (wa.right - wa.left)/2, max_width as i32 );
+
+    // for x, ideally want centerline at 1/3 of the window width (aiming for icons column), as long as it go beyond right edge
+    let max_x = wa.right - width;
+    let x = std::cmp::min ( max_x, wa.left + (wa.right - wa.left)/2 - width/3 );
+
     win_apis::win_move_to (self_hwnd, x, y, width, height);
 }
 fn setup_self_window (ss:&SwitcheState, self_hwnd:Hwnd) {
@@ -146,7 +162,7 @@ fn setup_self_window (ss:&SwitcheState, self_hwnd:Hwnd) {
             return
     } }
     // else the default is to auto-calc window dimensions
-    auto_setup_self_window (self_hwnd);
+    auto_setup_self_window (ss, self_hwnd);
 }
 
 fn proc_event_app_ready (ss:&SwitcheState, _ah:&AppHandle<Wry>) {

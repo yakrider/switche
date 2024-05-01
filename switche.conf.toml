@@ -43,7 +43,7 @@ window_dimensions.location = { x = 0, y = 0 }
 
 # Size of switche window on startup in pixels .. this will be updated when/if the window is resized
 # Setting these to 0 will have switche auto-calculate window size/placement to place it about middle of screen .. defaault is (0, 0)
-# (Note also that double-clicking on the drag-spot around the count in the top-ribbon will also auto-size the window on demand)r
+# (Note also that there is an auto-size widget in the top-ribbon which can be double-clicked to auto-size the window on demand)
 window_dimensions.size = { width = 0, height = 0 }
 
 
@@ -52,6 +52,17 @@ window_dimensions.size = { width = 0, height = 0 }
 exe_exclusions_list = [
     "WDADesktopService.exe",
     "SearchUI.exe"
+]
+
+
+# Enable auto-ordering of windows groups by their z-index aggregated over time .. default is true
+# If this is set to false, group ordering specified in the 'exe_manual_ordering_seq' will be used
+auto_order_window_groups = true
+
+# Manual specification of ordering of (groups of) exes if the above is false .. default is empty
+# The ordering position for windows of unspecified exes can be denoted as "__unknown__" (while others are e.g. "some_app.exe")
+exe_manual_ordering_seq = [
+    "__unknown__"
 ]
 
 
@@ -75,7 +86,7 @@ last_window_direct_switch_hotkeys = ["Alt+F1", "Ctrl+Alt+F16"]
 # Each entry can be listed under [[flex_hotkey]] table heading, and must have a 'hotkey' specified
 # The optional 'exe' field is the executable name (without the path) of the app to switch to
 # The optional 'title' field is the window-title of the app to switch to (if present)
-# The hotkey will toggle between the cur window and the first not-currently-top window matching the specs
+# The hotkey will toggle between the cur window and the first not-currently-top window matching the specs (if any)
 # Note: Updates to these configs are ONLY picked up upon restarting (not just reloading) the application
 
 [[flex_hotkey]]
