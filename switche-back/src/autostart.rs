@@ -42,7 +42,7 @@ fn _check_sched_task_enabled (name:&str) -> Result<bool, Box<dyn Error>> {
 
 fn set_sched_task_enabled_state (name:&str, state:bool) -> Result<(), Box<dyn Error>> {
     let res = _set_sched_task_enabled_state (name, state);
-    if let Err(&ref e) = res.as_ref() {
+    if let Err(e) = res.as_ref() {
         println!("While setting task enabled state of {:?} to {:?}, got error {:?}", name, state, e);
     }
     res
@@ -91,12 +91,12 @@ fn _setup_task__switche_autostart (elev:bool) -> Result<(), Box<dyn Error>> {
         .description ("Switche auto-start")?
         //.settings(_settings)?
         .principal (principal)?
-        .user_id (&*user)?
+        .user_id (&user)?
         .in_folder (autostart_task_folder())?
-        .action (Action::new ("Switche.exe", &*swi_exe, "", ""))?
+        .action (Action::new ("Switche.exe", &swi_exe, "", ""))?
         .delay ( Duration { seconds : Some(10), ..Default::default() } )?
         .build()?
-        .register (&*task, TaskCreationFlags::CreateOrUpdate as i32)
+        .register (&task, TaskCreationFlags::CreateOrUpdate as i32)
 
     // ^^ note that the order in which the actions are called seem to be important ..
     // .. for example, calling .trigger() later in the call seems to not have the trigger available for the delay call
@@ -126,13 +126,11 @@ pub fn proc_tray_event__toggle_switche_autostart (elev:bool, ah:&AppHandle<Wry>)
                     let _ = set_sched_task_enabled_state (nel_t.as_ref().unwrap().as_str(), false);
                 }
             }
-        } else {
-            if nel_en {
-                let _ = set_sched_task_enabled_state (nel_t.as_ref().unwrap().as_str(), false);
-            } else if !el_en {
-                // we'll only enable the non-elev task if the elev task is not enabled
-                let _ = setup_task__switche_autostart(false);
-            }
+        } else if nel_en {
+            let _ = set_sched_task_enabled_state (nel_t.as_ref().unwrap().as_str(), false);
+        } else if !el_en {
+            // we'll only enable the non-elev task if the elev task is not enabled
+            let _ = setup_task__switche_autostart(false);
         }
         update_tray_auto_start_admin_flags (&ah);
     } );
@@ -151,7 +149,7 @@ pub fn update_tray_auto_start_admin_flags (ah:&AppHandle<Wry>) {
         let nel_en = autostart_task_name(false) .map_or (false, |n| check_sched_task_enabled (&n));
         ah .tray_handle() .try_get_item("auto_start") .map (|e| e.set_selected (nel_en));
 
-        if win_apis::check_cur_proc_elevated().is_some_and(|b| b==true) {
+        if win_apis::check_cur_proc_elevated() == Some(true) {
             // while elev, elev tray-menu will be enabled, and non-elev will be disabled unless non-elev task is already enabled
             ah .tray_handle() .try_get_item("auto_start_admin") .map (|e| e.set_enabled (true) );
             ah .tray_handle() .try_get_item("auto_start") .map (|e| e.set_enabled (nel_en) );

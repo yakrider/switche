@@ -7,7 +7,7 @@
 //#[macro_use] extern crate strum_macros;
 
 use std::collections::{HashMap, HashSet};
-use std::ops::Deref;
+use std::ops::{Deref, Not};
 use std::sync::Arc;
 //use no_deadlocks::RwLock;
 use std::sync::RwLock;
@@ -120,6 +120,7 @@ pub struct RenderList_Pl {
 # [ derive (Debug, Eq, PartialEq, Hash, Default, Clone, Serialize, Deserialize) ]
 /// Configs-payload contains the subset of configs that is sent to the front-end
 pub struct Configs_Pl {
+    switche_version        : &'static str,
     is_elevated            : bool,
     alt_tab_enabled        : bool,
     rbtn_whl_enabled       : bool,
@@ -130,7 +131,8 @@ pub struct Configs_Pl {
 }
 impl Configs_Pl {
     pub fn assemble (ss:&SwitcheState) -> Configs_Pl { Configs_Pl {
-        is_elevated            : win_apis::check_cur_proc_elevated().is_some_and(|b| b==true),
+        switche_version        : Config::SWITCHE_VERSION,
+        is_elevated            : win_apis::check_cur_proc_elevated().unwrap_or(false),
         alt_tab_enabled        : ss.conf.check_flag__alt_tab_enabled(),
         rbtn_whl_enabled       : ss.conf.check_flag__rbtn_scroll_enabled(),
         auto_hide_enabled      : ss.conf.check_flag__auto_hide_enabled(),
@@ -184,8 +186,8 @@ impl Flag {
     pub fn store (&self, state:bool) { self.0 .store (state, Ordering::SeqCst) }
 
     pub fn check    (&self) -> bool { self.0 .load (Ordering::SeqCst) }
-    pub fn is_set   (&self) -> bool { true  == self.0 .load (Ordering::SeqCst) }
-    pub fn is_clear (&self) -> bool { false == self.0 .load (Ordering::SeqCst) }
+    pub fn is_set   (&self) -> bool { self.0 .load (Ordering::SeqCst) }
+    pub fn is_clear (&self) -> bool { self.0 .load (Ordering::SeqCst) .not() }
     pub fn toggle   (&self) -> bool { ! self.0 .fetch_xor (true, Ordering::SeqCst) }
 }
 
@@ -200,17 +202,20 @@ pub struct EnumWindowsReqType_A (AtomicEnumWindowsReqType);
 
 impl EnumWindowsReqType_A {
     pub fn new () -> EnumWindowsReqType_A {
-        EnumWindowsReqType_A ( AtomicEnumWindowsReqType::new(EnumWindowsReqType::Light) )
+        EnumWindowsReqType_A ( AtomicEnumWindowsReqType::new (EnumWindowsReqType::Light) )
     }
     pub fn get (&self) -> EnumWindowsReqType {
         self.0 .load (Ordering::SeqCst)
     }
     pub fn set (&self, req_type: EnumWindowsReqType) {
-        let _ = self.0 .store (req_type, Ordering::SeqCst);
+        self.0 .store (req_type, Ordering::SeqCst);
     }
     pub fn is_light (&self) -> bool {
         self.0 .load (Ordering::SeqCst) == EnumWindowsReqType::Light
     }
+}
+impl Default for EnumWindowsReqType_A {
+    fn default () -> Self { Self::new() }
 }
 
 
@@ -288,11 +293,11 @@ impl SwitcheState {
         INSTANCE .get_or_init ( || {
             let ss = SwitcheState ( Arc::new ( _SwitcheState {
                 hwnd_map       : RwLock::new (HashMap::new()),
-                hwnds_ordered  : RwLock::new (Vec::new()),
-                hwnds_acc      : RwLock::new (Vec::new()),
+                hwnds_ordered  : RwLock::new (Vec::default()),
+                hwnds_acc      : RwLock::new (Vec::default()),
 
                 cur_call_id       : AtomicIsize::default(),
-                cur_win_enum_type : EnumWindowsReqType_A::new(),
+                cur_win_enum_type : EnumWindowsReqType_A::default(),
 
                 is_dismissed   : Flag::default(),
                 is_fgnd        : Flag::default(),
@@ -365,6 +370,7 @@ impl SwitcheState {
         } );
     }
 
+    #[ allow (clippy::missing_safety_doc) ]
     pub unsafe extern "system" fn enum_windows_streamed_callback (hwnd:HWND, call_id:LPARAM) -> BOOL {
         let ss = SwitcheState::instance();
         let latest_call_id = ss.cur_call_id .load (Ordering::Relaxed);
@@ -372,7 +378,8 @@ impl SwitcheState {
             println! ("WARNING: got win-api callback w higher call_id than last triggered .. will restart enum-call! !");
             ss.trigger_enum_windows_query_immdt (ss.cur_win_enum_type.get());
             return BOOL (false as i32)
-        } else if call_id.0 < latest_call_id {
+        };
+        if call_id.0 < latest_call_id {
             // if we're still getting callbacks with stale call_id, signal that call to stop
             println! ("WARNING: got callbacks @cur-call-id {} from stale cb-id: {} .. ending it!!", latest_call_id, call_id.0);
             return BOOL (false as i32)
@@ -408,12 +415,7 @@ impl SwitcheState {
 
         let mut hmap = self.hwnd_map.write().unwrap();
 
-        if !hmap.contains_key(&hwnd) {
-            let mut tmp = WinDatEntry::default();
-            tmp.hwnd = hwnd;
-            hmap.insert (hwnd,tmp);
-        }
-        let wde = hmap.get_mut(&hwnd).unwrap();
+        let wde = hmap .entry(hwnd) .or_insert_with (|| WinDatEntry { hwnd, ..WinDatEntry::default() } );
 
         let mut should_emit = false;
 
@@ -425,8 +427,8 @@ impl SwitcheState {
         // but only query exe-path if we havent populated it before
         if !wde.is_exe_queried {
             should_emit = true; wde.is_exe_queried = true;
-            wde.exe_path_name = get_hwnd_exe_path(wde.hwnd) .and_then (|s| Self::parse_exe_path(s));
-            if wde.exe_path_name .iter() .find (|ep| ep.name.as_str() == "ApplicationFrameHost.exe") .is_some() { //dbg!(hwnd);
+            wde.exe_path_name = get_hwnd_exe_path(wde.hwnd) .and_then (Self::parse_exe_path);
+            if wde.exe_path_name .iter() .any (|ep| ep.name.as_str() == "ApplicationFrameHost.exe") { //dbg!(hwnd);
                 wde.is_uwp_app = Some(true);
                 if let Some(pkg_path) = get_package_path_from_hwnd(hwnd).as_ref() { //dbg!(&pkg_path);
                     if let Some(mfp) = icons::uwp_processing::get_uwp_manifest_parse(pkg_path) {
@@ -438,7 +440,7 @@ impl SwitcheState {
             }
         }
 
-        let excl_flag = Some ( self.render_lists_m.calc_excl_flag (&wde) );
+        let excl_flag = Some ( self.render_lists_m.calc_excl_flag (wde) );
         if wde.should_exclude != excl_flag { should_emit = true }
         wde.should_exclude = excl_flag;
 
@@ -450,12 +452,12 @@ impl SwitcheState {
                 if should_emit { self.emit_win_dat_entry (wde) }
                 return true
         } }
-        return false
+        false
     }
 
 
     fn parse_exe_path (exe_path:String) -> Option<ExePathName> {
-        let name = exe_path .split(r"\") .last() .unwrap_or_default() .to_string();
+        let name = exe_path .split('\\') .last() .unwrap_or_default() .to_string();
         if name.is_empty() { None } else { Some (ExePathName { full_path: exe_path, name }) }
     }
 
@@ -464,13 +466,13 @@ impl SwitcheState {
         // we want to clean up both map entries and any icon-cache mappings for any hwnds that are no longer present
         self.cur_win_enum_type .set (EnumWindowsReqType::Light);
         // ^^ this is for next call .. since it needs all pending calls to specify light, its init should be light too
-        let cur_hwnds_set = self.hwnds_acc.read().unwrap() .iter() .map(|h| *h) .collect::<HashSet<Hwnd>>();
-        let dead_hwnds = self.hwnds_ordered.read().unwrap() .iter() .map(|h| *h)
-            .filter (|hwnd| !cur_hwnds_set.contains(hwnd)) .collect::<Vec<Hwnd>>();
-        dead_hwnds .iter() .for_each (|hwnd| {
-            self.hwnd_map .read().unwrap()  .get(&hwnd) .map (|wde| self.icons_m.clear_dead_hwnd(wde));
-            self.hwnd_map .write().unwrap() .remove(&hwnd);
-        });
+        let cur_hwnds_set = self.hwnds_acc.read().unwrap() .iter() .copied() .collect::<HashSet<Hwnd>>();
+        self.hwnds_ordered.read().unwrap() .iter()
+            .filter (|hwnd| !cur_hwnds_set.contains(hwnd))
+            .for_each (|hwnd| {
+                if let Some(wde) = self.hwnd_map .read().unwrap() .get(hwnd) { self.icons_m.clear_dead_hwnd(wde) };
+                self.hwnd_map .write().unwrap() .remove(hwnd);
+            } );
         // and we'll swap out the live order-list with the readied accumulator to make the new ordering current
         std::mem::swap (&mut *self.hwnds_ordered.write().unwrap(), &mut *self.hwnds_acc.write().unwrap());
         //println!("hwnds:{}, hacc:{}", self.hwnds_ordered.read().unwrap().len(), self.hwnds_acc.read().unwrap().len());
@@ -501,11 +503,10 @@ impl SwitcheState {
         self.emit_backend_notice (Backend_Notice::switche_event__in_fgnd);
         // the idea below is that to keep icons mostly updated, we do icon-refresh for a window when it comes to fgnd ..
         // however, when switche is brought to fgnd, recent changes in the topmost window might not be updated yet .. so we'll trigger that here
-        let rleo = self .render_lists_m.render_list.read().unwrap() .first() .copied();
-        rleo .map ( |rle| {
-            self .hwnd_map .read().unwrap() .get(&rle.hwnd) .as_ref() .map (|wde| self.icons_m.queue_icon_refresh(wde));
+        if let Some(rle) = self .render_lists_m.render_list.read().unwrap() .first() .copied() {
+            if let Some(wde) = self .hwnd_map .read().unwrap() .get(&rle.hwnd) { self.icons_m.queue_icon_refresh(wde) };
             // note that this ^^ will extend read scope into icon-refresh and its children, but it avoids having to clone wde
-        } );
+        };
     }
     fn handle_event__switche_fgnd_lost (&self) {
         if self.is_fgnd.is_clear() { return }
@@ -525,27 +526,32 @@ impl SwitcheState {
     }
 
     fn activate_matching_window (&self, exe:Option<&str>, title:Option<&str>) {
+
         let hwnd_map = self.hwnd_map.read().unwrap();
-        let top2 : Vec<Hwnd> = self.render_lists_m.render_list.read().unwrap() .iter() .map ( |rle| {
-            //let hwnd = rle.hwnd;
-            hwnd_map .get (&rle.hwnd)
-        } ) .flatten() .filter ( |wde|
-            ( exe.is_none()   || exe .filter (|&p| wde.exe_path_name.as_ref().filter(|_p| _p.name.as_str() == p).is_some()).is_some() ) &&
-            ( title.is_none() || title .filter (|&t| wde.win_text.as_ref().filter(|_t| _t.as_str() == t).is_some()).is_some() )
-        ) .take(2) .map (|wde| wde.hwnd) .collect::<Vec<_>>();
-        // if we found the hwnd, if its not already active, activate it, else switch to next window
-        if top2.first().is_none() {
-            // didnt find anything, so do nothing
-        } else if top2.first() != self.render_lists_m.render_list.read().unwrap().first().map(|rle| rle.hwnd).as_ref() {
-            // found it, and its not top, switch to it
-            top2 .first() .map (|&hwnd| self.handle_req__window_activate(hwnd));
-        } else if top2.get(1).is_some() && top2.get(1) != self.render_lists_m.render_list.read().unwrap().first().map(|rle| rle.hwnd).as_ref() {
-            // first was already on top, but there's a second one matching, so lets switch to that (so toggling effect on matching)
-            top2 .get(1) .map (|&hwnd| self.handle_req__window_activate(hwnd));
-        } else {
-            // found it, its already at top, and there are no other matches, so toggle to the second top window instead
-            self.handle_req__second_recent_window_activate();
+
+        let top2 : Vec<Hwnd> = self.render_lists_m.render_list.read().unwrap()
+            .iter() .filter_map ( |rle| hwnd_map .get (&rle.hwnd))
+            .filter ( |wde|
+                ( exe.is_none()   || exe .filter (|&p| wde.exe_path_name.as_ref().filter(|_p| _p.name.as_str() == p).is_some()).is_some() ) &&
+                ( title.is_none() || title .filter (|&t| wde.win_text.as_ref().filter(|_t| _t.as_str() == t).is_some()).is_some() )
+            ) .take(2) .map (|wde| wde.hwnd) .collect::<Vec<_>>();
+
+        if top2.is_empty() { return }
+
+        // if we found the hwnd, if its not already active, activate it
+        let rle_top = self.render_lists_m.render_list.read().unwrap() .first() .map(|rle| rle.hwnd);
+        if top2.first() != rle_top.as_ref() {
+            self.handle_req__window_activate (*top2.first().unwrap());
+            return
         }
+        // if the top match was already active, if there was a second match, activate that
+        if top2.get(1) != rle_top.as_ref() {
+            if let Some(&hwnd) = top2 .get(1) {
+                self.handle_req__window_activate(hwnd);
+                return
+        }  }
+        // so we found a match, its already at top, and there are no other matches .. so toggle to window behind it
+        self.handle_req__second_recent_window_activate();
     }
 
 
@@ -606,6 +612,7 @@ impl SwitcheState {
     }
 
 
+    #[ allow (clippy::missing_safety_doc) ]
     pub unsafe extern "system" fn win_event_hook_cb (
         _id_hook: HWINEVENTHOOK, event: u32, hwnd: HWND,
         id_object: i32, id_child: i32, _id_thread: u32, _event_time: u32
@@ -674,7 +681,7 @@ impl SwitcheState {
             for i in 1..15 {
                 // quadratic backoff seems reasonable .. 6 backoffs accumulates to x100, 11 to x500, 15 to 1240
                 sleep (Duration::from_millis (100 * i*i));   // w 100ms multiplier, 15th backoff happens by around 2 mins
-                ss.hwnd_map.read().unwrap().get(&hwnd) .map (|wde| ss.icons_m.queue_icon_refresh(wde));
+                if let Some(wde) = ss.hwnd_map.read().unwrap().get(&hwnd) { ss.icons_m.queue_icon_refresh(wde) };
             }
         } );
     }
@@ -713,7 +720,7 @@ impl SwitcheState {
         }
         // for everything that came to fgnd, we definitely want to reprocess it first (so its state, excl, icons can be updated)
         // but first we'll set its icon to be refreshed upon reprocessing
-        self.hwnd_map.read().unwrap() .get(&hwnd) .map (|wde| self.icons_m.mark_cached_icon_mapping_stale(wde));
+        if let Some(wde) = self.hwnd_map.read().unwrap() .get(&hwnd) { self.icons_m.mark_cached_icon_mapping_stale(wde) };
         let render_check_passed = self.process_discovered_hwnd(hwnd);
 
         // and if its renderable, we'll also check/set this for first-timer icon requeries
@@ -754,7 +761,9 @@ impl SwitcheState {
             return
         }
         // before we reprocess, if this was in our list, we'll prime it to have icon refreshed upon processing
-        self.hwnd_map.read().unwrap() .get(&hwnd) .map (|wde| self.icons_m.mark_cached_icon_mapping_stale(wde));
+        if let Some(wde) = self.hwnd_map.read().unwrap() .get(&hwnd) {
+            self.icons_m.mark_cached_icon_mapping_stale(wde);
+        }
 
         // then do the initial processing, and if that returns renderable-passed, set up ordering-only enum-query
         if self.process_discovered_hwnd(hwnd) {
@@ -830,8 +839,8 @@ impl SwitcheState {
 
     fn self_window_activate (&self) {
         self.is_dismissed.clear();
-        self.app_handle .read().unwrap() .iter() .for_each ( |ah| {
-            ah .windows() .get("main") .map (|w| {
+        self.app_handle .read().unwrap() .iter() .for_each (|ah| {
+            ah .windows() .get("main") .iter() .for_each (|w| {
                 let (_, _) = ( w.show(), w.set_focus() );
                 //let (_, _, _) = ( w.show(), w.set_focus(), w.set_always_on_top(true) );
                 // ^^ disabling setting always-on-top since it doesnt play too well when auto-hide is disabled ..
@@ -848,9 +857,7 @@ impl SwitcheState {
 
     fn handle_req__nth_recent_window_activate (&self, n:usize) {
         let hwnd = self.render_lists_m.render_list.read().unwrap() .get(n) .map (|e| e.hwnd);
-        spawn ( move || {
-            hwnd .map ( |hwnd| win_apis::window_activate(hwnd) );
-        } );
+        spawn ( move || hwnd.map(win_apis::window_activate) );
     }
 
 
@@ -869,10 +876,10 @@ impl SwitcheState {
         // ^^ this is also a good time to do a full query to keep things in sync if any weird events etc have fallen through the cracks
     }
     fn handle_req__switche_quit (&self) {
-        self.app_handle.read().unwrap().as_ref() .map (|ah| ah.exit(0));
+        if let Some(ah) = self.app_handle.read().unwrap().as_ref() { ah.exit(0); }
     }
     fn handle_req__self_auto_resize (&self) {
-        crate::tauri::auto_setup_self_window (&self, self.render_lists_m.self_hwnd.load(Ordering::Relaxed));
+        crate::tauri::auto_setup_self_window (self, self.render_lists_m.self_hwnd.load(Ordering::Relaxed));
     }
     fn handle_req__toggle_auto_hide (&self) {
         //let auto_hide_state = self.conf.toggle_flag__auto_hide_enabled();
@@ -920,11 +927,11 @@ impl SwitcheState {
         println! ("received {:?}", r);
 
         match r.req.as_str() {
-            "fe_req_window_activate"      => { r.hwnd .map (|h| self.handle_req__window_activate (h as Hwnd) ); }
-            "fe_req_window_peek"          => { r.hwnd .map (|h| self.handle_req__window_peek     (h as Hwnd) ); }
-            "fe_req_window_minimize"      => { r.hwnd .map (|h| self.handle_req__window_minimize (h as Hwnd) ); }
-            "fe_req_window_maximize"      => { r.hwnd .map (|h| self.handle_req__window_maximize (h as Hwnd) ); }
-            "fe_req_window_close"         => { r.hwnd .map (|h| self.handle_req__window_close    (h as Hwnd) ); }
+            "fe_req_window_activate"      => { r.hwnd .iter() .for_each (|&h| self.handle_req__window_activate (h as Hwnd) ); }
+            "fe_req_window_peek"          => { r.hwnd .iter() .for_each (|&h| self.handle_req__window_peek     (h as Hwnd) ); }
+            "fe_req_window_minimize"      => { r.hwnd .iter() .for_each (|&h| self.handle_req__window_minimize (h as Hwnd) ); }
+            "fe_req_window_maximize"      => { r.hwnd .iter() .for_each (|&h| self.handle_req__window_maximize (h as Hwnd) ); }
+            "fe_req_window_close"         => { r.hwnd .iter() .for_each (|&h| self.handle_req__window_close    (h as Hwnd) ); }
 
             "fe_req_data_load"            => { self.handle_req__data_load()        }
             "fe_req_refresh"              => { self.handle_req__refresh()          }
@@ -949,8 +956,8 @@ impl SwitcheState {
         let ss = self.clone();
         let _ = ah .listen_global ( "frontend_request", move |event| {
             //println!("got event with raw payload {:?}", &event.payload());
-            event .payload() .map ( |ev| serde_json::from_str::<FrontendRequest>(ev).ok() )
-                .flatten() .iter() .for_each (|ev| ss.handle_frontend_request(ev))
+            event .payload() .and_then ( |ev| serde_json::from_str::<FrontendRequest>(ev).ok() )
+                .iter() .for_each (|ev| ss.handle_frontend_request(ev))
         } );
     }
 
@@ -1056,7 +1063,7 @@ impl SwitcheState {
     pub fn emit_configs (&self) {
         println! ("** emitting .. configs-update");
         self.app_handle .read().unwrap() .iter() .for_each ( |ah| {
-            serde_json::to_string (&Configs_Pl::assemble(&self)) .map (|pl| {
+            serde_json::to_string (&Configs_Pl::assemble(self)) .map (|pl| {
                 ah.emit_all::<String> ( Backend_Event::updated_configs.str(), pl )
             } ) .err() .iter() .for_each (|err| println!("configs emit failed: {:?}", err));
         } );
@@ -1068,8 +1075,8 @@ impl SwitcheState {
         self.app_handle.read().unwrap() .iter() .for_each ( |ah| {
             serde_json::to_string(&pl) .map ( |pl| {
                 println!("sending backend notice: {}", &pl);
-                ah.emit_all::<String> ( Backend_Event::backend_notice.str(), pl ) .or_else(|_| Err("emit failure"))
-            } ) .or_else (|err| { Err(err) }) .err() .iter().for_each (|err| println!("render-list emit failed: {}", err));
+                ah.emit_all::<String> ( Backend_Event::backend_notice.str(), pl ) .map_err (|_| "emit failure")
+            } ) .err() .iter().for_each (|err| println!("render-list emit failed: {}", err));
         } )
     }
 
@@ -1082,8 +1089,8 @@ impl SwitcheState {
         //println!("emitting renderlist ({:?}): {:?}", rlp.rl.len(), serde_json::to_string(&rlp).unwrap());
         self.app_handle.read().unwrap().iter().for_each ( |ah| {
             serde_json::to_string(&rlp).map(|pl| {
-                ah.emit_all::<String>(Backend_Event::updated_render_list.str(), pl).or_else(|_| Err("emit failure"))
-            }).or_else (|err| { Err(err) }) .err().iter().for_each (|err| println!("rl emit failed: {}", err));
+                ah.emit_all::<String>(Backend_Event::updated_render_list.str(), pl) .map_err (|_| "emit failure")
+            }) .err() .iter().for_each (|err| println!("rl emit failed: {}", err));
         } )
     }
 
@@ -1196,10 +1203,10 @@ impl RenderReadyListsManager {
 
     // --- groups auto-ordering registry ----
 
-    fn update_entry (&self, exe_path:&String, ge:GroupSortingEntry, perc_idx:f32) {
+    fn update_entry (&self, exe_path:&str, ge:GroupSortingEntry, perc_idx:f32) {
         let mean_perc_idx = (ge.mean_perc_idx * ge.seen_count as f32 + perc_idx) / (ge.seen_count + 1) as f32;
         self.grp_sorting_map.write().unwrap() .insert (
-            exe_path.clone(), GroupSortingEntry { seen_count: ge.seen_count+1, mean_perc_idx }
+            exe_path.to_owned(), GroupSortingEntry { seen_count: ge.seen_count+1, mean_perc_idx }
         );
     }
 
@@ -1224,11 +1231,11 @@ impl RenderReadyListsManager {
 
     fn grl_cmp_auto_ext (&self, po:&Option<&ExePathName> ) -> Option<f32> {
         let grm = self.grp_sorting_map.read().unwrap();
-        po.as_ref() .map (|&p| grm.get(&p.full_path) .as_ref() .map (|gse| gse.mean_perc_idx) ) .flatten()
+        po .and_then (|p| grm .get(&p.full_path) .map (|gse| gse.mean_perc_idx) )
     }
     fn grl_cmp_manual_ext (&self, po:&Option<&ExePathName> ) -> Option<f32> {
         let orm = self.ordering_ref_map.read().unwrap();
-        po.as_ref() .map (|&p| orm .get(&p.name) .or (orm.get(Config::UNKNOWN_EXE_STR)) .map (|v| *v as f32) ) .flatten()
+        po .and_then (|p| orm .get(&p.name) .or (orm.get(Config::UNKNOWN_EXE_STR)) .map (|v| *v as f32) )
     }
 
     fn recalc_render_ready_lists (&self, ss:&SwitcheState) -> (Vec<RenderListEntry>, Vec<Vec<RenderListEntry>>) {
@@ -1260,7 +1267,7 @@ impl RenderReadyListsManager {
 
         grpd_render_list_builder .sort_unstable_by ( |&(pa,_), &(pb,_)| {
             // we'll break ties w exe path so there's no instability in ui ordering when two groups have equal perc_idx
-            match  cmp_ext (&self, pa) .partial_cmp ( &cmp_ext (&self, pb) ) .unwrap() {
+            match  cmp_ext (self, pa) .partial_cmp ( &cmp_ext (self, pb) ) .unwrap() {
                 // note ^^ that unwrap is ok because it would fail only for NaN
                 std::cmp::Ordering::Equal => pa.map(|e| &e.name) .cmp (&pb.map(|e| &e.name)),
                 ord => ord

@@ -1,6 +1,6 @@
 
 
-### Switche - <small>A Searchable Task Switcher &nbsp;&nbsp; (v2.2.8)</small>
+### Switche - <small>A Searchable Task Switcher</small>
 
 Switche is designed to be a fast, ergonomic, and search-first task switcher.
 
@@ -33,6 +33,14 @@ Some other key features are explained below:
 - Ctrl+W, mouse middle-click : Close the selected window
 - Ctrl+P : Peek at the selected window for a few seconds
 - Other hotkeys for direct switching to specific-applications can be setup in configs.
+
+#### Windows Listings
+- *Recents* section shows a subset of windows ordered by most recently in foreground
+- The number shown here is configurable, but the minimum is 2 for quick switching
+- The intended focus is on the *Grouped* section where windows are organized by exe
+- The ordering of the grouped section can be set to auto or specified in configs
+- Auto-ordering is based on a running tally of the average z-index of each group
+- Windows can be specified in configs by exe and/or title to be excluded from the lists.
 
 #### Special Considerations
 - When not elevated/as-admin, Switche can not close/switch-to elevated app windows.

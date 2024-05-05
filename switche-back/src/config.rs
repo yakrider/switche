@@ -62,7 +62,7 @@ fn _is_writeable (path: &Path) -> bool {
 
 /// Checks whether a path is writeable by the current user by attempting to open/create a file in write mode
 fn is_writeable (path: &Path) -> bool {
-    fs::OpenOptions::new().write(true).create(true).open(path).is_ok()
+    fs::OpenOptions::new().write(true).create(true).truncate(false).open(path).is_ok()
     // note that ^^ this is similar to 'touch' and will create an empty file if it doesnt exist
 }
 
@@ -87,6 +87,8 @@ impl Config {
     pub const CONF_FILE_NAME  : &'static str = "switche.conf.toml";
     pub const UNKNOWN_EXE_STR : &'static str = "__unknown__";
 
+    pub const SWITCHE_VERSION : &'static str = env!("CARGO_PKG_VERSION");
+
 
     fn get_config_file (&self) -> Option<PathBuf> {  //println! ("get_config_file");
         let app_dir_loc = get_app_dir() .map (|p| p.join(Self::CONF_FILE_NAME));
@@ -106,7 +108,7 @@ impl Config {
         if swi_data_dir_loc .as_ref() .is_some_and (|p| is_writeable(p)) {
             return swi_data_dir_loc
         }
-        return None
+        None
     }
 
     pub fn trigger_config_file_edit (&self) {
@@ -122,9 +124,9 @@ impl Config {
 
     pub fn load (&self) {
         if let Some(conf_path) = self.get_config_file().as_ref() {
-            if let Some(cfg_str) = fs::read_to_string(conf_path).ok() {
+            if let Ok(cfg_str) = fs::read_to_string(conf_path) {
                 if !cfg_str.trim().is_empty() {
-                    if let Some(toml) = DocumentMut::from_str(&cfg_str).ok() {
+                    if let Ok(toml) = DocumentMut::from_str(&cfg_str) {
                         // successfully read and parsed a writeable non-empty toml, we'll use that
                         self.toml.write().unwrap().replace(toml);
                         return
@@ -138,7 +140,7 @@ impl Config {
         let conf_path = self.get_config_file();
         if conf_path.is_none() { return }
         let _ = fs::write (
-            &conf_path.as_ref().unwrap(),
+            conf_path.as_ref().unwrap(),
             self.toml.read().unwrap().as_ref() .map (|d| d.to_string()).unwrap_or_default()
         );
     }
@@ -146,13 +148,13 @@ impl Config {
         let conf_path = self.get_config_file();
         if conf_path.is_none() { return }
         let toml_str = self.toml.read().unwrap().as_ref() .map (|d| d.to_string()) .unwrap_or_default();
-        let old_toml_str = fs::read_to_string (&conf_path.as_ref().unwrap()) .unwrap_or_default();
+        let old_toml_str = fs::read_to_string (conf_path.as_ref().unwrap()) .unwrap_or_default();
         if toml_str != old_toml_str {
-            let _ = fs::write (&conf_path.as_ref().unwrap(), toml_str);
+            let _ = fs::write (conf_path.as_ref().unwrap(), toml_str);
         }
     }
     pub fn deferred_write_back_toml (&self) {
-        static dfr_ex: Lazy<DeferredExecutor> = Lazy::new (|| DeferredExecutor::new() );
+        static dfr_ex: Lazy<DeferredExecutor> = Lazy::new (DeferredExecutor::default);
         let conf = self.clone();
         let action = Arc::new (move || conf.write_back_toml_if_changed());
         dfr_ex .setup_deferred_action (action, time::Duration::from_millis(300));
@@ -190,10 +192,10 @@ impl Config {
     }
 
     fn get_string_array (&self, key:&str) -> Vec<String> {
-        self.toml.read().unwrap().as_ref()
+        self.toml.read().unwrap() .as_ref()
             .and_then (|t| t.get(key))
             .and_then (|t| t.as_array())
-            .map (|t| t.iter() .map (|v| v.as_str().map(|s| s.to_string())) .flatten() .collect())
+            .map (|t| t.iter() .filter_map (|v| v.as_str().map(|s| s.to_string())) .collect())
             .unwrap_or ( self.default.get(key).unwrap().as_array().unwrap().iter() .map (|v| v.as_str().unwrap().to_string()) .collect() )
     }
 
@@ -250,7 +252,7 @@ impl Config {
             ) {
                 return Some ( (x as i32, y as i32, w as i32, h as i32) )
         } }
-        return None
+        None
     }
     pub fn update_conf__switche_window (&self, ah:&AppHandle<Wry>) { println! ("update_conf__switche_window");
         let (ah, conf) = (ah.clone(), self.clone());
@@ -271,7 +273,7 @@ impl Config {
         } );
     }
     pub fn deferred_update_conf__switche_window (&self, ah:&AppHandle<Wry>) {
-        static dfr_ex: Lazy<DeferredExecutor> = Lazy::new (|| DeferredExecutor::new() );
+        static dfr_ex: Lazy<DeferredExecutor> = Lazy::new (DeferredExecutor::default);
         if !self.check_flag__restore_window_dimensions() { return }
         let (conf, ah) = (self.clone(), ah.clone());
         let action = Arc::new ( move || conf.update_conf__switche_window(&ah) );
@@ -297,7 +299,7 @@ impl Config {
                 let title  = e.get("title")  .and_then (|v| v.as_str() .map (|v| v.to_string()) );
                 hotkey .map (|hk| Some ( (hk, exe, title) )) .unwrap_or (None)
             } ) .collect() )
-            .unwrap_or ( vec![] )
+            .unwrap_or_default()
     }
 
 
@@ -307,7 +309,9 @@ impl Config {
 
 
 
-
+impl Default for DeferredExecutor {
+    fn default () -> Self { Self::new() }
+}
 impl DeferredExecutor {
 
     pub fn new () -> Self {
@@ -318,7 +322,9 @@ impl DeferredExecutor {
         self.clone()
     }
     pub fn set_deferral_dur (&self, dur:time::Duration) -> Self {
-        SystemTime::now() .checked_add(dur) .map (|t| *self.deadline.lock().unwrap() = t);
+        if let Some(t) = SystemTime::now().checked_add(dur) {
+            *self.deadline.lock().unwrap() = t
+        }
         self.clone()
     }
     pub fn add_deferral_dur (&self, dur:time::Duration) -> Self {
@@ -359,4 +365,3 @@ impl DeferredExecutor {
     }
 
 }
-

@@ -1,4 +1,4 @@
-#![ allow (non_snake_case) ]
+#![ allow (non_snake_case, clippy::missing_safety_doc) ]
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicIsize, AtomicU32, Ordering};
@@ -157,7 +157,7 @@ fn unset_hook (hhook: &AtomicIsize) -> bool {
     } else {
         println!("unhooking attempt .. no prior hook found !!");
     }
-    return false
+    false
 }
 
 
@@ -245,7 +245,7 @@ pub unsafe extern "system" fn kbd_hook_cb (code:c_int, w_param:WPARAM, l_param:L
         return return_call()
         // ^^ note that we cant block it even if we send out a replacement because it could be left/right/virt whatever
     }
-    return return_call()
+    return_call()
 }
 
 
@@ -258,7 +258,7 @@ fn send_key_event (virt_key:VIRTUAL_KEY, is_key_up:bool) {
     let keyup_flag = if is_key_up { KEYEVENTF_KEYUP } else { no_flag };
     let (scan_code, sc_flag, ext_key_flag) = (0, no_flag, no_flag);
 
-    let mut inputs = [ INPUT {
+    let inputs = [ INPUT {
         r#type: INPUT_KEYBOARD,
         Anonymous: INPUT_0 {
             ki: KEYBDINPUT {
@@ -269,7 +269,7 @@ fn send_key_event (virt_key:VIRTUAL_KEY, is_key_up:bool) {
                 dwExtraInfo: SWITCHE_INJECTED_IDENTIFIER_EXTRA_INFO,
         } }
     } ];
-    unsafe { SendInput (&mut inputs, core::mem::size_of::<INPUT>() as c_int) };
+    unsafe { SendInput (&inputs, core::mem::size_of::<INPUT>() as c_int) };
 }
 
 
@@ -339,7 +339,7 @@ fn mouse_hook_cb (code: c_int, w_param: WPARAM, l_param: LPARAM) -> LRESULT {
         }
     }
 
-    return return_call();
+    return_call()
     // ^^ any other case than explicitly cut short above, we'll let it pass through
 }
 
@@ -407,7 +407,7 @@ fn send_mouse_rbtn_release_masked() {
 
 /// Send simulated mouse events to OS for injection into events-stream
 fn send_mouse_input (flags: MOUSE_EVENT_FLAGS, data: u32, dx: i32, dy: i32) {
-    let mut inputs = [ INPUT {
+    let inputs = [ INPUT {
         r#type: INPUT_MOUSE,
         Anonymous: INPUT_0 {
             mi : MOUSEINPUT {
@@ -419,5 +419,5 @@ fn send_mouse_input (flags: MOUSE_EVENT_FLAGS, data: u32, dx: i32, dy: i32) {
                 dwExtraInfo: SWITCHE_INJECTED_IDENTIFIER_EXTRA_INFO
         } }
     } ];
-    unsafe { SendInput (&mut inputs, std::mem::size_of::<INPUT>() as c_int) };
+    unsafe { SendInput (&inputs, std::mem::size_of::<INPUT>() as c_int) };
 }

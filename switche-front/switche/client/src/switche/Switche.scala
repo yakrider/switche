@@ -36,6 +36,7 @@ case class IconEntry_P      ( ico_id:Int, ico_str:String )     derives ReadWrite
 case class BackendNotice_P  ( msg:String )                     derives ReadWriter
 
 case class Configs (
+    switche_version        : String  = "??",
     is_elevated            : Boolean = false,
     alt_tab_enabled        : Boolean = true,
     rbtn_whl_enabled       : Boolean = true,
@@ -289,6 +290,7 @@ object Switche {
       RibbonDisplay.setAltTabEnabled (configs.alt_tab_enabled)
       RibbonDisplay.setRbtnWheelEnabled (configs.rbtn_whl_enabled)
       RibbonDisplay.setGrpOrderingAuto (configs.grp_ordering_is_auto)
+      HelpText.setVersion (configs.switche_version)
       
       if (configs.group_mode_enabled != inGroupedMode) {
          inGroupedMode = configs.group_mode_enabled
@@ -344,8 +346,12 @@ object RenderSpacer {
 
 object HelpText {
    
+   val version = span (`class`:="version")  .render
+   def setVersion (s:String) = version.innerText = s"(v$s)"
+   // ^^ this can be called upon receiving config from backend to set up the placeholder in help-text
+   
    val helpText = div (`class`:="helpText",
-      br, h3 ("Switche - ", small("A Searchable Task Switcher ", raw("&nbsp;&nbsp;"), " (v2.2.8)")),
+      br, h3 ("Switche - ", small("A Searchable Task Switcher ", raw("&nbsp;&nbsp;"), version)),
       br,
       p ("Switche is designed to be a fast, ergonomic, and search-first task switcher."),
       br,
@@ -380,6 +386,14 @@ object HelpText {
          li ("Ctrl+P : Peek at the selected window for a few seconds"),
          li ("Other hotkeys for direct switching to specific-applications can be setup in configs."),
       ), br,
+      h4 ("Windows Listings"), ul (
+         li (i("Recents")," section shows a subset of windows ordered by most recently in foreground"),
+         li ("The number shown here is configurable, but the minimum is 2 for quick switching"),
+         li ("The intended focus is on the ",i("Grouped")," section where windows are organized by exe"),
+         li ("The ordering of the grouped section can be set to auto or specified in configs"),
+         li ("Auto-ordering is based on a running tally of the average z-index of each group"),
+         li ("Windows can be specified in configs by exe and/or title to be excluded from the lists."),
+      ), br,
       h4 ("Special Considerations"), ul (
          li ("When not elevated/as-admin, Switche can not close/switch-to elevated app windows."),
          li ("Running elevated is recommended. The Elevation indicator serves as visual reminder."),
@@ -393,5 +407,7 @@ object HelpText {
       div ("Copyright @ 2024: yakrider@gmail.com ... Distributed under MIT license."),
       br
    ).render
+   
+   helpText.onwheel = (e: dom.WheelEvent) => { e.stopPropagation() }
    
 }

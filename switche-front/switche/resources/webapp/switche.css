@@ -31,6 +31,8 @@
   --warn-color: #d050f0;
   --help-color: #60d060;
   --help-text-color: #d0c0a0;
+  --scrollbar-color: #540;
+  --scroll-thumb-color: #970;
 }
 
 body {
@@ -207,8 +209,12 @@ body {
 .helpText {
    font: status-bar;
    color: var(--help-text-color);
-   text-align: left;
+   max-height: calc(100vh - 80px);
+   overflow-y: auto;
+   padding-right: 4px;
 }
+.helpText::-webkit-scrollbar { width: 4px; background: var(--scrollbar-color); }
+.helpText::-webkit-scrollbar-thumb { background: var(--scroll-thumb-color); }
 
 
 
@@ -235,8 +241,8 @@ body {
 
 
 #elemsDivs { height: -webkit-fill-available; overflow-y: auto; }
-#elemsDivs::-webkit-scrollbar { width: 4px; background: #540; }
-#elemsDivs::-webkit-scrollbar-thumb { background: #970; }
+#elemsDivs::-webkit-scrollbar { width: 4px; background: var(--scrollbar-color); }
+#elemsDivs::-webkit-scrollbar-thumb { background: var(--scroll-thumb-color); }
 
 .elemsDiv      { padding: 8px 0px 4px 0px; }
 .elemsDiv.r    { }

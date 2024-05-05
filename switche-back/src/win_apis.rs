@@ -313,6 +313,8 @@ pub fn get_child_windows (hwnd:Hwnd) -> Vec<isize> { unsafe {
     drop(lock);
     cws
 } }
+
+#[ allow (clippy::missing_safety_doc) ]
 pub unsafe extern "system" fn enum_child_windows_cb (hwnd:HWND, _:LPARAM) -> BOOL {
     child_windows.write().unwrap().push(hwnd.0);
     BOOL (true as i32)

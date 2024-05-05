@@ -126,9 +126,9 @@ fn tauri_window_events_handler (ss:&SwitcheState, ah:&AppHandle, ev:&WindowEvent
 
 
 fn extract_self_hwnd (ss:&SwitcheState) -> Option<Hwnd> {
-    ss.app_handle.read().unwrap().as_ref() .iter() .map (|ah| {
-        ah.windows().values() .next() .map (|w| w.hwnd().ok()) .flatten()
-    } ) .flatten() .next() .map (|h| h.0)
+    ss.app_handle.read().unwrap() .as_ref() .and_then (|ah| {
+        ah.windows().values() .next() .and_then (|w| w.hwnd().ok())
+    } ) .map (|h| h.0)
 }
 
 pub fn auto_setup_self_window (ss:&SwitcheState, self_hwnd:Hwnd) {
@@ -201,7 +201,7 @@ pub fn tray_events_handler (ss:&SwitcheState, ah:&AppHandle<Wry>, event:SystemTr
         SystemTrayEvent::LeftClick   { .. }  =>  { proc_tray_event__left_click(ss) },
         SystemTrayEvent::RightClick  { .. }  =>  { proc_tray_event__right_click(ss) },
         SystemTrayEvent::DoubleClick { .. }  =>  { proc_tray_event__double_click(ss) },
-        SystemTrayEvent::MenuItemClick { id, .. }  =>  { exec_menu_action (&*id, ss, ah) },
+        SystemTrayEvent::MenuItemClick { id, .. }  =>  { exec_menu_action (id.as_str(), ss, ah) },
         _ => { }
     }
 }
