@@ -196,7 +196,7 @@ object SwitcheFacePage {
          // first, keys that are enabled for both normal and  search-state, and with or without alt/ctrl etc :
          case (_, _, _, _, "Enter")      => handleReq_CurElemActivation()
          case (_, _, _, _, "Escape")     =>  //handleReq_SwitcheEscape()   // moved to keyup to avoid leakage of keyup after we use it hide app
-         case (_, _, _, _, "F5")         => dom.window.location.reload()
+         case (_, _, _, _, "F5")         => handleReq_Reload()
          
          // scroll/invoke hotkeys nav
          case (_, _, _, _, "F1")         => focusElem_Next()
@@ -350,6 +350,9 @@ object SwitchePageState {
    def handleReq_Refresh () = {
       SendMsgToBack.FE_Req_Refresh()
       RibbonDisplay.blipArmedIndicator()
+   }
+   def handleReq_Reload() = {
+      dom.window.location.reload()
    }
    def handleReq_GroupModeToggle() = {
       inGroupedMode = !inGroupedMode;
@@ -919,7 +922,7 @@ object RibbonDisplay {
       }
       
       val refresh    = menuItem ("Refresh"      ,   "Ctrl+R" ,   {() => SendMsgToBack.FE_Req_Refresh()      } )
-      val reload     = menuItem ("Reload"       ,   "F5"     ,   {() => dom.window.location.reload()        } )
+      val reload     = menuItem ("Reload"       ,   "F5"     ,   {() => handleReq_Reload()                  } )
       val grp_tgl    = menuItem ("Group Mode"   ,   "Ctrl+G" ,   {() => handleReq_GroupModeToggle()         } )
       val conf_edit  = menuItem ("Edit Config"  ,   ""       ,   {() => SendMsgToBack.FE_Req_EditConfig()   } )
       val conf_reset = menuItem ("Reset Config" ,   ""       ,   {() => SendMsgToBack.FE_Req_ResetConfig()  } )

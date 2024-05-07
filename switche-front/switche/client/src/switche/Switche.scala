@@ -172,7 +172,7 @@ object Switche {
    }
    
 
-   def procHotkey_Invoke() = {
+   def handleBkndReq_Invoke () = {
       // should be same as scroll-down, except we won't arm the scroll-end behavior (as its F1 invocation)
       SwitchePageState.triggerHoverLockTimeout()
       if (isDismissed || !isFgnd) {
@@ -181,13 +181,13 @@ object Switche {
       }
       else { ElemsDisplay.focusElem_Next() }
    }
-   def procHotkey_ScrollDown() : Unit = {
+   def handleBkndReq_ScrollDown () : Unit = {
       // is the same as scrolling down upon invoke, except we'll arm scroll-end for alt-tab and right-mouse-scroll
       if (!SwitchePageState.verifyActionRepeatSpacing()) { return }
       scrollEnd_arm()
-      procHotkey_Invoke()
+      handleBkndReq_Invoke()
    }
-   def procHotkey_ScrollUp() : Unit = {
+   def handleBkndReq_ScrollUp () : Unit = {
       if (!SwitchePageState.verifyActionRepeatSpacing()) { return }
       SwitchePageState.triggerHoverLockTimeout()
       scrollEnd_arm()
@@ -197,7 +197,7 @@ object Switche {
       }
       else { ElemsDisplay.focusElem_Prev() }
    }
-   def procHotkey_ScrollEnd() = { println (s"scroll-end-armed-state: ${scrollEnd_armed}")
+   def handleBkndReq_ScrollEnd () = { println (s"scroll-end-armed-state: ${scrollEnd_armed}")
       SwitchePageState.triggerHoverLockTimeout()
       // note below that a scroll-end only has meaning if we're scrolling (and hence already active)
       if (!isDismissed && isFgnd && scrollEnd_armed) {
@@ -205,16 +205,19 @@ object Switche {
          SwitchePageState.handleReq_CurElemActivation()
       }
    }
-   def procHotkey_ScrollEnd_Disarm() = {
+   def handleBkndReq_ScrollEnd_Disarm () = {
       if (!isDismissed && isFgnd && scrollEnd_armed) { scrollEnd_disarm() }
    }
-   def procHotkey_SwitcheEscape() = {
+   def handleBkndReq_SwitcheEscape () = {
       SwitchePageState.handleReq_SwitcheEscape (fromBkndHotkey = true)
    }
-   def procBkndEvent_SwitcheFgnd() = {
+   def handleBkndReq_SwitcheReload () = {
+      SwitchePageState.handleReq_Reload()
+   }
+   def handleBkndEvent_SwitcheFgnd() = {
       setIsFgnd(); setNotDismissed()
    }
-   def procBkndEvent_FgndLost() = {
+   def handleBkndEvent_FgndLost() = {
       setNotFgnd(); scrollEnd_disarm()
       if (configs.auto_hide_enabled) { setDismissed() }
       RenderSpacer.queueSpacedRender()
@@ -225,14 +228,15 @@ object Switche {
       println (s"got backend_notice payload: ${e.payload}")
       val ep:BackendNotice_P = upickle.default.read[BackendNotice_P](e.payload);
       ep.msg match {
-         case "hotkey_req__app_invoke"        =>  procHotkey_Invoke()
-         case "hotkey_req__scroll_down"       =>  procHotkey_ScrollDown()
-         case "hotkey_req__scroll_up"         =>  procHotkey_ScrollUp()
-         case "hotkey_req__scroll_end"        =>  procHotkey_ScrollEnd()
-         case "hotkey_req__scroll_end_disarm" =>  procHotkey_ScrollEnd_Disarm()
-         case "hotkey_req__switche_escape"    =>  procHotkey_SwitcheEscape()
-         case "switche_event__in_fgnd"        =>  procBkndEvent_SwitcheFgnd()
-         case "switche_event__fgnd_lost"      =>  procBkndEvent_FgndLost()
+         case "backend_req__app_invoke"        =>  handleBkndReq_Invoke()
+         case "backend_req__scroll_down"       =>  handleBkndReq_ScrollDown()
+         case "backend_req__scroll_up"         =>  handleBkndReq_ScrollUp()
+         case "backend_req__scroll_end"        =>  handleBkndReq_ScrollEnd()
+         case "backend_req__scroll_end_disarm" =>  handleBkndReq_ScrollEnd_Disarm()
+         case "backend_req__switche_escape"    =>  handleBkndReq_SwitcheEscape()
+         case "backend_req__switche_reload"    =>  handleBkndReq_SwitcheReload()
+         case "switche_event__in_fgnd"         =>  handleBkndEvent_SwitcheFgnd()
+         case "switche_event__fgnd_lost"       =>  handleBkndEvent_FgndLost()
          case _ => { }
       }
    }

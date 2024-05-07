@@ -8,8 +8,9 @@ use std::sync::{Arc, Mutex, RwLock};
 use std::time::SystemTime;
 
 use once_cell::sync::{Lazy, OnceCell};
-use tauri::{AppHandle, Manager, Wry};
+use tauri::Manager;
 use toml_edit::DocumentMut;
+use crate::switche::SwitcheState;
 
 
 
@@ -254,29 +255,38 @@ impl Config {
         } }
         None
     }
-    pub fn update_conf__switche_window (&self, ah:&AppHandle<Wry>) { println! ("update_conf__switche_window");
-        let (ah, conf) = (ah.clone(), self.clone());
+    pub fn update_conf__switche_window (&self, ss:&SwitcheState) { println! ("update_conf__switche_window");
+        let (conf, ss) = (self.clone(), ss.clone());
         std::thread::spawn ( move || {
-            ah.get_window("main").as_ref() .iter() .for_each (|w| {
-                let mut toml_guard = conf.toml.write().unwrap();
-                if let (Some(p), Some(s), Some(toml)) = (w.outer_position().ok(), w.outer_size().ok(), toml_guard.as_mut()) {
-                    toml ["window_dimensions"] ["location"] ["x"]  = toml_edit::value (p.x as i64);
-                    toml ["window_dimensions"] ["location"] ["y"]  = toml_edit::value (p.y as i64);
-                    toml ["window_dimensions"] ["size"] ["width"]  = toml_edit::value (s.width  as i64);
-                    toml ["window_dimensions"] ["size"] ["height"] = toml_edit::value (s.height as i64);
-                    drop(toml_guard);
-                    conf.write_back_toml_if_changed();
-                } else {
-                    eprintln!("update_conf__switche_window: failed to get window position, size, or toml doc");
-                }
-            } );
+            if let Some(ah) = ss.app_handle.read().unwrap().as_ref() {
+                if let Some(w) = ah.get_window("main") {
+                    // want to confirm its not minimized before we update its dimensions in configs
+                    if w.is_minimized().ok() == Some(true) {
+                        // and we're getting minimized despite setting 'minimizable' as false in tauri.conf.json .. so we'll at least restore it here
+                        w.unminimize().ok();
+                        // plus, minimize makes window tiny, and that seems to move off ribbon etc .. so we'll also reload the page
+                        ss.proc_menu_req__switche_reload();
+                        return
+                    }
+                    let mut toml_guard = conf.toml.write().unwrap();
+                    if let (Some(p), Some(s), Some(toml)) = (w.outer_position().ok(), w.outer_size().ok(), toml_guard.as_mut()) {
+                        toml ["window_dimensions"] ["location"] ["x"]  = toml_edit::value (p.x as i64);
+                        toml ["window_dimensions"] ["location"] ["y"]  = toml_edit::value (p.y as i64);
+                        toml ["window_dimensions"] ["size"] ["width"]  = toml_edit::value (s.width  as i64);
+                        toml ["window_dimensions"] ["size"] ["height"] = toml_edit::value (s.height as i64);
+                        drop(toml_guard);
+                        conf.write_back_toml_if_changed();
+                    } else {
+                        eprintln!("update_conf__switche_window: failed to get window position, size, or toml doc");
+                    }
+            }  }
         } );
     }
-    pub fn deferred_update_conf__switche_window (&self, ah:&AppHandle<Wry>) {
+    pub fn deferred_update_conf__switche_window (&self, ss:&SwitcheState) {
         static dfr_ex: Lazy<DeferredExecutor> = Lazy::new (DeferredExecutor::default);
         if !self.check_flag__restore_window_dimensions() { return }
-        let (conf, ah) = (self.clone(), ah.clone());
-        let action = Arc::new ( move || conf.update_conf__switche_window(&ah) );
+        let (conf, ss) = (self.clone(), ss.clone());
+        let action = Arc::new ( move || conf.update_conf__switche_window(&ss) );
         dfr_ex .setup_deferred_action (action, time::Duration::from_millis(1000));
     }
 

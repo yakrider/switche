@@ -83,12 +83,13 @@ pub struct IconEntry {
 #[derive (Debug, Eq, PartialEq, Hash, Copy, Clone, AsRefStr, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Backend_Notice {
-    hotkey_req__app_invoke,
-    hotkey_req__scroll_down,
-    hotkey_req__scroll_up,
-    hotkey_req__scroll_end,
-    hotkey_req__scroll_end_disarm,
-    hotkey_req__switche_escape,
+    backend_req__app_invoke,
+    backend_req__scroll_down,
+    backend_req__scroll_up,
+    backend_req__scroll_end,
+    backend_req__scroll_end_disarm,
+    backend_req__switche_escape,
+    backend_req__switche_reload,
     switche_event__in_fgnd,
     switche_event__fgnd_lost,
 }
@@ -222,7 +223,7 @@ impl Default for EnumWindowsReqType_A {
 # [ derive ( ) ]
 pub struct _SwitcheState {
 
-    // note: should always use hwnd-map-prior as that only flips fully formed (unlike hamp-cur which might be getting slowly rebuilt)
+    // note: should always use hwnds_ordered as that only flips fully formed (unlike hwnds_acc which might be getting slowly rebuilt)
     pub hwnd_map      : RwLock <HashMap <Hwnd, WinDatEntry>>,
     pub hwnds_ordered : RwLock <Vec <Hwnd>>,
     pub hwnds_acc     : RwLock <Vec <Hwnd>>,
@@ -243,6 +244,7 @@ pub struct _SwitcheState {
     pub conf           : Config,
 
     pub app_handle : RwLock < Option <AppHandle<Wry>>>,
+    pub self_hwnd  : AtomicIsize,
 
 }
 
@@ -264,9 +266,8 @@ struct GroupSortingEntry {
     mean_perc_idx: f32
 }
 
-# [ derive ( ) ]
-pub struct _RenderReadyListsManager {
-    self_hwnd        : AtomicIsize,
+# [ derive (Debug, Default) ]
+pub struct RenderReadyListsManager {
     grp_sorting_map  : RwLock <HashMap <String, GroupSortingEntry>>,
     render_list      : RwLock <Vec <RenderListEntry>>,
     grpd_render_list : RwLock <Vec <Vec <RenderListEntry>>>,
@@ -275,13 +276,6 @@ pub struct _RenderReadyListsManager {
 }
 
 
-# [ derive (Clone) ]
-pub struct RenderReadyListsManager ( Arc <_RenderReadyListsManager> );
-
-impl Deref for RenderReadyListsManager {
-    type Target = _RenderReadyListsManager;
-    fn deref (&self) -> &Self::Target { &self.0 }
-}
 
 
 
@@ -306,12 +300,13 @@ impl SwitcheState {
                 is_mouse_right_down       : Flag::default(),
                 in_right_btn_scroll_state : Flag::default(),
 
-                render_lists_m : RenderReadyListsManager::instance(),
+                render_lists_m : RenderReadyListsManager::default(),
                 i_proc         : InputProcessor::instance(),
                 icons_m        : IconsManager::instance(),
                 conf           : Config::instance(),
 
                 app_handle     : RwLock::new (None),
+                self_hwnd      : AtomicIsize::default(),
             } ) );
             // lets do some init for the new instance
             ss.setup_win_event_hooks();
@@ -325,8 +320,15 @@ impl SwitcheState {
         *self.app_handle.write().unwrap() = Some(ah);
     }
     pub fn store_self_hwnd (&self, hwnd:Hwnd) {
-        self.render_lists_m.store_self_hwnd(hwnd);
+        self.self_hwnd.store (hwnd, Ordering::Relaxed)
     }
+    pub fn get_self_hwnd (&self) -> Hwnd {
+        self.self_hwnd.load(Ordering::Relaxed)
+    }
+    pub fn check_self_hwnd (&self, hwnd:Hwnd) -> bool {
+        hwnd == self.get_self_hwnd()
+    }
+
 
 
 
@@ -403,7 +405,7 @@ impl SwitcheState {
     fn process_discovered_hwnd (&self, hwnd:Hwnd) -> bool {
         use win_apis::*;
 
-        if self.render_lists_m.check_self_hwnd (hwnd) { return false }
+        if self.check_self_hwnd (hwnd) { return false }
 
         if !check_window_visible  (hwnd)  { return false }
         if  check_window_cloaked  (hwnd)  { return false }
@@ -440,7 +442,7 @@ impl SwitcheState {
             }
         }
 
-        let excl_flag = Some ( self.render_lists_m.calc_excl_flag (wde) );
+        let excl_flag = Some ( self.render_lists_m.calc_excl_flag (self,wde) );
         if wde.should_exclude != excl_flag { should_emit = true }
         wde.should_exclude = excl_flag;
 
@@ -714,7 +716,7 @@ impl SwitcheState {
         println! ("@{:?} fgnd: {:?}", self._stamp(), hwnd);
 
         // first, we'll update self-fgnd state if either this is self hwnd, or if its a valid renderable hwnd coming to fgnd
-        if self.render_lists_m.check_self_hwnd(hwnd) {
+        if self.check_self_hwnd(hwnd) {
             self.handle_event__switche_fgnd();
             return
         }
@@ -756,7 +758,7 @@ impl SwitcheState {
         // windows can get into nothing-in-fgnd state, and in such cases, if the new fgnd is the same as what was fgnd last ..
         // .. then it will not send a new fgnd report .. if this happens to switche, our is_fgnd flags get out of sync ..
         // .. so we'll handle this here directly .. and in fgnd report we'll ignore if our is_fgnd flag is already set
-        if self.render_lists_m.check_self_hwnd(hwnd) {
+        if self.check_self_hwnd(hwnd) {
             self.handle_event__switche_fgnd();
             return
         }
@@ -776,7 +778,7 @@ impl SwitcheState {
         //println! ("@{:?} obj-destroyed: {:?}", self._stamp(), hwnd);
 
         // this is counterpart to special swi handling in obj-shown
-        if self.render_lists_m.check_self_hwnd(hwnd) {
+        if self.check_self_hwnd(hwnd) {
             self.handle_event__switche_fgnd_lost();
             return
         }
@@ -818,7 +820,7 @@ impl SwitcheState {
         } );
     }
     fn handle_req__window_peek (&self, hwnd:Hwnd) {
-        let self_hwnd = self.render_lists_m.self_hwnd();
+        let self_hwnd = self.get_self_hwnd();
         spawn ( move || {
             win_apis::window_activate(hwnd);
             // after 'showing'some window for a bit, we'll bring back ourselves
@@ -879,7 +881,7 @@ impl SwitcheState {
         if let Some(ah) = self.app_handle.read().unwrap().as_ref() { ah.exit(0); }
     }
     fn handle_req__self_auto_resize (&self) {
-        crate::tauri::auto_setup_self_window (self, self.render_lists_m.self_hwnd.load(Ordering::Relaxed));
+        crate::tauri::auto_setup_self_window (self);
     }
     fn handle_req__toggle_auto_hide (&self) {
         //let auto_hide_state = self.conf.toggle_flag__auto_hide_enabled();
@@ -899,6 +901,7 @@ impl SwitcheState {
     pub(crate) fn handle_req__data_load(&self) {
         // ^ this triggers on reload .. we'll use that to refresh our hooks, configs etc too
         self.conf.load();
+        crate::tauri::setup_self_window(self);
         self.render_lists_m .reload_exes_excl_set (self.conf.get_exe_exclusions_list());
         self.render_lists_m .reload_ordering_ref_map (self.conf.get_exe_manual_ordering_seq());
         self.i_proc.re_set_hooks();
@@ -981,7 +984,7 @@ impl SwitcheState {
     }
 
     pub fn checked_self_activate (&self) {
-        if self.is_dismissed.is_set() || self.is_fgnd.is_clear() || self.render_lists_m.self_hwnd() != win_apis::get_fgnd_window() {
+        if self.is_dismissed.is_set() || self.is_fgnd.is_clear() || self.get_self_hwnd() != win_apis::get_fgnd_window() {
             //self .trigger_enum_windows_query_immdt (EnumWindowsReqType::Light);
             // ^^ will happen on fgnd anyway, and is fast enough to not notice difference between those two
             self.self_window_activate();
@@ -992,29 +995,29 @@ impl SwitcheState {
     pub fn proc_hot_key__invoke (&self) {
         // we'll ensure the app window is up, then let the frontend deal w it
         self.checked_self_activate();
-        self.emit_backend_notice(Backend_Notice::hotkey_req__app_invoke)
+        self.emit_backend_notice(Backend_Notice::backend_req__app_invoke)
     }
     pub fn proc_hot_key__scroll_down (&self) {
         self.checked_self_activate();
-        self.emit_backend_notice (Backend_Notice::hotkey_req__scroll_down);
+        self.emit_backend_notice (Backend_Notice::backend_req__scroll_down);
     }
     pub fn proc_hot_key__scroll_up (&self) {
         self.checked_self_activate();
-        self.emit_backend_notice (Backend_Notice::hotkey_req__scroll_up);
+        self.emit_backend_notice (Backend_Notice::backend_req__scroll_up);
     }
     pub fn proc_hot_key__scroll_end (&self) {
         if self.is_dismissed.is_clear() && self.is_fgnd.is_set() {
-            self.emit_backend_notice (Backend_Notice::hotkey_req__scroll_end)
+            self.emit_backend_notice (Backend_Notice::backend_req__scroll_end)
         }
     }
     pub fn proc_hot_key__scroll_end_disarm (&self) {
         if self.is_dismissed.is_clear() && self.is_fgnd.is_set() {
-            self.emit_backend_notice (Backend_Notice::hotkey_req__scroll_end_disarm)
+            self.emit_backend_notice (Backend_Notice::backend_req__scroll_end_disarm)
         }
     }
     pub fn proc_hot_key__switche_escape (&self) {
         self.handle_req__switche_escape();
-        self.emit_backend_notice (Backend_Notice::hotkey_req__switche_escape)
+        self.emit_backend_notice (Backend_Notice::backend_req__switche_escape)
     }
 
     pub fn proc_hot_key__switch_last (&self)  {
@@ -1023,6 +1026,10 @@ impl SwitcheState {
     }
     pub fn proc_hot_key__switch_app (&self, exe:Option<&str>, title:Option<&str>) {
         self.activate_matching_window (exe, title)
+    }
+
+    pub fn proc_menu_req__switche_reload(&self) {
+        self.emit_backend_notice (Backend_Notice::backend_req__switche_reload)
     }
 
 
@@ -1146,20 +1153,6 @@ impl SwitcheState {
 
 impl RenderReadyListsManager {
 
-    pub fn instance () -> RenderReadyListsManager {
-        static INSTANCE: OnceCell <RenderReadyListsManager> = OnceCell::new();
-        INSTANCE .get_or_init ( ||
-            RenderReadyListsManager ( Arc::new ( _RenderReadyListsManager {
-                self_hwnd         : AtomicIsize::default(),
-                grp_sorting_map   : RwLock::new(Default::default()),
-                render_list       : RwLock::new(Default::default()),
-                grpd_render_list  : RwLock::new(Default::default()),
-                exes_excl_set     : RwLock::new(Default::default()),
-                ordering_ref_map  : RwLock::new(Default::default()),
-            } ) )
-        ) .clone()
-    }
-
     pub fn reload_exes_excl_set (&self, exes:Vec<String>) {
         let mut ees = self.exes_excl_set.write().unwrap();
         ees.clear();
@@ -1179,20 +1172,16 @@ impl RenderReadyListsManager {
 
     // --- rendering exclusions ---
 
-    pub fn store_self_hwnd (&self, hwnd:Hwnd) { self.self_hwnd.store (hwnd, Ordering::Relaxed) }
-    pub fn self_hwnd (&self) -> Hwnd { self.self_hwnd.load(Ordering::Relaxed) }
-    pub fn check_self_hwnd (&self, hwnd:Hwnd) -> bool { hwnd == self.self_hwnd() }
-
-    pub fn calc_excl_flag (&self, wde:&WinDatEntry) -> bool {
+    pub fn calc_excl_flag (&self, ss:&SwitcheState, wde:&WinDatEntry) -> bool {
         //wde.is_vis == Some(false) ||  wde.is_uncloaked == Some(false) ||    // already covered during enum-filtering
-        // self.check_self_hwnd(wde.hwnd) || wde.win_text.is_none() ||
+        // ss.check_self_hwnd(wde.hwnd) || wde.win_text.is_none() ||
         // ^^ no good reason to exclude legit windows w/o titles
-        self.check_self_hwnd(wde.hwnd) ||
+        ss.check_self_hwnd(wde.hwnd) ||
             wde.exe_path_name.as_ref() .filter (|p| !p.full_path.is_empty()) .is_none() ||
             wde.exe_path_name.as_ref() .filter (|p| !self.exes_excl_check(&p.name)) .is_none()
     }
-    pub fn runtime_should_excl_check (&self, wde:&WinDatEntry) -> bool {
-        wde.should_exclude .unwrap_or_else ( move || self.calc_excl_flag(wde) )
+    pub fn runtime_should_excl_check (&self, ss:&SwitcheState, wde:&WinDatEntry) -> bool {
+        wde.should_exclude .unwrap_or_else ( move || self.calc_excl_flag(ss,wde) )
     }
     fn exes_excl_check (&self, estr:&str) -> bool {
         self.exes_excl_set.read().unwrap().contains(estr)
@@ -1229,51 +1218,79 @@ impl RenderReadyListsManager {
 
     // --- render lists calculations ---
 
-    fn grl_cmp_auto_ext (&self, po:&Option<&ExePathName> ) -> Option<f32> {
-        let grm = self.grp_sorting_map.read().unwrap();
-        po .and_then (|p| grm .get(&p.full_path) .map (|gse| gse.mean_perc_idx) )
-    }
-    fn grl_cmp_manual_ext (&self, po:&Option<&ExePathName> ) -> Option<f32> {
-        let orm = self.ordering_ref_map.read().unwrap();
-        po .and_then (|p| orm .get(&p.name) .or (orm.get(Config::UNKNOWN_EXE_STR)) .map (|v| *v as f32) )
-    }
-
     fn recalc_render_ready_lists (&self, ss:&SwitcheState) -> (Vec<RenderListEntry>, Vec<Vec<RenderListEntry>>) {
+
+        struct RenderListEntryInfo<'a> { exe_path_name: Option <&'a ExePathName>, ico_idx: i32, rle: RenderListEntry }
+
         let is_dismissed = ss.is_dismissed.check();     // local copy to avoid guarded accesses in a loop
         let hwnds = ss.hwnds_ordered.read().unwrap();
         let hwnd_map = ss.hwnd_map.read().unwrap();
         let filt_wdes = hwnds .iter() .flat_map (|h| hwnd_map.get(h))
-            .filter (|&wde| !self.runtime_should_excl_check(wde)) .collect::<Vec<&_>>();
-        let filt_rlp = filt_wdes .iter() .enumerate() .map ( |(i,wde)| {
-            // we'll also register these while we're creating the RLEs
+            .filter (|&wde| !self.runtime_should_excl_check(ss,wde)) .collect::<Vec<_>>();
+
+        // we'll gather all the info to sort the renderlist entries and their groups
+        let filt_rle_info = filt_wdes .iter() .enumerate() .map ( |(i,wde)| {
+            // we'll also register these while we're creating the RLE-infos
             wde.exe_path_name .as_ref() .map (|p| &p.full_path) .iter() .for_each ( |fp| {
                 self.register_entry (fp, i, filt_wdes.len() as u32, is_dismissed)
             } );
-            (wde.exe_path_name.as_ref(), RenderListEntry { hwnd: wde.hwnd, y: 1+i as u32 })
-            // ^^ note that renderlist entries are 1 based corresponding to how we want them shown in the UI
-            // (and we calc and send from here instead of just wde vecs as grpd-render-list still should use recents-ordered/sorted ids!)
-        } ) .collect::<Vec<(Option<&ExePathName>, RenderListEntry)>>();
+            RenderListEntryInfo {
+                exe_path_name : wde.exe_path_name.as_ref(),
+                ico_idx       : ss.icons_m.get_cached_icon_idx(wde).map (|i| i as i32) .unwrap_or(-1),
+                rle           : RenderListEntry { hwnd: wde.hwnd, y: 1+i as u32 }
+                // ^^ note that renderlist entries are 1 based corresponding to how we want them shown in the UI
+                // (and we calc and send from here instead of just wde vecs as grpd-render-list still should show recents-ordered/sorted idxs)
+            }
+        } ) .collect::<Vec<_>>();
 
-        let filt_rl = filt_rlp .iter() .map (|(_,rle)| *rle) .collect::<Vec<RenderListEntry>>();
+        // for recents, we simply order by the natural z-order as returned by the enum call
+        let filt_rl = filt_rle_info .iter() .map (|e| e.rle) .collect::<Vec<_>>();
 
-        let mut grpd_render_list_builder = {
-            filt_rlp .iter() .grouping_by (|(epn,_)| epn) .iter()
-                .map (|(fp,rlepv)| (*fp, rlepv.iter().map(|&(_,rle)| *rle).collect::<Vec<RenderListEntry>>()))
-                .collect::<Vec<(&Option<&ExePathName>,Vec<RenderListEntry>)>>()
-        };
-        // we'll want to order these by perc_idx if auto-order, else by whats in configs .. we break ties by exe name
+        let mut grpd_render_list_builder = filt_rle_info .iter() .grouping_by (|e| e.exe_path_name) .into_values() .collect::<Vec<_>>();
+
+        // within each group, we want to keep the z-order, but first sort by icon-count and icon-idx (mostly for things like chrome apps)
+        let ico_freqs = filt_rle_info .iter() .fold ( HashMap::new(), |mut m, e| { *m.entry(e.ico_idx).or_insert(0) -= 1; m } );
+        // ^^ we use negative counts so that we can sort by descending freq count
+
+        use std::cmp::Ordering;
+        grpd_render_list_builder .iter_mut() .for_each (|es| es.sort_unstable_by ( |a,b| {
+            match ico_freqs.get(&a.ico_idx) .cmp (&ico_freqs.get(&b.ico_idx)) {  // by ico-freq
+                Ordering::Equal => match a.ico_idx .cmp (&b.ico_idx) {  // by ico-idx
+                    Ordering::Equal => a.rle.y .cmp (&b.rle.y),         // by z-index
+                    ord => ord
+                },
+                ord => ord
+            }
+        } ) );
+
+        // as for the groups themselves, we want to order by perc_idx if auto-order, else as listed in configs .. breaking ties by exe name and ico-idx
         // .. so we'll set up the appropirate comparison extractor for those two cases
-        let cmp_ext = if ss.conf.check_flag__auto_order_window_groups() { Self::grl_cmp_auto_ext } else { Self::grl_cmp_manual_ext };
+        fn ext_cmp_auto (rrlm:&RenderReadyListsManager, po:&Option<&ExePathName> ) -> Option<f32> {
+            let grm = rrlm.grp_sorting_map.read().unwrap();
+            po .and_then (|p| grm .get(&p.full_path) .map (|gse| gse.mean_perc_idx) )
+        }
+        fn ext_cmp_manual (rrlm:&RenderReadyListsManager, po:&Option<&ExePathName> ) -> Option<f32> {
+            let orm = rrlm.ordering_ref_map.read().unwrap();
+            po .and_then (|p| orm .get(&p.name) .or (orm.get(Config::UNKNOWN_EXE_STR)) .map (|v| *v as f32) )
+        }
+        let cmp_ext = if ss.conf.check_flag__auto_order_window_groups() { ext_cmp_auto } else { ext_cmp_manual };
 
-        grpd_render_list_builder .sort_unstable_by ( |&(pa,_), &(pb,_)| {
+        grpd_render_list_builder .sort_unstable_by ( |ga, gb| {
             // we'll break ties w exe path so there's no instability in ui ordering when two groups have equal perc_idx
-            match  cmp_ext (self, pa) .partial_cmp ( &cmp_ext (self, pb) ) .unwrap() {
+            let (g_epn_a, g_epn_b) = (ga.first().and_then(|e| e.exe_path_name), gb.first().and_then(|e| e.exe_path_name));
+            match  cmp_ext (self, &g_epn_a) .partial_cmp ( &cmp_ext (self, &g_epn_b) ) .unwrap() {
                 // note ^^ that unwrap is ok because it would fail only for NaN
-                std::cmp::Ordering::Equal => pa.map(|e| &e.name) .cmp (&pb.map(|e| &e.name)),
+                Ordering::Equal => {
+                    let g_exe_a = ga.first() .and_then (|e| e.exe_path_name) .map (|epn| &epn.name);
+                    let g_exe_b = gb.first() .and_then (|e| e.exe_path_name) .map (|epn| &epn.name);
+                    g_exe_a .cmp (&g_exe_b)
+                },
                 ord => ord
             }
         } );
-        let grpd_render_list = grpd_render_list_builder .into_iter() .map (|(_,rlev)| rlev) .collect::<Vec<Vec<RenderListEntry>>>();
+        let grpd_render_list = grpd_render_list_builder .into_iter() .map ( |es| {
+            es .into_iter() .map (|e| e.rle) .collect::<Vec<_>>()
+        } ) .collect::<Vec<Vec<_>>>();
         //println!("render-ready-list recalc -- rl:{:?}", filt_rl.len() ); println!();
         ( filt_rl, grpd_render_list )
     }

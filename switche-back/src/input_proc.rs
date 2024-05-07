@@ -389,7 +389,7 @@ fn send_mouse_rbtn_release_masked() {
     // ^^ screen edge avoids the clicked-loc context menu .. but still produces a tiny desktop context menu
 
     // so we'll move to the bottom-right corner of the switche window instead .. that should prevent context menu from MOST apps
-    let self_rect = win_apis::win_get_window_frame (SwitcheState::instance().render_lists_m.self_hwnd());
+    let self_rect = win_apis::win_get_window_frame (SwitcheState::instance().get_self_hwnd());
     let cursor_mask_loc = POINT { x: self_rect.right - 10, y: self_rect.bottom - 10 };
     //println! ("cursor-mask-loc: {:?}", cursor_mask_loc);
 

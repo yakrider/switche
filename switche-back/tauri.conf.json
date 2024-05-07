@@ -8,7 +8,7 @@
   },
   "package": {
     "productName": "Switche",
-    "version": "2.3.0"
+    "version": "2.3.1"
   },
   "tauri": {
     "allowlist": {
@@ -26,7 +26,8 @@
         "hide": true,
         "setFocus": true,
         "setAlwaysOnTop": true,
-        "startDragging": true
+        "startDragging": true,
+        "unminimize": true
       },
       "fs": {
         "all": true
@@ -64,6 +65,10 @@
         "y": 10,
         "width": 600,
         "height": 650,
+        "minWidth": 600,
+        "minHeight": 650,
+        "maximizable": false,
+        "minimizable": false,
         "decorations": false,
         "transparent": true,
         "focus": false,

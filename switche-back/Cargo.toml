@@ -1,6 +1,6 @@
 [package]
 name = "switche"
-version = "2.3.0"
+version = "2.3.1"
 # ^^ reminder to update this in tauri.conf.json as well
 description = "Switche - Searchable Task Switcher"
 authors = ["yakrider"]
@@ -17,7 +17,7 @@ tauri-build = { version = "1.5.1", features = [] }
 
 [dependencies.tauri]
 version = "1.6.1"
-features = ["fs-all", "global-shortcut-all", "process-all", "shell-open", "system-tray", "window-close", "window-hide", "window-set-always-on-top", "window-set-focus", "window-show", "window-start-dragging"]
+features = [ "window-unminimize", "fs-all", "global-shortcut-all", "process-all", "shell-open", "system-tray", "window-close", "window-hide", "window-set-always-on-top", "window-set-focus", "window-show", "window-start-dragging"]
 
 [features]
 default = ["custom-protocol"]

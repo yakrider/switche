@@ -37,7 +37,7 @@ fn exec_menu_action (id:&str, ss:&SwitcheState, ah:&AppHandle<Wry>) {
         MENU_AUTO_START_ADMIN => { autostart::proc_tray_event__toggle_switche_autostart (true,  ah) }
         MENU_EDIT_CONF        => { ss.conf.trigger_config_file_edit() }
         MENU_RESET_CONF       => { ss.conf.trigger_config_file_reset() }
-        MENU_RELOAD           => { ss.handle_req__data_load() }
+        MENU_RELOAD           => { ss.proc_menu_req__switche_reload() }
         MENU_RESTART          => { ah.restart() }
         MENU_QUIT             => { ah.exit(0) }
         _ => { }
@@ -113,12 +113,12 @@ pub fn run_switche_tauri (ss:&SwitcheState) {
 
 
 
-fn tauri_window_events_handler (ss:&SwitcheState, ah:&AppHandle, ev:&WindowEvent) {
+fn tauri_window_events_handler (ss:&SwitcheState, _ah:&AppHandle, ev:&WindowEvent) {
     match ev {
         WindowEvent::Focused (true)       => { ss.proc_app_window_event__focus() }
         WindowEvent::Focused (false)      => { ss.proc_app_window_event__focus_lost() }
-        WindowEvent::Moved (..)           => { ss.conf.deferred_update_conf__switche_window(ah) }
-        WindowEvent::Resized (..)         => { ss.conf.deferred_update_conf__switche_window(ah) }
+        WindowEvent::Moved (..)           => { ss.conf.deferred_update_conf__switche_window(ss) }
+        WindowEvent::Resized (..)         => { ss.conf.deferred_update_conf__switche_window(ss) }
         WindowEvent::CloseRequested {..}  => { }
         _ => { }
     }
@@ -131,7 +131,7 @@ fn extract_self_hwnd (ss:&SwitcheState) -> Option<Hwnd> {
     } ) .map (|h| h.0)
 }
 
-pub fn auto_setup_self_window (ss:&SwitcheState, self_hwnd:Hwnd) {
+pub fn auto_setup_self_window (ss:&SwitcheState) {
     let wa = win_apis::win_get_work_area();
 
     //let (x, y, width, height) = ( wa.left + (wa.right-wa.left)/3, 0, (wa.right-wa.left)/2,  wa.bottom - wa.top);
@@ -150,28 +150,28 @@ pub fn auto_setup_self_window (ss:&SwitcheState, self_hwnd:Hwnd) {
     let max_x = wa.right - width;
     let x = std::cmp::min ( max_x, wa.left + (wa.right - wa.left)/2 - width/3 );
 
-    win_apis::win_move_to (self_hwnd, x, y, width, height);
+    win_apis::win_move_to (ss.get_self_hwnd(), x, y, width, height);
 }
-fn setup_self_window (ss:&SwitcheState, self_hwnd:Hwnd) {
+pub fn setup_self_window (ss:&SwitcheState) {
     // if there's a valid config, and the sizes are not zero (like at startup), we'll use those
     //if ss.conf.check_flag__restore_window_dimensions() {
     // ^^ disabled as we'd still rather use (valid) dimensions from configs even if not set to restore last-closed position
     if let Some ((x,y,w,h)) = ss.conf.read_conf__window_dimensions() {
         if w > 0 && h > 0 {
-            win_apis::win_move_to (self_hwnd, x, y, w, h);
+            win_apis::win_move_to (ss.get_self_hwnd(), x, y, w, h);
             return
     } }
     // else the default is to auto-calc window dimensions
-    auto_setup_self_window (ss, self_hwnd);
+    auto_setup_self_window (ss);
 }
 
 fn proc_event_app_ready (ss:&SwitcheState, _ah:&AppHandle<Wry>) {
     // we want to store a cached value of our hwnd for exclusions-mgr (and general use)
     if let Some(hwnd) = extract_self_hwnd(ss) {
         //println! ("App starting .. self-hwnd is : {:?}", hwnd );
-        setup_self_window (ss, hwnd);
-        //tauri_setup_self_window(ah);
         ss.store_self_hwnd(hwnd);
+        setup_self_window (ss);
+        //tauri_setup_self_window(ah);
     }
 }
 pub fn tauri_run_events_handler (ss:&SwitcheState, ah:&AppHandle<Wry>, event:RunEvent) {
