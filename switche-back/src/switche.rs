@@ -26,7 +26,7 @@ use windows::Win32::UI::Accessibility::{HWINEVENTHOOK, SetWinEventHook};
 use windows::Win32::UI::WindowsAndMessaging::{
     EnumWindows, EVENT_OBJECT_CLOAKED, EVENT_OBJECT_CREATE, EVENT_OBJECT_DESTROY, EVENT_OBJECT_FOCUS,
     EVENT_OBJECT_HIDE, EVENT_OBJECT_NAMECHANGE, EVENT_OBJECT_SHOW, EVENT_OBJECT_UNCLOAKED, EVENT_SYSTEM_FOREGROUND,
-    EVENT_SYSTEM_MINIMIZESTART, EVENT_SYSTEM_MINIMIZEEND, GetMessageW, MSG
+    EVENT_OBJECT_REORDER, EVENT_SYSTEM_MINIMIZESTART, EVENT_SYSTEM_MINIMIZEEND, GetMessageW, MSG
 };
 
 //use crate::*;
@@ -121,25 +121,27 @@ pub struct RenderList_Pl {
 # [ derive (Debug, Eq, PartialEq, Hash, Default, Clone, Serialize, Deserialize) ]
 /// Configs-payload contains the subset of configs that is sent to the front-end
 pub struct Configs_Pl {
-    switche_version        : &'static str,
-    is_elevated            : bool,
-    alt_tab_enabled        : bool,
-    rbtn_whl_enabled       : bool,
-    auto_hide_enabled      : bool,
-    group_mode_enabled     : bool,
-    n_grp_mode_top_recents : u32,
-    grp_ordering_is_auto   : bool,
+    switche_version         : &'static str,
+    is_elevated             : bool,
+    alt_tab_enabled         : bool,
+    rbtn_whl_enabled        : bool,
+    auto_hide_enabled       : bool,
+    group_mode_enabled      : bool,
+    n_grp_mode_top_recents  : u32,
+    n_grp_mode_last_recents : u32,
+    grp_ordering_is_auto    : bool,
 }
 impl Configs_Pl {
     pub fn assemble (ss:&SwitcheState) -> Configs_Pl { Configs_Pl {
-        switche_version        : Config::SWITCHE_VERSION,
-        is_elevated            : win_apis::check_cur_proc_elevated().unwrap_or(false),
-        alt_tab_enabled        : ss.conf.check_flag__alt_tab_enabled(),
-        rbtn_whl_enabled       : ss.conf.check_flag__rbtn_scroll_enabled(),
-        auto_hide_enabled      : ss.conf.check_flag__auto_hide_enabled(),
-        group_mode_enabled     : ss.conf.check_flag__group_mode_enabled(),
-        n_grp_mode_top_recents : ss.conf.get_n_grp_mode_top_recents(),
-        grp_ordering_is_auto   : ss.conf.check_flag__auto_order_window_groups(),
+        switche_version          : Config::SWITCHE_VERSION,
+        is_elevated              : win_apis::check_cur_proc_elevated().unwrap_or(false),
+        alt_tab_enabled          : ss.conf.check_flag__alt_tab_enabled(),
+        rbtn_whl_enabled         : ss.conf.check_flag__rbtn_scroll_enabled(),
+        auto_hide_enabled        : ss.conf.check_flag__auto_hide_enabled(),
+        group_mode_enabled       : ss.conf.check_flag__group_mode_enabled(),
+        n_grp_mode_top_recents   : ss.conf.get_n_grp_mode_top_recents(),
+        n_grp_mode_last_recents  : ss.conf.get_n_grp_mode_last_recents(),
+        grp_ordering_is_auto     : ss.conf.check_flag__auto_order_window_groups(),
     } }
 }
 
@@ -233,7 +235,9 @@ pub struct _SwitcheState {
 
     pub is_dismissed  : Flag,
     pub is_fgnd       : Flag,
-    pub in_alt_tab    : Flag,
+
+    pub in_alt_tab        : Flag,
+    pub was_alt_preloaded : Flag,
 
     pub is_mouse_right_down       : Flag,
     pub in_right_btn_scroll_state : Flag,
@@ -271,7 +275,7 @@ pub struct RenderReadyListsManager {
     grp_sorting_map  : RwLock <HashMap <String, GroupSortingEntry>>,
     render_list      : RwLock <Vec <RenderListEntry>>,
     grpd_render_list : RwLock <Vec <Vec <RenderListEntry>>>,
-    exes_excl_set    : RwLock <HashSet <String>>,
+    exes_excl_map    : RwLock <HashMap <String, HashSet<String>>>,   // Map of exe-name to set of titles
     ordering_ref_map : RwLock <HashMap <String, usize>>,
 }
 
@@ -295,7 +299,9 @@ impl SwitcheState {
 
                 is_dismissed   : Flag::default(),
                 is_fgnd        : Flag::default(),
-                in_alt_tab     : Flag::default(),
+
+                in_alt_tab        : Flag::default(),
+                was_alt_preloaded : Flag::default(),
 
                 is_mouse_right_down       : Flag::default(),
                 in_right_btn_scroll_state : Flag::default(),
@@ -413,6 +419,7 @@ impl SwitcheState {
         if !check_if_app_window (hwnd) {
             if  check_window_has_owner (hwnd)  { return false }
             if  check_if_tool_window   (hwnd)  { return false }
+            if  check_if_tool_tip      (hwnd)  { return false }
         }
 
         let mut hmap = self.hwnd_map.write().unwrap();
@@ -588,6 +595,7 @@ impl SwitcheState {
                 0x8001 : EVENT_OBJECT_DESTROY           // maybe can skip
                 0x8002 : EVENT_OBJECT_SHOW
                 0x8003 : EVENT_OBJECT_HIDE
+                0x8004 : EVENT_OBJECT_REORDER
                 0x8005 : EVENT_OBJECT_FOCUS
                 0x800B : EVENT_OBJECT_LOCATIONCHANGE    // this can fire continuously on mouse motion!
                 0x800C : EVENT_OBJECT_NAMECHANGE
@@ -633,6 +641,7 @@ impl SwitcheState {
                 EVENT_OBJECT_DESTROY      =>  SwitcheState::instance().proc_win_report__obj_destroyed  (hwnd.0),
                 EVENT_OBJECT_SHOW         =>  SwitcheState::instance().proc_win_report__obj_shown      (hwnd.0),
                 EVENT_OBJECT_HIDE         =>  SwitcheState::instance().proc_win_report__obj_destroyed  (hwnd.0),
+                EVENT_OBJECT_REORDER      =>  SwitcheState::instance().proc_win_report__obj_reorder    (hwnd.0),
                 EVENT_OBJECT_FOCUS        =>  SwitcheState::instance().proc_win_report__fgnd_hwnd      (hwnd.0),
                 EVENT_OBJECT_NAMECHANGE   =>  SwitcheState::instance().proc_win_report__title_changed  (hwnd.0),
                 EVENT_OBJECT_CLOAKED      =>  SwitcheState::instance().proc_win_report__obj_destroyed  (hwnd.0),
@@ -792,6 +801,12 @@ impl SwitcheState {
         } // else the destoryed hwnd wasnt even in our list .. we can ignore it
     }
 
+    pub fn proc_win_report__obj_reorder (&self, hwnd:Hwnd) {
+        // todo : prob no use for this .. it seems mostly to be for z-order reordering WITHIN an app's child windows
+        println! ("@{:?} obj-reorder: {:?}", self._stamp(), hwnd);
+        // we'll just trigger a light enum-query to keep ordering in sync
+        self .trigger_enum_windows_query_pending (EnumWindowsReqType::Light);
+    }
 
 
 
@@ -836,7 +851,16 @@ impl SwitcheState {
         spawn ( move || { win_apis::window_maximize(hwnd) } );
     }
     fn handle_req__window_close (&self, hwnd:Hwnd) {
-        spawn ( move || { win_apis::window_close(hwnd) } );
+        let ss = self.clone();
+        spawn ( move || {
+            win_apis::window_close(hwnd);
+            // in case it doesnt close (e.g. it presents save dialog etg), we'll recehck and attempt to bring it to fgnd
+            let ss = ss.clone();
+            spawn ( move || {
+                sleep (Duration::from_millis(300));
+                if ss.check_hwnd_renderable_pre_passed(hwnd) { ss.handle_req__window_activate(hwnd) }
+            } );
+        } );
     }
 
     fn self_window_activate (&self) {
@@ -897,6 +921,10 @@ impl SwitcheState {
     }
     fn handle_req__debug_print (&self) { }
 
+    pub(crate) fn handle_req__enum_query_preload (&self) {
+        // ^^ triggers for instance on alt-press as advance notice for enum-query preload anticipating an alt-tab
+        self.trigger_enum_windows_query_pending(EnumWindowsReqType::Light)
+    }
 
     pub(crate) fn handle_req__data_load(&self) {
         // ^ this triggers on reload .. we'll use that to refresh our hooks, configs etc too
@@ -1153,10 +1181,28 @@ impl SwitcheState {
 
 impl RenderReadyListsManager {
 
+    // -- creation --
+    // ^^ happens via derived default
+
+
+    // --- data reloads ---
+
     pub fn reload_exes_excl_set (&self, exes:Vec<String>) {
-        let mut ees = self.exes_excl_set.write().unwrap();
+        // for any specified exe, we'll store either we have empty set, or a set of values ..
+        // empty set will mean we'll filter out anything that matches exe .. non-empty set will mean we'll have to match title to one of those
+        let mut ees = self.exes_excl_map.write().unwrap();
         ees.clear();
-        exes.into_iter() .for_each (|e| { ees.insert(e); });
+        exes.into_iter() .for_each (|e| {
+            if let Some ((exe, title)) = e.split_once(';') {
+                if let Some(prior) = ees.get_mut(exe) {
+                    prior.insert (title.to_string().to_lowercase());
+                } else {
+                    ees .insert (exe.to_string(), HashSet::from ([title.to_string().to_lowercase()]));
+                }
+            } else {
+                ees.insert (e, HashSet::default());
+            }
+        } )
     }
     pub fn reload_ordering_ref_map (&self, exes:Vec<String>) {
         let mut orm = self.ordering_ref_map.write().unwrap();
@@ -1178,13 +1224,15 @@ impl RenderReadyListsManager {
         // ^^ no good reason to exclude legit windows w/o titles
         ss.check_self_hwnd(wde.hwnd) ||
             wde.exe_path_name.as_ref() .filter (|p| !p.full_path.is_empty()) .is_none() ||
-            wde.exe_path_name.as_ref() .filter (|p| !self.exes_excl_check(&p.name)) .is_none()
+            wde.exe_path_name.as_ref() .filter (|p| !self.exes_excl_check (&p.name, &wde)) .is_none()
     }
     pub fn runtime_should_excl_check (&self, ss:&SwitcheState, wde:&WinDatEntry) -> bool {
         wde.should_exclude .unwrap_or_else ( move || self.calc_excl_flag(ss,wde) )
     }
-    fn exes_excl_check (&self, estr:&str) -> bool {
-        self.exes_excl_set.read().unwrap().contains(estr)
+    fn exes_excl_check (&self, estr:&str, wde:&WinDatEntry) -> bool {
+        self.exes_excl_map.read().unwrap().get(estr) .is_some_and ( |ot|
+            ot.is_empty() || wde.win_text.as_ref().is_some_and (|t| ot.contains(&t.to_lowercase()))
+        )
     }
 
 
@@ -1281,9 +1329,12 @@ impl RenderReadyListsManager {
             match  cmp_ext (self, &g_epn_a) .partial_cmp ( &cmp_ext (self, &g_epn_b) ) .unwrap() {
                 // note ^^ that unwrap is ok because it would fail only for NaN
                 Ordering::Equal => {
-                    let g_exe_a = ga.first() .and_then (|e| e.exe_path_name) .map (|epn| &epn.name);
-                    let g_exe_b = gb.first() .and_then (|e| e.exe_path_name) .map (|epn| &epn.name);
-                    g_exe_a .cmp (&g_exe_b)
+                    let g_exe_a = ga.first() .and_then (|e| e.exe_path_name);
+                    let g_exe_b = gb.first() .and_then (|e| e.exe_path_name);
+                    match g_exe_a .map (|epn| &epn.name) .cmp (&g_exe_b.map(|epn| &epn.name)) {
+                        Ordering::Equal => g_exe_a .map (|epn| &epn.full_path) .cmp (&g_exe_b.map(|epn| &epn.full_path)),
+                        ord => ord
+                    }
                 },
                 ord => ord
             }

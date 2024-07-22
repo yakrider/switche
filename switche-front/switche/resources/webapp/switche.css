@@ -262,6 +262,7 @@ body {
    background: #54489e;
    outline: none;
 }
+.spacingDiv { height: 10px; }
 
 .titleSpan {
   max-width: 800px;
@@ -296,6 +297,7 @@ body {
   flex: none;
 }
 .exeSpan.ng { color: var(--exe-color); }
+.exeSpan.lh { color: var(--exe-color); }
 .exeSpan.gh { color: var(--exe-color); }
 .exeSpan.gt { color: var(--dim-color); }
 .elemBox.curElem .exeSpan { color: var(--curElem-color); }

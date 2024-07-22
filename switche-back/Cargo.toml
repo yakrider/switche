@@ -1,6 +1,6 @@
 [package]
 name = "switche"
-version = "2.3.1"
+version = "2.3.2"
 # ^^ reminder to update this in tauri.conf.json as well
 description = "Switche - Searchable Task Switcher"
 authors = ["yakrider"]

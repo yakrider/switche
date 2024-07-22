@@ -21,7 +21,7 @@ use windows::Win32::System::WindowsProgramming::GetUserNameW;
 use windows::Win32::UI::Input::KeyboardAndMouse::{GetKeyState, VK_SHIFT};
 use windows::Win32::UI::Shell::PropertiesSystem::{IPropertyStore, PROPERTYKEY, SHGetPropertyStoreForWindow};
 use windows::Win32::UI::HiDpi::{DPI_AWARENESS_CONTEXT_SYSTEM_AWARE, SetThreadDpiAwarenessContext};
-use windows::Win32::UI::WindowsAndMessaging::{GetForegroundWindow, GetWindowPlacement, GetWindowTextW, IsWindowVisible, GetAncestor, GetWindowThreadProcessId, PostMessageA, SetForegroundWindow, ShowWindowAsync, GetWindowLongW, WINDOWPLACEMENT, EnumChildWindows, SystemParametersInfoW, WM_CLOSE, SW_HIDE, SW_MAXIMIZE, SW_MINIMIZE, SW_RESTORE, SW_SHOW, SW_SHOWMINIMIZED, WS_CHILD, GWL_STYLE, GA_ROOTOWNER, WS_EX_APPWINDOW, WS_EX_TOOLWINDOW, GWL_EXSTYLE, SPI_GETWORKAREA, SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS, MoveWindow, GA_PARENT, GetWindow, GW_OWNER};
+use windows::Win32::UI::WindowsAndMessaging::{GetForegroundWindow, GetWindowPlacement, GetWindowTextW, IsWindowVisible, GetAncestor, GetWindowThreadProcessId, PostMessageA, SetForegroundWindow, ShowWindowAsync, GetWindowLongW, WINDOWPLACEMENT, EnumChildWindows, SystemParametersInfoW, WM_CLOSE, SW_HIDE, SW_MAXIMIZE, SW_MINIMIZE, SW_RESTORE, SW_SHOW, SW_SHOWMINIMIZED, WS_CHILD, GWL_STYLE, GA_ROOTOWNER, WS_EX_APPWINDOW, WS_EX_TOOLWINDOW, GWL_EXSTYLE, SPI_GETWORKAREA, SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS, MoveWindow, GA_PARENT, GetWindow, GW_OWNER, GetLastActivePopup, GetClassNameW};
 
 
 use crate::switche::Hwnd;
@@ -47,6 +47,12 @@ pub fn check_if_tool_window (hwnd:Hwnd) -> bool { unsafe {
     GetWindowLongW (HWND(hwnd), GWL_EXSTYLE) & WS_EX_TOOLWINDOW.0 as i32 != 0
 } }
 
+pub fn check_if_tool_tip (hwnd:Hwnd) -> bool { unsafe {
+    let mut buf = vec![0u16; 512];
+    let len = GetClassNameW(HWND(hwnd), &mut buf);
+    "tooltips_class32" == String::from_utf16_lossy (&buf [..len as usize])
+} }
+
 pub fn get_window_parent (hwnd:Hwnd) -> Hwnd { unsafe {
     GetAncestor (HWND(hwnd), GA_PARENT).0 as Hwnd
 } }
@@ -67,6 +73,9 @@ pub fn check_window_is_child (hwnd:Hwnd) -> bool { unsafe {
 
 pub fn get_fgnd_window () -> Hwnd { unsafe {
     GetForegroundWindow().0 as Hwnd
+} }
+pub fn get_last_active_popup (hwnd:Hwnd) -> Hwnd { unsafe {
+    GetLastActivePopup (HWND(hwnd)).0 as Hwnd
 } }
 
 
@@ -89,6 +98,12 @@ pub fn window_activate (hwnd:Hwnd) { unsafe { println!("winapi activate {:?}",hw
     // its a lil flaky, so we'll try the another call too, (plus the little delay from spawn should also help)
     //std::thread::spawn (move || SwitchToThisWindow (HWND(hwnd), BOOL::from(true)) );
     // ^^ appears basically the same as above calls, doesnt help when have issues, else isnt necessary
+
+    // if the activated window had a popup active, we'll activate it so it has focus (which doesnt always seem to auto-happen)
+    std::thread::spawn ( move || {  // spawning should give enough time for the window to finish processing its activation first
+        let lap = GetLastActivePopup (HWND(hwnd));
+        if lap.0 != hwnd { SetForegroundWindow (lap); }
+    } );
 } }
 
 

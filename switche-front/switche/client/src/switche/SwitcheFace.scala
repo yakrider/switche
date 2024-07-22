@@ -18,6 +18,8 @@ sealed abstract class GrpT (val cls:String)
 object GrpTs {
    /** Non-Grouped */
    case object NG extends GrpT ("ng")
+   /** Non-Grouped Last-Recents Head */
+   case object LH extends GrpT ("lh")
    /** Group-Head */
    case object GH extends GrpT ("gh")
    /** Group-Tail */
@@ -47,7 +49,6 @@ object StateTs {
 
 
 object SwitcheFaceConfig {
-   //val groupedModeTopRecentsCount = 9      // moved to configs.n_grp_mode_top_recents
    val hoverLockTime = 200 // ms
    val minScrollSpacingMs = 15d // ms
    def nbsp(n:Int=1) = raw((1 to n).map(i=>"&nbsp;").mkString)
@@ -326,6 +327,24 @@ object SwitchePageState {
    def groupedId (hwnd:Int) = s"${hwnd}_g"
    def idToHwnd (idStr:String) = idStr.split("_") .headOption .flatMap (s => Try(s.toInt).toOption)
 
+   def getCappedRecents() : Seq[(RenderListEntry, GrpT)] = {
+      // we'll compile the capped-recents list (to incl both the top-recents and last-recents) first ..
+      // .. then we'll tag the beginning (if any) of the last-recents block, so we can mark it up for css
+      val cappedRecents = if (inGroupedMode) {
+         val (nfirst, nlast) = (configs.n_grp_mode_top_recents, configs.n_grp_mode_last_recents)
+         val ngap = renderList.size - nfirst - nlast    // we rely on this possibly being negative in which case the drop does nothing
+         renderList.take(nfirst) ++ renderList.drop(nfirst).drop(ngap)
+      } else { renderList }
+      
+      var last_y = cappedRecents.headOption.map(_.y).getOrElse(0)
+      cappedRecents .map { rle => {
+         val diff = rle.y - last_y
+         last_y = rle.y
+         val tag = if (diff > 1) GrpTs.LH else GrpTs.NG
+         (rle, tag)
+      } }
+   }
+   
    def setCurElem (id:String) = {
       curElemId = id;
    }
@@ -434,7 +453,13 @@ object ElemsDisplay {
       val headerTxt = if (elemT == ElemTs.G) "Grouped:" else "Recents:"
       val header = div (`class`:=s"modeHeader ${elemT.cls}", nbsp(1), headerTxt) .render
       val elemsMap = if (elemT == ElemTs.G) groupedElemsMap else recentsElemsMap
-      div ( `class`:=s"elemsDiv ${elemT.cls} ${stateT.cls}", header, elemsMap.values.map(_.elem).toSeq ) .render
+      
+      // instead of simply putting the elems into a div, we want to introduce a spacer before recents-list second half (if any)
+      val (block_1, block_2) = elemsMap .values .map(_.elem) .span (!_.classList.contains(GrpTs.LH.cls))
+      val spacingDiv = div (`class`:="spacingDiv") .render
+      val spacedElems = Seq (block_1, block_2) .filter(_.nonEmpty) .flatMap (_ ++ Seq(spacingDiv)) .dropRight(1)
+      
+      div ( `class`:=s"elemsDiv ${elemT.cls} ${stateT.cls}", header, spacedElems  ) .render
    }
    def updateElemsDiv () = {
       //updateRenderReadyLists()
@@ -463,9 +488,9 @@ object ElemsDisplay {
    
 
    def makeElemBox (idStr:String, wde:WinDatEntry, y:Int, elemT:ElemT, grpT:GrpT) : Div = {
-      val exeInnerSpan = span ( wde.exe_path_name.map(_.name).getOrElse("exe..").toString ).render
+      val exeInnerSpan = span ( wde.exe_path_name.map(_.name).getOrElse("exe..") ).render
       val yInnerSpan = span (`class`:="ySpan", f"${y}%2d" ).render
-      val titleInnerSpan = span ( wde.win_text.getOrElse("-- no title --").toString ).render
+      val titleInnerSpan = span ( wde.win_text.getOrElse("-- no title --") ).render
       makeElemBox ( idStr, wde, y, elemT, grpT, exeInnerSpan, yInnerSpan, titleInnerSpan )
    }
    def makeElemBox (
@@ -477,7 +502,7 @@ object ElemsDisplay {
       val titleSpan = span (`class`:=s"titleSpan ${elemT.cls}", titleInnerSpan)
       val ico = Switche.getCachedIcon(wde.icon_cache_idx) .map (icoStr => img(`class`:="ico", src:=icoStr)) .getOrElse(span("ico"))
       val icoSpan = span (`class`:="exeIcoSpan", ico)
-      val elem = div (`class`:="elemBox", id:=idStr, tabindex:=0, exeSpan, nbsp(2), ySpan, nbsp(2), icoSpan, nbsp(), titleSpan).render
+      val elem = div (`class`:=s"elemBox ${grpT.cls}", id:=idStr, tabindex:=0, exeSpan, nbsp(2), ySpan, nbsp(2), icoSpan, nbsp(), titleSpan).render
       //elem.onclick = {ev:MouseEvent => SwitcheState.handleReq_WindowActivation(e.hwnd)}
       // ^^ moved most handlers to single document-level events handler
       // .. but we left mouseenter etc here, as doing that globally is a little wasteful
@@ -490,13 +515,10 @@ object ElemsDisplay {
    def rebuildRecentsElems() = {
       // this needs the elems table, and a vec to navigate through it
       val elemsMap = mutable.LinkedHashMap[String,OrderedElemsEntry]()
-      val cappedRecents = {
-         if (!inGroupedMode) renderList else renderList.take(configs.n_grp_mode_top_recents)
-      }
-      cappedRecents .flatMap(e => hwndMap.get(e.hwnd).map(d => (d, e))) .zipWithIndex .foreach { case ((wde,rle),i) =>
+      getCappedRecents() .flatMap {case (e,gt) => hwndMap.get(e.hwnd).map(d => (d,e,gt)) } .zipWithIndex .foreach { case ((wde,rle,gt),i) =>
          val id = recentsId (wde.hwnd)
          val elemT = if (inGroupedMode) ElemTs.GR else ElemTs.R
-         val elem = makeElemBox (id, wde, rle.y, elemT, GrpTs.NG)
+         val elem = makeElemBox (id, wde, rle.y, elemT, gt)
          elemsMap.put (id, OrderedElemsEntry (i, elem))
       }
       recentsElemsMap = elemsMap                // will cast it to immutable trait
@@ -728,7 +750,7 @@ object SearchDisplay {
          exitSearchState()
       } else if (curSearchBoxTxt != cachedSearchBoxTxt) {
          cachedSearchBoxTxt = curSearchBoxTxt
-         RenderSpacer.queueSpacedRender()
+         RenderSpacer.immdtRender()     // using immdt-render as we want to reset-search-match-focus after it's done
          resetSearchMatchFocus()
       }
    }
@@ -791,8 +813,8 @@ object SearchDisplay {
 
          // now lets build the recents w similar search-match highlighting as well .. (we wont need nav idxs for it)
          val elemsMap = mutable.LinkedHashMap[String,OrderedElemsEntry]()
-         renderList .take(configs.n_grp_mode_top_recents) .zipWithIndex .foreach { case (e,i) =>
-            getSearchMatchRes(e) .flatMap (res => getSearchElem (e, ElemTs.GR, GrpTs.NG, res)) .foreach { se =>
+         getCappedRecents() .zipWithIndex .foreach { case ((e,gt),i) =>
+            getSearchMatchRes(e) .flatMap (res => getSearchElem (e, ElemTs.GR, gt, res)) .foreach { se =>
                elemsMap .put (se.id, OrderedElemsEntry (i, se.elem))
          } }
          recentsElemsMap = elemsMap

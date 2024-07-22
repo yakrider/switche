@@ -234,6 +234,9 @@ impl Config {
         if ngmtr > 2 { ngmtr } else { 2 }
         // ^^ we enforce a min of 2 as that is necessary to make the basic switch-to-next work (and for scroll across grp logic etc)
     }
+    pub fn get_n_grp_mode_last_recents (&self) -> u32 {
+        self.get_number("number_of_last_recents_in_grouped_mode")
+    }
     pub fn deferred_update_conf__grp_mode (&self, grp_mode:bool) {
         if let Some(toml) = self.toml.write().unwrap().as_mut() {   // serves as re-entrancy guard too
             toml["group_mode_enabled"] = toml_edit::value (grp_mode);
@@ -260,26 +263,28 @@ impl Config {
         std::thread::spawn ( move || {
             if let Some(ah) = ss.app_handle.read().unwrap().as_ref() {
                 if let Some(w) = ah.get_window("main") {
-                    // want to confirm its not minimized before we update its dimensions in configs
-                    if w.is_minimized().ok() == Some(true) {
-                        // and we're getting minimized despite setting 'minimizable' as false in tauri.conf.json .. so we'll at least restore it here
-                        w.unminimize().ok();
-                        // plus, minimize makes window tiny, and that seems to move off ribbon etc .. so we'll also reload the page
-                        ss.proc_menu_req__switche_reload();
-                        return
-                    }
-                    let mut toml_guard = conf.toml.write().unwrap();
-                    if let (Some(p), Some(s), Some(toml)) = (w.outer_position().ok(), w.outer_size().ok(), toml_guard.as_mut()) {
-                        toml ["window_dimensions"] ["location"] ["x"]  = toml_edit::value (p.x as i64);
-                        toml ["window_dimensions"] ["location"] ["y"]  = toml_edit::value (p.y as i64);
-                        toml ["window_dimensions"] ["size"] ["width"]  = toml_edit::value (s.width  as i64);
-                        toml ["window_dimensions"] ["size"] ["height"] = toml_edit::value (s.height as i64);
-                        drop(toml_guard);
-                        conf.write_back_toml_if_changed();
-                    } else {
-                        eprintln!("update_conf__switche_window: failed to get window position, size, or toml doc");
-                    }
-            }  }
+                    if let (Some(p), Some(s)) = (w.outer_position().ok(), w.outer_size().ok()) {
+                        // want to confirm its not minimized before we update its dimensions in configs
+                        // and despite tauri minimize check (below), we still sometimes get the minimized loc (-32000), so we'll filter those
+                        if (w.is_minimized().ok() == Some(true)) || (p.x as i64 == -32000 && p.y as i64 == -32000) {
+                            // and we're getting minimized despite setting 'minimizable' as false in tauri.conf.json .. so we'll at least restore it here
+                            w.unminimize().ok();
+                            // plus, minimize makes window tiny, and that seems to move off ribbon etc .. so we'll also reload the page
+                            ss.proc_menu_req__switche_reload();
+                            return
+                        }
+                        let mut toml_guard = conf.toml.write().unwrap();
+                        if let Some(toml) = toml_guard.as_mut() {
+                            toml ["window_dimensions"] ["location"] ["x"]  = toml_edit::value (p.x as i64);
+                            toml ["window_dimensions"] ["location"] ["y"]  = toml_edit::value (p.y as i64);
+                            toml ["window_dimensions"] ["size"] ["width"]  = toml_edit::value (s.width  as i64);
+                            toml ["window_dimensions"] ["size"] ["height"] = toml_edit::value (s.height as i64);
+                            drop(toml_guard);
+                            conf.write_back_toml_if_changed();
+                        } else {
+                            eprintln!("update_conf__switche_window: failed to get window position, size, or toml doc");
+                        }
+            }  }  }
         } );
     }
     pub fn deferred_update_conf__switche_window (&self, ss:&SwitcheState) {

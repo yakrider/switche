@@ -18,8 +18,11 @@ auto_hide_enabled = true
 # (This will trim the list of most recent windows, and under it will show all the windows grouped by executable)
 group_mode_enabled = true
 
-# Number of top recent windows to display in recents-list when grouped mode is enabled .. default is 9, minimum is 2
+# Number of z-order top windows to display in recents-list when grouped mode is enabled .. default is 9, minimum is 2
 number_of_top_recents_in_grouped_mode = 9
+
+# Number of z-order last windows to display in recents-list when grouped mode is enabled .. default is 0
+number_of_last_recents_in_grouped_mode = 0
 
 # Enable switche to replace windows task-switcher upon alt-tab press .. default is true
 # Note this this will install a lower-level keyboard hook to intercept alt-tab presses
@@ -49,6 +52,7 @@ window_dimensions.size = { width = 0, height = 0 }
 
 
 # List of exes to exclude from the displayed list of windows .. default has "WDADesktopService.exe"
+# for any specified exe, restriction to a specific title can be specified after a semicolon, e.g. "explorer.exe;QTTabBar Preview Window"
 exe_exclusions_list = [
     "WDADesktopService.exe",
     "SearchUI.exe"

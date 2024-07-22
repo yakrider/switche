@@ -226,10 +226,19 @@ pub unsafe extern "system" fn kbd_hook_cb (code:c_int, w_param:WPARAM, l_param:L
         // for tab release (w alt), we simply block it to keep balance, but its not that big a deal either way
         return return_block()
     }
-    else if w_param.0 as u32 == WM_KEYUP  && is_alt_key(kbs.vkCode) { //println!("alt-release");
+    else if w_param.0 as u32 == WM_SYSKEYDOWN && is_alt_key(kbs.vkCode) {  //println! ("alt-press");
+        let ss = SwitcheState::instance();
+        if ss.was_alt_preloaded.is_clear() {
+            ss.was_alt_preloaded.set();
+            ss.handle_req__enum_query_preload();
+        }
+        return return_call()
+    }
+    else if w_param.0 as u32 == WM_KEYUP  && is_alt_key(kbs.vkCode) {  //println! ("alt-release");
         // for actual alt-release, again we'll spawn to queue events at bottom of msg queue, and have an alt release sent out
         // again note thread spawning to give OS time to process between our execution chunks
         let ss = SwitcheState::instance();
+        ss.was_alt_preloaded.clear();
         if ss.in_alt_tab.is_set() {
             //send_dummy_key_release();
             send_alt_release();
@@ -301,6 +310,7 @@ fn mouse_hook_cb (code: c_int, w_param: WPARAM, l_param: LPARAM) -> LRESULT {
 
     if w_param.0 as u32 == WM_RBUTTONDOWN {
         ss.is_mouse_right_down.set();
+        ss.handle_req__enum_query_preload();
     }
     else if w_param.0 as u32 == WM_RBUTTONUP {
         if ss.is_mouse_right_down.is_set() {

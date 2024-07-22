@@ -16,7 +16,7 @@ rem but I don't think we need to support them in 2019
 setlocal enabledelayedexpansion
 
 if [!DEFAULT_MILL_VERSION!]==[] (
-    set "DEFAULT_MILL_VERSION=0.11.4"
+    set "DEFAULT_MILL_VERSION=0.11.5"
 )
 
 if [!GITHUB_RELEASE_CDN!]==[] (

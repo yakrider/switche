@@ -36,14 +36,15 @@ case class IconEntry_P      ( ico_id:Int, ico_str:String )     derives ReadWrite
 case class BackendNotice_P  ( msg:String )                     derives ReadWriter
 
 case class Configs (
-    switche_version        : String  = "??",
-    is_elevated            : Boolean = false,
-    alt_tab_enabled        : Boolean = true,
-    rbtn_whl_enabled       : Boolean = true,
-    auto_hide_enabled      : Boolean = true,
-    group_mode_enabled     : Boolean = true,
-    n_grp_mode_top_recents : Int     = 9,
-    grp_ordering_is_auto   : Boolean = true,
+    switche_version         : String  = "??",
+    is_elevated             : Boolean = false,
+    alt_tab_enabled         : Boolean = true,
+    rbtn_whl_enabled        : Boolean = true,
+    auto_hide_enabled       : Boolean = true,
+    group_mode_enabled      : Boolean = true,
+    n_grp_mode_top_recents  : Int     = 9,
+    n_grp_mode_last_recents : Int     = 0,
+    grp_ordering_is_auto    : Boolean = true,
 ) derives ReadWriter
 
 
