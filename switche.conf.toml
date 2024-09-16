@@ -80,16 +80,27 @@ exe_manual_ordering_seq = [
 switche_invocation_hotkeys = ["F1", "Ctrl+Alt+F15"]
 
 
-# Hotkeys to directly switch to the last active window, specified as a string array .. default is ["Alt+F1", "Ctrl+Alt+F16"]
+# Hotkeys to directly switch to the last-active window (z-idx:0+1), specified as a string array .. default is ["Alt+F1", "Ctrl+Alt+F16"]
 # Note: Updates to this config are ONLY picked up upon restarting (not just reloading) the application
 last_window_direct_switch_hotkeys = ["Alt+F1", "Ctrl+Alt+F16"]
+# Hotkeys to directly switch to the second-last-active window (z-idx:0+2), specified as a string array .. default is ["Alt+Ctrl+F1", "Ctrl+Alt+F17"]
+second_last_window_direct_switch_hotkeys = ["Alt+Ctrl+F1", "Ctrl+Alt+F17"]
+# Hotkeys to directly switch to the third-last-active window (z-idx:0+3), specified as a string array .. default is ["Alt+Shift+F1", "Ctrl+Alt+F18"]
+third_last_window_direct_switch_hotkeys = ["Alt+Shift+F1", "Ctrl+Alt+F18"]
 
 
+# Hotkeys to take a snapshot of the current list of windows, and scroll through them without bringing switche up
+# (defaults are "Alt+Shift+F15", "Alt+Shift+F16", "Alt+Shift+F17" for taking-snapshot, next-in-list, prev-in-list respectively
+# (note that the defaults are intended to be driven by external key manager from more ergonomic triggers)
+windows_list_snapshot_hotkeys = ["Alt+Shift+F15"]
+snap_list_switch_next_hotkeys = ["Alt+Shift+F16"]
+snap_list_switch_prev_hotkeys = ["Alt+Shift+F17"]
 
 # Configuration for optional user-specifiable hotkeys to directly switch to specific app (if present at the time)
 # Each entry can be listed under [[flex_hotkey]] table heading, and must have a 'hotkey' specified
 # The optional 'exe' field is the executable name (without the path) of the app to switch to
 # The optional 'title' field is the window-title of the app to switch to (if present)
+# The optional 'allow_partial_match' is [true/false] on whether the match must be exact or can be partial (default is false)
 # The hotkey will toggle between the cur window and the first not-currently-top window matching the specs (if any)
 # Note: Updates to these configs are ONLY picked up upon restarting (not just reloading) the application
 
@@ -113,3 +124,14 @@ exe = "notepad++.exe"
 hotkey = "Ctrl+Alt+F20"
 exe = "chrome.exe"
 title = "Tabs Outliner"
+
+[[flex_hotkey]]
+hotkey = "Ctrl+Alt+F19"
+exe = "chrome.exe"
+title = "Claude"
+allow_partial_match = true
+
+[[flex_hotkey]]
+hotkey = "Alt+Shift+F24"
+exe = "chrome.exe"
+title = "kbd: Keyboard Events Printer"

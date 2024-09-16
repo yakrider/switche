@@ -243,6 +243,7 @@ pub struct _SwitcheState {
     pub in_right_btn_scroll_state : Flag,
 
     pub render_lists_m : RenderReadyListsManager,
+    pub snap_list_m    : SnapListManager,
     pub i_proc         : InputProcessor,
     pub icons_m        : IconsManager,
     pub conf           : Config,
@@ -279,7 +280,12 @@ pub struct RenderReadyListsManager {
     ordering_ref_map : RwLock <HashMap <String, usize>>,
 }
 
-
+# [ derive (Debug, Default) ]
+/// SnapListManager is used to grab a snapshot of the current rendering list hwnds and nav through them w/o bringing switche up
+pub struct SnapListManager {
+    snap_list : RwLock <Vec <Hwnd>>,
+    cur_idx   : AtomicIsize,
+}
 
 
 
@@ -307,6 +313,7 @@ impl SwitcheState {
                 in_right_btn_scroll_state : Flag::default(),
 
                 render_lists_m : RenderReadyListsManager::default(),
+                snap_list_m    : SnapListManager::default(),
                 i_proc         : InputProcessor::instance(),
                 icons_m        : IconsManager::instance(),
                 conf           : Config::instance(),
@@ -534,15 +541,17 @@ impl SwitcheState {
         self.emit_backend_notice (Backend_Notice::switche_event__fgnd_lost);
     }
 
-    fn activate_matching_window (&self, exe:Option<&str>, title:Option<&str>) {
+    fn activate_matching_window (&self, exe:Option<&str>, title:Option<&str>, partial:bool) {
 
         let hwnd_map = self.hwnd_map.read().unwrap();
+
+        let match_fn = |base:&str, cand:&str| if !partial {base == cand} else {base.contains(cand)};
 
         let top2 : Vec<Hwnd> = self.render_lists_m.render_list.read().unwrap()
             .iter() .filter_map ( |rle| hwnd_map .get (&rle.hwnd))
             .filter ( |wde|
                 ( exe.is_none()   || exe .filter (|&p| wde.exe_path_name.as_ref().filter(|_p| _p.name.as_str() == p).is_some()).is_some() ) &&
-                ( title.is_none() || title .filter (|&t| wde.win_text.as_ref().filter(|_t| _t.as_str() == t).is_some()).is_some() )
+                ( title.is_none() || title .filter (|&t| wde.win_text.as_ref().filter(|_t| match_fn(_t.as_str(),t)).is_some()).is_some() )
             ) .take(2) .map (|wde| wde.hwnd) .collect::<Vec<_>>();
 
         if top2.is_empty() { return }
@@ -560,7 +569,7 @@ impl SwitcheState {
                 return
         }  }
         // so we found a match, its already at top, and there are no other matches .. so toggle to window behind it
-        self.handle_req__second_recent_window_activate();
+        self.handle_req__z_idx_window_activate(1);
     }
 
 
@@ -881,8 +890,8 @@ impl SwitcheState {
         } );
     }
 
-    fn handle_req__nth_recent_window_activate (&self, n:usize) {
-        let hwnd = self.render_lists_m.render_list.read().unwrap() .get(n) .map (|e| e.hwnd);
+    fn handle_req__z_idx_window_activate (&self, z:usize) {
+        let hwnd = self.render_lists_m.render_list.read().unwrap() .get(z) .map (|e| e.hwnd);
         spawn ( move || hwnd.map(win_apis::window_activate) );
     }
 
@@ -916,9 +925,6 @@ impl SwitcheState {
             } )
     }  }
 
-    fn handle_req__second_recent_window_activate (&self) {
-        self.handle_req__nth_recent_window_activate(1);
-    }
     fn handle_req__debug_print (&self) { }
 
     pub(crate) fn handle_req__enum_query_preload (&self) {
@@ -1048,15 +1054,34 @@ impl SwitcheState {
         self.emit_backend_notice (Backend_Notice::backend_req__switche_escape)
     }
 
-    pub fn proc_hot_key__switch_last (&self)  {
+    pub fn proc_hot_key__switch_z_idx (&self, z:usize) {
         self .trigger_enum_windows_query_immdt (EnumWindowsReqType::Light);
-        self.handle_req__second_recent_window_activate()
+        let ss = self.clone();
+        spawn ( move || {
+            sleep (Duration::from_millis(10));
+            ss .handle_req__z_idx_window_activate (z);
+        } );
     }
-    pub fn proc_hot_key__switch_app (&self, exe:Option<&str>, title:Option<&str>) {
-        self.activate_matching_window (exe, title)
+    pub fn proc_hot_key__switch_app (&self, exe:Option<&str>, title:Option<&str>, partial:bool) {
+        self.activate_matching_window (exe, title, partial)
     }
 
-    pub fn proc_menu_req__switche_reload(&self) {
+    pub fn proc_hot_key__snap_list_refresh (&self) { //println!("snaplist refresh");
+        self .trigger_enum_windows_query_immdt (EnumWindowsReqType::Light);
+        let ss = self.clone();
+        spawn ( move || {
+            sleep (Duration::from_millis(10));
+            ss.snap_list_m.capture(&ss.render_lists_m);
+        } );
+    }
+    pub fn proc_hot_key__snap_list_switch_next (&self) {
+        self.snap_list_m .next_hwnd() .map (win_apis::window_activate);
+    }
+    pub fn proc_hot_key__snap_list_switch_prev (&self) {
+        self.snap_list_m .prev_hwnd() .map (win_apis::window_activate);
+    }
+
+    pub fn proc_menu_req__switche_reload (&self) {
         self.emit_backend_notice (Backend_Notice::backend_req__switche_reload)
     }
 
@@ -1359,4 +1384,30 @@ impl RenderReadyListsManager {
 
 
 
+
+
+
+
+
+impl SnapListManager {
+
+    pub fn capture (&self, rrlm: &RenderReadyListsManager) {
+        *self.snap_list .write().unwrap() = rrlm.render_list.read().unwrap().iter() .map (|rle| rle.hwnd) .collect::<Vec<Hwnd>>();
+        self.cur_idx.store (0, Ordering::Relaxed);
+    }
+
+    pub fn next_hwnd (&self) -> Option<Hwnd> {
+        let sl = self.snap_list.read().unwrap();
+        if sl.is_empty() { return None }
+        let idx = (self.cur_idx.fetch_add(1, Ordering::Relaxed) + 1) .rem_euclid (sl.len() as isize);
+        sl .get (idx as usize) .copied()
+    }
+    pub fn prev_hwnd (&self) -> Option<Hwnd> {
+        let sl = self.snap_list.read().unwrap();
+        if sl.is_empty() { return None }
+        let idx = (self.cur_idx.fetch_sub(1, Ordering::Relaxed) - 1) .rem_euclid (sl.len() as isize);
+        sl .get (idx as usize) .copied()
+    }
+
+}
 

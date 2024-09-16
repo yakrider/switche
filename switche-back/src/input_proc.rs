@@ -193,50 +193,17 @@ pub unsafe extern "system" fn kbd_hook_cb (code:c_int, w_param:WPARAM, l_param:L
 
     //println! ("vk: {:?}, ev: {:?}, inj: {:?}", kbs.vkCode, w_param.0, kbs.dwExtraInfo);
 
-    if w_param.0 as u32 == WM_SYSKEYDOWN  && kbs.vkCode == VK_TAB.0 as u32 {
-        // when we get an actual alt-tab, we'll block the tab from going out to avoid conflict w native alt-tab
-        // further, to remain in windows graces since it only lets us call fgnd if we handled last input etc, we'll send ourselves an input
-        // the spawning in thread is VERY important, as that gives OS time to process msgs before we try to bring switche fgnd
-        //send_dummy_key_release();
-        spawn ( move || {
-            sleep(time::Duration::from_millis(50));
-            // ^^ this allows krusty to get the tab-up out as well, so we dont get interspersed (and thereby lose our last-input status?)
-            // (plus it avoids possible races w krusty hooks, or win report handling etc that can interefere w bringing us fgnd)
-            send_dummy_key_release();
-            let ss = SwitcheState::instance();
-            ss.in_alt_tab.set();
-            if win_apis::check_shift_active() {
-                ss.proc_hot_key__scroll_up();
-            } else {
-                ss.proc_hot_key__scroll_down();
-            }
-        } );
-        return return_block()
-    }
-    else if w_param.0 as u32 == WM_SYSKEYDOWN && kbs.vkCode == VK_SPACE.0 as u32 {
-        // we want to use alt-space to disarm alt-tab etc when swi fgnd
-        // .. we need this here as OS captures alt-space and the browser/webapp doesnt ever see it
-        spawn ( || {
-            let ss = SwitcheState::instance();
-            if ss.is_fgnd.is_set() { ss.proc_hot_key__scroll_end_disarm(); }
-        } );
-        return return_call()
-    }
-    else if w_param.0 as u32 == WM_SYSKEYUP  && kbs.vkCode == VK_TAB.0 as u32 {
-        // for tab release (w alt), we simply block it to keep balance, but its not that big a deal either way
-        return return_block()
-    }
-    else if w_param.0 as u32 == WM_SYSKEYDOWN && is_alt_key(kbs.vkCode) {  //println! ("alt-press");
+    if w_param.0 as u32 == WM_SYSKEYDOWN && is_alt_key(kbs.vkCode) {  //println! ("alt-press");
         let ss = SwitcheState::instance();
         if ss.was_alt_preloaded.is_clear() {
             ss.was_alt_preloaded.set();
-            ss.handle_req__enum_query_preload();
+            ss.handle_req__enum_query_preload();    // (this just queues it up for off-thread processing)
         }
         return return_call()
     }
-    else if w_param.0 as u32 == WM_KEYUP  && is_alt_key(kbs.vkCode) {  //println! ("alt-release");
-        // for actual alt-release, again we'll spawn to queue events at bottom of msg queue, and have an alt release sent out
-        // again note thread spawning to give OS time to process between our execution chunks
+    else if w_param.0 as u32 == WM_KEYUP  && is_alt_key(kbs.vkCode) {
+        // for actual alt-release, we'll spawn to queue events at bottom of msg queue, and have an alt release sent out
+        // (note thread spawning to give OS time to process between our execution chunks)
         let ss = SwitcheState::instance();
         ss.was_alt_preloaded.clear();
         if ss.in_alt_tab.is_set() {
@@ -246,13 +213,47 @@ pub unsafe extern "system" fn kbd_hook_cb (code:c_int, w_param:WPARAM, l_param:L
             // .. esp while there's something else like krusty behind us in the hook chain (and therefore gets the last input?) etc
             // .. Not even a dummy-key release seems to work, has to be an alt press or rel .. presumably win32 has special case for alt-tab?
             spawn ( move || {
-                sleep(time::Duration::from_millis(50));
+                sleep(time::Duration::from_millis(50));   // we want this delay to be no less than the sleep-delay in tab-press processing
                 ss.proc_hot_key__scroll_end();
                 ss.in_alt_tab.clear();
             } );
         }
         return return_call()
         // ^^ note that we cant block it even if we send out a replacement because it could be left/right/virt whatever
+    }
+    else if w_param.0 as u32 == WM_SYSKEYDOWN  && kbs.vkCode == VK_TAB.0 as u32 {  //println! ("alt-tab");
+        // when we get an actual alt-tab, we'll block the tab from going out to avoid conflict w native alt-tab
+        // further, to remain in windows graces since it only lets us call fgnd if we handled last input etc, we'll send ourselves an input
+        // the spawning in thread is VERY important, as that gives OS time to process msgs before we try to bring switche fgnd
+        //send_dummy_key_release();
+        spawn ( move || {
+            let ss = SwitcheState::instance();
+            ss.in_alt_tab.set();    // set this flag up first in case the alt-release comes during our sleep delay below
+            sleep(time::Duration::from_millis(50));
+            // ^^ this allows krusty to get the tab-up out as well, so we dont get interspersed (and thereby lose our last-input status?)
+            // (plus it avoids possible races w krusty hooks, or win report handling etc that can interefere w bringing us fgnd)
+            send_dummy_key_release();
+            if win_apis::check_shift_active() {
+                ss.proc_hot_key__scroll_up();
+            } else {
+                ss.proc_hot_key__scroll_down();
+            }
+        } );
+        return return_block()
+    }
+    else if w_param.0 as u32 == WM_SYSKEYUP  && kbs.vkCode == VK_TAB.0 as u32 {
+        // for tab release (w alt), we simply block it to keep balance, but its not that big a deal either way
+        return return_block()
+    }
+    else if w_param.0 as u32 == WM_SYSKEYDOWN && kbs.vkCode == VK_SPACE.0 as u32 {
+        // we want to use alt-space to disarm alt-tab etc when swi fgnd
+        // .. we need this here as OS captures alt-space and the browser/webapp doesnt ever see it
+        let ss = SwitcheState::instance();
+        if ss.is_fgnd.is_set() {
+            spawn ( move || ss.proc_hot_key__scroll_end_disarm() );
+            return return_block()
+        }
+        return return_call()
     }
     return_call()
 }

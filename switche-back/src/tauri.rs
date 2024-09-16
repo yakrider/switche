@@ -209,29 +209,39 @@ pub fn tray_events_handler (ss:&SwitcheState, ah:&AppHandle<Wry>, event:SystemTr
 
 
 
-pub fn setup_global_shortcuts (ssr:&SwitcheState, ah:&AppHandle<Wry>) {
-    let mut gsm = ah.global_shortcut_manager();
+pub fn setup_global_shortcuts (ss:&SwitcheState, ah:&AppHandle<Wry>) {
 
-    // todo: can update these to prob printout/notify an err msg when cant register global hotkey
+    fn register_hotkeys <HGF> (ah:&AppHandle<Wry>, ss: &SwitcheState, hotkeys: &Vec<String>, handler_gen: HGF) where
+        HGF: FnOnce(SwitcheState) -> Box <dyn Fn() + Send + 'static> + Clone    // handler extraction function type
+    {
+        hotkeys .iter() .for_each (|hotkey| {
+            if let Err(e) = ah.global_shortcut_manager().register (hotkey, handler_gen.clone() (ss.clone())) {
+                println! ("Failed to register hotkey {:?}: {}", hotkey, e);
+            }
+        });
+    }
+    // before user config hotkeys, we'll register alt-space so
 
     // we register all hotkeys specified in config file for switche invocation ..
     // .. typically should include F1 for invocation and Ctrl+Alt+F15 for krusty remapping of F1
-    ssr.conf.get_switche_invocation_hotkeys() .iter() .for_each (|hotkey| {
-        let ss = ssr.clone();
-        let _ = gsm.register ( hotkey,  move || ss.proc_hot_key__invoke() );
-    });
+    register_hotkeys (ah, ss, &ss.conf.get_switche_invocation_hotkeys(), |ss| Box::new (move || ss.proc_hot_key__invoke()) );
 
-    // we register all hotkeys specified in config file for direct switch to last-window ..
-    // .. typically should include Ctrl+Alt+F16
-    ssr.conf.get_direct_last_window_switch_hotkeys() .iter() .for_each (|hotkey| {
-        let ss = ssr.clone();
-        let _ = gsm.register ( hotkey,  move || ss.proc_hot_key__switch_last() );
-    });
+
+    // we register all hotkeys specified in config file for direct switch to n-th last-windows ..
+    // .. typically should include Ctrl+Alt+F16 (through F18) for the last (through third-last)
+    register_hotkeys (ah, ss, &ss.conf.get_direct_last_window_switch_hotkeys(), |ss| Box::new (move || ss.proc_hot_key__switch_z_idx(1)) );
+    register_hotkeys (ah, ss, &ss.conf.get_second_last_window_switch_hotkeys(), |ss| Box::new (move || ss.proc_hot_key__switch_z_idx(2)) );
+    register_hotkeys (ah, ss, &ss.conf.get_third_last_window_switch_hotkeys(),  |ss| Box::new (move || ss.proc_hot_key__switch_z_idx(3)) );
+
+
+    // and for hotkeys specified in config file to take snapshot of windows, and switch through them without bringing switche up
+    register_hotkeys (ah, ss, &ss.conf.get_windows_list_snapshot_hotkeys(),  |ss| Box::new (move || ss.proc_hot_key__snap_list_refresh() ) );
+    register_hotkeys (ah, ss, &ss.conf.get_snap_list_switch_next_hotkeys(),  |ss| Box::new (move || ss.proc_hot_key__snap_list_switch_next() ) );
+    register_hotkeys (ah, ss, &ss.conf.get_snap_list_switch_prev_hotkeys(),  |ss| Box::new (move || ss.proc_hot_key__snap_list_switch_prev() ) );
 
     // finally, we'll also register any hotkeys specified in config file for direct switch to specific exe/title
-    ssr.conf.get_direct_app_switch_hotkeys() .into_iter() .for_each (|(hotkey, exe, title)| {
-        let ss = ssr.clone();
-        let _ = gsm.register (hotkey.as_str(), move || ss.proc_hot_key__switch_app (exe.as_deref(), title.as_deref()) );
+    ss.conf.get_direct_app_switch_hotkeys() .into_iter() .for_each (|(hotkey, exe, title, partial)| {
+        register_hotkeys (ah, ss, &vec![hotkey], |ss| Box::new ( move || ss.proc_hot_key__switch_app (exe.as_deref(), title.as_deref(), partial) ) );
     });
 
 }

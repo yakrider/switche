@@ -297,14 +297,21 @@ impl Config {
 
 
 
-
-    pub fn get_switche_invocation_hotkeys        (&self)  -> Vec<String> { self.get_string_array ("switche_invocation_hotkeys") }
-    pub fn get_direct_last_window_switch_hotkeys (&self)  -> Vec<String> { self.get_string_array ("last_window_direct_switch_hotkeys") }
     pub fn get_exe_exclusions_list               (&self)  -> Vec<String> { self.get_string_array ("exe_exclusions_list") }
     pub fn get_exe_manual_ordering_seq           (&self)  -> Vec<String> { self.get_string_array ("exe_manual_ordering_seq") }
 
+    pub fn get_switche_invocation_hotkeys        (&self)  -> Vec<String> { self.get_string_array ("switche_invocation_hotkeys") }
 
-    pub fn get_direct_app_switch_hotkeys (&self) -> Vec < (String, Option<String>, Option<String>) > {
+    pub fn get_direct_last_window_switch_hotkeys (&self)  -> Vec<String> { self.get_string_array ("last_window_direct_switch_hotkeys") }
+    pub fn get_second_last_window_switch_hotkeys (&self)  -> Vec<String> { self.get_string_array ("second_last_window_direct_switch_hotkeys") }
+    pub fn get_third_last_window_switch_hotkeys  (&self)  -> Vec<String> { self.get_string_array ("third_last_window_direct_switch_hotkeys") }
+
+    pub fn get_windows_list_snapshot_hotkeys     (&self)  -> Vec<String> { self.get_string_array ("windows_list_snapshot_hotkeys") }
+    pub fn get_snap_list_switch_next_hotkeys     (&self)  -> Vec<String> { self.get_string_array ("snap_list_switch_next_hotkeys") }
+    pub fn get_snap_list_switch_prev_hotkeys     (&self)  -> Vec<String> { self.get_string_array ("snap_list_switch_prev_hotkeys") }
+
+
+    pub fn get_direct_app_switch_hotkeys (&self) -> Vec < (String, Option<String>, Option<String>, bool) > {
         self.toml.read().unwrap().as_ref()
             .and_then (|t| t.get("flex_hotkey"))
             .and_then (|t| t.as_array_of_tables())
@@ -312,7 +319,8 @@ impl Config {
                 let hotkey = e.get("hotkey") .and_then (|v| v.as_str() .map (|v| v.to_string()) );
                 let exe    = e.get("exe")    .and_then (|v| v.as_str() .map (|v| v.to_string()) );
                 let title  = e.get("title")  .and_then (|v| v.as_str() .map (|v| v.to_string()) );
-                hotkey .map (|hk| Some ( (hk, exe, title) )) .unwrap_or (None)
+                let partial = e.get("allow_partial_match") .and_then (|v| v.as_bool()) .unwrap_or(false);
+                hotkey .map (|hk| Some ( (hk, exe, title, partial) )) .unwrap_or (None)
             } ) .collect() )
             .unwrap_or_default()
     }
