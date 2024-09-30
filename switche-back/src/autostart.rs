@@ -94,7 +94,7 @@ fn _setup_task__switche_autostart (elev:bool) -> Result<(), Box<dyn Error>> {
         .user_id (&user)?
         .in_folder (autostart_task_folder())?
         .action (Action::new ("Switche.exe", &swi_exe, "", ""))?
-        .delay ( Duration { seconds : Some(5), ..Default::default() } )?
+        .delay ( Duration { seconds : Some(30), ..Default::default() } )?
         .build()?
         .register (&task, TaskCreationFlags::CreateOrUpdate as i32)
 

@@ -152,9 +152,9 @@ object SwitcheFacePage {
       if (verifyActionRepeatSpacing()) {  // enforced spacing (in ms) between consecutive mouse scroll action handling
          triggerHoverLockTimeout(); //scrollEnd_arm();
          if (e.deltaY > 0 || e.deltaX > 0) {
-            if (e.ctrlKey) focusGroup_Next() else  focusElem_Next()
+            if (e.ctrlKey) focusGroup_Next() else if (e.shiftKey) focusBlockElem_Next() else focusElem_Next()
          } else {
-            if (e.ctrlKey) focusGroup_Prev() else focusElem_Prev()
+            if (e.ctrlKey) focusGroup_Prev() else if (e.shiftKey) focusBlockElem_Prev() else focusElem_Prev()
          }
    } }
    def procMouse_Enter (e:MouseEvent) = {
@@ -213,10 +213,10 @@ object SwitcheFacePage {
          // ^^ tab w/o alt should be regular next-nav, but w/o arming scroll-end .. (and w/ alt, shouldnt get here w hook interception)
          
          // arrow up/down nav .. consistent regardless of everything else
-         case (_, _, _, _, "ArrowUp")    => focusElem_Prev()
-         case (_, _, _, _, "ArrowDown")  => focusElem_Next()
-         case (_, _, _, _, "PageUp")     => focusElem_Top()
-         case (_, _, _, _, "PageDown")   => focusElem_Bottom()
+         case (_, _, _, _, "ArrowUp")    => if (e.shiftKey) focusBlockElem_Prev()   else focusElem_Prev()
+         case (_, _, _, _, "ArrowDown")  => if (e.shiftKey) focusBlockElem_Next()   else focusElem_Next()
+         case (_, _, _, _, "PageUp")     => if (e.shiftKey) focusBlockElem_Top()    else focusElem_Top()
+         case (_, _, _, _, "PageDown")   => if (e.shiftKey) focusBlockElem_Bottom() else focusElem_Bottom()
          
          // arrow left-right group nav while armed, w alt, or non-search .. else it'll just pass on to searchbox
          case (_, _, _, _, "ArrowLeft")   if (!inSearchState || scrollEnd_armed || e.altKey)  => focusGroup_Prev()
@@ -392,7 +392,7 @@ object SwitchePageState {
    def handleReq_CurElemClose()    = {
       val toClose = idToHwnd(curElemId)
       //ElemsDisplay.focusElem_Next()
-      ElemsDisplay.pickNextElem (isReverseDir = false, isGrpNext = false) .map(_.id) .foreach(setCurElem)
+      ElemsDisplay.pickNextElem (isReverseDir=false, isGrpNext=false, wrapBlocks=true) .map(_.id) .foreach(setCurElem)
       // ^^ instead of immdtly focusing on next elem, we'll just pick it out and let it be highligted upon next repaint
       toClose .foreach ( SendMsgToBack.FE_Req_WindowClose    )
    }
@@ -642,7 +642,7 @@ object ElemsDisplay {
    } .map(_.elem) .foreach (setCurElemHighlight)      // finally do the focus syncing
 
 
-   def pickNextElem (isReverseDir:Boolean, isGrpNext:Boolean) = {
+   def pickNextElem (isReverseDir:Boolean, isGrpNext:Boolean, wrapBlocks:Boolean) = {
       // we'll setup closures to nav and wrap-over forwards or backwards so it can handle both with same logic block below
       type Wrapper = IndexedSeq[String] => Option[String]
       val (incr, vecWrap) = {
@@ -658,22 +658,25 @@ object ElemsDisplay {
       .orElse { groupedElemsMap .get(curElemId) .map (oe => (true, oe)) }
       // now lets try to find the next-entry option for various state/mode/nav-type/curElem combinations
       .flatMap { case (curInGrpd, oe) =>
-         (inSearchState, inGroupedMode, isGrpNext, curInGrpd) match {
+         (inSearchState, inGroupedMode, isGrpNext, curInGrpd, wrapBlocks) match {
             // in recents-mode, always stay within recents (in both regular and search-state)
-            case (     _, false,     _,     _ ) => { pickNext (oe, ElemTs.R, ElemTs.R) }
+            case (     _, false,     _,     _,     _ ) => { pickNext (oe, ElemTs.R, ElemTs.R) }
             // in grouped-mode, if in search-state, always stay within grouped (recents is dimmed out, and non navigable)
-            case (  true,  true,     _,     _ ) => { pickNext (oe, ElemTs.G, ElemTs.G) }
-            // non-search recents, for regular-nav (not grp-next) .. if cur in recents nav there w fallback to grpd, and vice-versa
-            case ( false,  true, false, false ) => { pickNext (oe, ElemTs.R, ElemTs.G) }
-            case ( false,  true, false,  true ) => { pickNext (oe, ElemTs.G, ElemTs.R) }
+            case (  true,  true,     _,     _,     _ ) => { pickNext (oe, ElemTs.G, ElemTs.G) }
+            // non-search recents, for regular-nav (not grp-next) .. if cur in recents nav there w rollover to grpd, and vice-versa
+            case ( false,  true, false, false,  true ) => { pickNext (oe, ElemTs.R, ElemTs.G) }
+            case ( false,  true, false,  true,  true ) => { pickNext (oe, ElemTs.G, ElemTs.R) }
+            // however, if specifed to not wrap across recents/groups blocks, we just stay within the blocks
+            case ( false,  true, false, false, false ) => { pickNext (oe, ElemTs.R, ElemTs.R) }
+            case ( false,  true, false,  true, false ) => { pickNext (oe, ElemTs.G, ElemTs.G) }
             // non-search grouped, for grp-next, cur in recents .. if recents top, nav groups-head, else do recents top or first grp-head
-            case ( false,  true,  true, false ) => {
+            case ( false,  true,  true, false,     _ ) => {
                if (recentsIdsVec.headOption.contains(oe.elem.id)) { vecWrap (groupsHeadsIdsVec) .flatMap(groupedElemsMap.get) }
                else if (isReverseDir) { recentsIdsVec.headOption .flatMap(recentsElemsMap.get) } // reversing from rec middle .. do rec top
                else { groupsHeadsIdsVec.headOption .flatMap(groupedElemsMap.get) }  // but for fwd do first grp-head
             }
             // non-search grouped, grp-next, cur in grouped .. if grp-head or nav-fwd, nav grp heads w wrap to recents, else move to grp-head
-            case ( false,  true,  true,  true ) => {
+            case ( false,  true,  true,  true,     _ ) => {
                if (groupsHeadsIdsVec.lift(oe.yg).contains(oe.elem.id) || !isReverseDir) {
                   groupsHeadsIdsVec .lift(oe.yg+incr) .flatMap(groupedElemsMap.get)
                      .orElse ( recentsIdsVec.headOption.flatMap(recentsElemsMap.get) )
@@ -682,26 +685,36 @@ object ElemsDisplay {
          }
       } .map(_.elem)
    }
-   def focusElem (isReverseDir:Boolean=false, isGrpNext:Boolean=false) = {
-      pickNextElem (isReverseDir, isGrpNext) .foreach(setCurElemHighlight)
+   def focusElem (isReverseDir:Boolean, isGrpNext:Boolean, wrapBlocks:Boolean) = {
+      pickNextElem (isReverseDir, isGrpNext, wrapBlocks) .foreach(setCurElemHighlight)
    }
-   def focusElem_Next()  = focusElem (isReverseDir=false, isGrpNext=false)
-   def focusElem_Prev()  = focusElem (isReverseDir=true,  isGrpNext=false)
-   def focusGroup_Next() = focusElem (isReverseDir=false, isGrpNext=true )
-   def focusGroup_Prev() = focusElem (isReverseDir=true,  isGrpNext=true )
-
-   def focusElem_Top() = {
-      // top is usually recents top, except for search during grpd mode, when we dim out recents block
-      if (inGroupedMode && inSearchState) { groupedIdsVec.headOption.flatMap(groupedElemsMap.get) }
-      else                                { recentsIdsVec.headOption.flatMap(recentsElemsMap.get) }
+   def focusElem_Next()       = focusElem ( isReverseDir = false, isGrpNext = false, wrapBlocks =  true )
+   def focusElem_Prev()       = focusElem ( isReverseDir =  true, isGrpNext = false, wrapBlocks =  true )
+   def focusGroup_Next()      = focusElem ( isReverseDir = false, isGrpNext =  true, wrapBlocks =  true )
+   def focusGroup_Prev()      = focusElem ( isReverseDir =  true, isGrpNext =  true, wrapBlocks =  true )
+   def focusBlockElem_Next()  = focusElem ( isReverseDir = false, isGrpNext = false, wrapBlocks = false )
+   def focusBlockElem_Prev()  = focusElem ( isReverseDir =  true, isGrpNext = false, wrapBlocks = false )
+   
+   def focusElem_TopBtm (toTop:Boolean, withinBlock:Boolean) = {
+      val pickElem : IndexedSeq[String] => Option[String] = if (toTop) _.headOption else _.lastOption
+      val curInGrpd = groupedElemsMap.contains(curElemId)
+      // lets enumerate all ways we can end up in grouped block top/btm (which appears underneath recents block)
+      if (inGroupedMode &&                     // we must be in grouped mode
+            (inSearchState ||                  // then either we could be in search state (in grpd mode) ..
+               (withinBlock && curInGrpd) ||   // or we're doing within-block nav and already in group mode ..
+               (!withinBlock && !toTop)        // or we're doing cross-block nav and going to bottom
+      ) ) {
+         pickElem(groupedIdsVec).flatMap(groupedElemsMap.get)
+      } else {
+         pickElem(recentsIdsVec).flatMap(recentsElemsMap.get)
+      }
    } .map(_.elem) .foreach (setCurElemHighlight)
 
-   def focusElem_Bottom() = {
-      // regardless of search mode, in grp mode, btm is grp-nav-vec btm, and ditto for recents
-      if (inGroupedMode) { groupedIdsVec.lastOption.flatMap(groupedElemsMap.get) }
-      else               { recentsIdsVec.lastOption.flatMap(recentsElemsMap.get) }
-   } .map(_.elem) .foreach (setCurElemHighlight)
-  
+   def focusElem_Top()         = focusElem_TopBtm ( toTop =  true, withinBlock = false )
+   def focusElem_Bottom()      = focusElem_TopBtm ( toTop = false, withinBlock = false )
+   def focusBlockElem_Top()    = focusElem_TopBtm ( toTop =  true, withinBlock = true  )
+   def focusBlockElem_Bottom() = focusElem_TopBtm ( toTop = false, withinBlock = true  )
+
 }
 
 
