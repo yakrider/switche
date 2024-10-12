@@ -1075,10 +1075,14 @@ impl SwitcheState {
         } );
     }
     pub fn proc_hot_key__snap_list_switch_next (&self) {
-        self.snap_list_m .next_hwnd() .map (win_apis::window_activate);
+        if let Some(hwnd) = self.snap_list_m .next_hwnd() {
+            win_apis::window_activate(hwnd)
+        };
     }
     pub fn proc_hot_key__snap_list_switch_prev (&self) {
-        self.snap_list_m .prev_hwnd() .map (win_apis::window_activate);
+        if let Some(hwnd) = self.snap_list_m .prev_hwnd() {
+            win_apis::window_activate(hwnd)
+        };
     }
 
     pub fn proc_menu_req__switche_reload (&self) {
@@ -1249,7 +1253,7 @@ impl RenderReadyListsManager {
         // ^^ no good reason to exclude legit windows w/o titles
         ss.check_self_hwnd(wde.hwnd) ||
             wde.exe_path_name.as_ref() .filter (|p| !p.full_path.is_empty()) .is_none() ||
-            wde.exe_path_name.as_ref() .filter (|p| !self.exes_excl_check (&p.name, &wde)) .is_none()
+            wde.exe_path_name.as_ref() .filter (|p| !self.exes_excl_check (&p.name, wde)) .is_none()
     }
     pub fn runtime_should_excl_check (&self, ss:&SwitcheState, wde:&WinDatEntry) -> bool {
         wde.should_exclude .unwrap_or_else ( move || self.calc_excl_flag(ss,wde) )

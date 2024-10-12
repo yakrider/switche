@@ -1,9 +1,18 @@
 #![ allow (non_snake_case) ]
 
-use tauri::{SystemTray, SystemTrayMenu, SystemTrayMenuItem, CustomMenuItem, AppHandle, Wry, GlobalShortcutManager, WindowEvent, RunEvent, SystemTrayEvent, Manager};
+use std::{thread, time};
+
+use windows::Win32::Foundation::{GetLastError, ERROR_ALREADY_EXISTS};
+use windows::Win32::System::Threading::CreateMutexW;
 
 use crate::{win_apis, autostart};
 use crate::switche::{Hwnd, SwitcheState};
+
+use tauri::{
+    SystemTray, SystemTrayMenu, SystemTrayMenuItem, CustomMenuItem, AppHandle, Wry,
+    GlobalShortcutManager, WindowEvent, RunEvent, SystemTrayEvent, Manager, App
+};
+
 
 
 
@@ -73,6 +82,7 @@ pub fn run_switche_tauri (ss:&SwitcheState) {
         tauri::Builder::default() .setup ( {
             let ss = ss.clone();
             move |app| {
+                enforce_single_instance(app);
                 setup_global_shortcuts (&ss, &app.handle());
                 ss.setup_front_end_listener (&app.handle());
                 app.set_device_event_filter(tauri::DeviceEventFilter::Always);
@@ -122,6 +132,42 @@ fn tauri_window_events_handler (ss:&SwitcheState, _ah:&AppHandle, ev:&WindowEven
         WindowEvent::CloseRequested {..}  => { }
         _ => { }
     }
+}
+
+
+fn check_another_instance_running () -> bool { unsafe {
+    let switche_mutex = windows::core::w!("Global\\Switche_SingleInstance_Mutex");
+    // the os-global-mutex can fail to create, or it can return prior-created mutex and have last-error say ERROR_ALREADY_EXISTS
+    if CreateMutexW (None, true, switche_mutex) .is_err() {
+        return true;
+    }
+    if GetLastError() == ERROR_ALREADY_EXISTS {
+        return true;
+    }
+    false
+} }
+fn display_mult_instance_error (app: &App<Wry>) {
+    let ah = app.handle();
+    thread::spawn ( move || {  // blocking dialog requires it be not in the main thread
+        // we ideally want to exit when the Ok button is pressed ..
+        // .. but additionally we'll also setup a delayed exit in advance
+        let ahc = ah.clone();
+        thread::spawn ( move || {
+            thread::sleep (time::Duration::from_secs(10));
+            ahc.exit(1);
+        } );
+        tauri::api::dialog::blocking::message(
+            ah.get_window("main").as_ref(),
+            "Switche Startup Error",
+            "\nSwitche Startup Error:\n\
+            \x20   Another instance of Switche is already running.\n\n\
+            (This dialog will exit in 10 seconds)"
+        );
+        ah.exit(1);
+    } );
+}
+fn enforce_single_instance (app: &App<Wry>) {
+    if check_another_instance_running() { display_mult_instance_error(app) }
 }
 
 
@@ -211,7 +257,7 @@ pub fn tray_events_handler (ss:&SwitcheState, ah:&AppHandle<Wry>, event:SystemTr
 
 pub fn setup_global_shortcuts (ss:&SwitcheState, ah:&AppHandle<Wry>) {
 
-    fn register_hotkeys <HGF> (ah:&AppHandle<Wry>, ss: &SwitcheState, hotkeys: &Vec<String>, handler_gen: HGF) where
+    fn register_hotkeys <HGF> (ah:&AppHandle<Wry>, ss: &SwitcheState, hotkeys: &[String], handler_gen: HGF) where
         HGF: FnOnce(SwitcheState) -> Box <dyn Fn() + Send + 'static> + Clone    // handler extraction function type
     {
         hotkeys .iter() .for_each (|hotkey| {
@@ -241,7 +287,7 @@ pub fn setup_global_shortcuts (ss:&SwitcheState, ah:&AppHandle<Wry>) {
 
     // finally, we'll also register any hotkeys specified in config file for direct switch to specific exe/title
     ss.conf.get_direct_app_switch_hotkeys() .into_iter() .for_each (|(hotkey, exe, title, partial)| {
-        register_hotkeys (ah, ss, &vec![hotkey], |ss| Box::new ( move || ss.proc_hot_key__switch_app (exe.as_deref(), title.as_deref(), partial) ) );
+        register_hotkeys (ah, ss, &[hotkey], |ss| Box::new ( move || ss.proc_hot_key__switch_app (exe.as_deref(), title.as_deref(), partial) ) );
     });
 
 }
