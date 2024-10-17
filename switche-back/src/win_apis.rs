@@ -4,6 +4,7 @@ use std::ffi::c_void;
 use std::mem::size_of;
 use std::sync::{Arc, Mutex, RwLock};
 use once_cell::sync::Lazy;
+use tracing::{info, error};
 
 use windows::core::{GUID, PCWSTR, PSTR, PWSTR};
 use windows::Win32::Foundation::{BOOL, CloseHandle, GetLastError, ERROR_INSUFFICIENT_BUFFER, HANDLE, HWND, LPARAM, RECT, WPARAM};
@@ -60,7 +61,7 @@ pub fn get_window_owner (hwnd:Hwnd) -> Hwnd { unsafe {
     GetWindow (HWND(hwnd), GW_OWNER).0 as Hwnd
 } }
 pub fn get_window_root_owner (hwnd:Hwnd) -> Hwnd { unsafe {
-    println!("owner of {:?} : {:?}",hwnd, GetAncestor (HWND(hwnd), GA_ROOTOWNER).0 as Hwnd);
+    //debug!("owner of {:?} : {:?}",hwnd, GetAncestor (HWND(hwnd), GA_ROOTOWNER).0 as Hwnd);
     GetAncestor (HWND(hwnd), GA_ROOTOWNER).0 as Hwnd
 } }
 pub fn check_window_has_owner (hwnd:Hwnd) -> bool { unsafe {
@@ -80,7 +81,8 @@ pub fn get_last_active_popup (hwnd:Hwnd) -> Hwnd { unsafe {
 
 
 
-pub fn window_activate (hwnd:Hwnd) { unsafe { println!("winapi activate {:?}",hwnd);
+pub fn window_activate (hwnd:Hwnd) { unsafe {
+    info!("winapi activate {:?}",hwnd);
     //ShowWindowAsync (HWND(hwnd), SW_NORMAL);
     // ^^ this will cause minimized/maximized windows to be restored
     let mut win_state =  WINDOWPLACEMENT::default();
@@ -107,7 +109,8 @@ pub fn window_activate (hwnd:Hwnd) { unsafe { println!("winapi activate {:?}",hw
 } }
 
 
-pub fn window_hide (hwnd:Hwnd) { unsafe { println!("winapi hide {:?}",hwnd);
+pub fn window_hide (hwnd:Hwnd) { unsafe {
+    info!("winapi hide {:?}",hwnd);
     //ShowWindow (HWND(hwnd), SW_HIDE);
     // ^^ since this calls from our thread, this can apparently be unable to remove kbd focus from the window being hidden!!
     ShowWindowAsync (HWND(hwnd), SW_HIDE);
@@ -119,7 +122,8 @@ pub fn window_maximize (hwnd:Hwnd) { unsafe {
     ShowWindowAsync (HWND(hwnd), SW_MAXIMIZE);
 } }
 
-pub fn window_close (hwnd:Hwnd) { unsafe { println!("winapi close {:?}",hwnd);
+pub fn window_close (hwnd:Hwnd) { unsafe {
+    info!("winapi close {:?}",hwnd);
     //CloseWindow(HWND(hwnd));
     // note ^^ that the u32 'CloseWindow' cmd actually minimizes it, to close, send it a WM_CLOSE msg
     let _ = PostMessageA (HWND(hwnd), WM_CLOSE, WPARAM::default(), LPARAM::default());
@@ -253,7 +257,7 @@ pub fn check_cur_proc_elevated () -> Option<bool> {
     match check_proc_elevated ( unsafe { GetCurrentProcess()} ) {
         Ok (res) => Some(res),
         Err (e) => {
-            println!("Error checking process elevation : {:?}", e);
+            error!("Error checking process elevation : {:?}", e);
             None
     }  }
 }
@@ -271,7 +275,7 @@ pub fn get_cur_user_name () -> Option<String> {
     match _get_cur_user_name() {
         Ok (res) => Some(res),
         Err (e) => {
-            println!("Error getting current user name : {:?}", e);
+            error!("Error getting current user name : {:?}", e);
             None
     }  }
 }

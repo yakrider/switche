@@ -2,7 +2,9 @@
 
 use std::error::Error;
 use std::thread::spawn;
+
 use tauri::{AppHandle, Wry};
+use tracing::{info, error};
 
 use planif::enums::TaskCreationFlags;
 use planif::schedule::TaskScheduler;
@@ -24,13 +26,10 @@ fn autostart_task_folder() -> &'static str { "\\Switche" }
 
 
 fn check_sched_task_enabled (name:&str) -> bool {
-    match _check_sched_task_enabled (name) {
-        Ok(b) => b,
-        Err(_e) => {
-            //println!("Error checking task enabled state : {:?}", _e);
-            false
-        }
-    }
+    _check_sched_task_enabled(name) .unwrap_or_else (|e| {
+        error!("Error checking task enabled state : {:?}", e);
+        false
+    })
 }
 fn _check_sched_task_enabled (name:&str) -> Result<bool, Box<dyn Error>> {
     let ts = TaskScheduler::new()?;
@@ -43,7 +42,7 @@ fn _check_sched_task_enabled (name:&str) -> Result<bool, Box<dyn Error>> {
 fn set_sched_task_enabled_state (name:&str, state:bool) -> Result<(), Box<dyn Error>> {
     let res = _set_sched_task_enabled_state (name, state);
     if let Err(e) = res.as_ref() {
-        println!("While setting task enabled state of {:?} to {:?}, got error {:?}", name, state, e);
+        error!("While setting task enabled state of {:?} to {:?}, got error {:?}", name, state, e);
     }
     res
 }
@@ -59,7 +58,7 @@ fn _set_sched_task_enabled_state (name:&str, state:bool) -> Result<(), Box<dyn E
 fn setup_task__switche_autostart (elev:bool) -> Result<(), Box<dyn Error>> {
     let res = _setup_task__switche_autostart(elev);
     if let Err(e) = res.as_ref() {
-        println!("Error setting up switche autostart (with admin={}) : {:?}", elev, e);
+        error!("Error setting up switche autostart (with admin={}) : {:?}", elev, e);
     }
     res
 }
@@ -74,7 +73,7 @@ fn _setup_task__switche_autostart (elev:bool) -> Result<(), Box<dyn Error>> {
     let user = win_apis::get_cur_user_name().ok_or("Error getting user name")?;
     let task = autostart_task_name(elev).ok_or("Error getting task name")?;
     let swi_exe = std::env::current_exe().unwrap().to_string_lossy().to_string();
-    println! (".. Creating auto start on logon task for:{:?}, elev:{:?}, exe:{:?}", user, elev, swi_exe);
+    info! (".. Creating auto start on logon task for:{:?}, elev:{:?}, exe:{:?}", user, elev, swi_exe);
 
     let principal = PrincipalSettings {
         display_name: "".to_string(),

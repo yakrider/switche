@@ -12,6 +12,7 @@ use std::time::{Duration};
 
 use once_cell::sync::OnceCell;
 use rand::Rng;
+use tracing::warn;
 use windows::Win32::Foundation::HWND;
 
 
@@ -122,7 +123,7 @@ impl IconsManager {
     }
 
     fn queue_hwnd_icon_query (&self, hpp:&HwndExePathPair) {
-        //println!("hwnd icon query: {:?} : {:?}", &hpp.hwnd, &hpp.path.clone().split(r"\").last());
+        //debug!("hwnd icon query: {:?} : {:?}", &hpp.hwnd, &hpp.path.clone().split(r"\").last());
         if hpp.is_uwp { return }
         // ^^ UWP apps sometimes seem to hang at hwnd icon query winapi calls, but we shouldnt get here anyway as they have separate handling now
         let (icmgr, hppc) = (self.clone(), hpp.clone());
@@ -159,7 +160,7 @@ impl IconsManager {
                 let cache_idx_opt = icmgr.icons_exe_map .read().unwrap() .get(&hppc.path) .copied();
                 if let Some(cache_idx) = cache_idx_opt {
                     icmgr.handle_icon_cache_mapping_update (cache_idx, false, false, &hppc);
-                } else { println!("WARNING: exe icon lookup says prior-queried but nothing in cache!")
+                } else { warn!("WARNING: exe icon lookup says prior-queried but nothing in cache!")
                     // means we tried the exe query and failed .. nothing to do as thats prob not gonna change
                 }
         } } );
@@ -183,11 +184,11 @@ impl IconsManager {
             if prior_cache_idx.is_none() {
                 ss .emit_icon_entry ( &IconEntry { ico_id: cache_idx, ico_str: icon_str } );
             }
-            //println!("ico-cb (exe?:{:?}) (idx:{:?}) : {:?}", !is_from_hwnd, cache_idx, hpp.path.clone().split(r"\").last());
+            //debug!("ico-cb (exe?:{:?}) (idx:{:?}) : {:?}", !is_from_hwnd, cache_idx, hpp.path.clone().split(r"\").last());
             // now we can send it for hwnd/path icon-idx mappings
             self.handle_icon_cache_mapping_update (cache_idx, is_from_hwnd, prior_cache_idx.is_none(), hpp);
         } else {
-            println! ("WARNING: got empty icon-string callback for hwnd: {:?} {:?}", hpp.hwnd, &hpp.path.clone().split('\\').last());
+            warn! ("WARNING: got empty icon-string callback for hwnd: {:?} {:?}", hpp.hwnd, &hpp.path.clone().split('\\').last());
             if is_from_hwnd { self.queue_exe_icon_query (hpp) }
         }
     }
@@ -224,8 +225,8 @@ impl IconsManager {
             ss .emit_icon_entry ( &IconEntry { ico_id: iid, ico_str: ico.clone() } );
         } );
         // this should only happen on reload etc, fine time to dump out icons and mappings for examination too
-        //self.icons_hpp_map .read().unwrap() .iter().for_each(|(hpp,icm)| println!("{:?}, {:?}", icm, hpp));
-        //self.icons_exe_map  .read().unwrap() .iter().for_each(|(exe,idx)| println!("{:?}, {:?}", idx, exe));
+        //self.icons_hpp_map .read().unwrap() .iter().for_each(|(hpp,icm)| debug!("{:?}, {:?}", icm, hpp));
+        //self.icons_exe_map  .read().unwrap() .iter().for_each(|(exe,idx)| debug!("{:?}, {:?}", idx, exe));
     }
 
 
@@ -253,6 +254,7 @@ impl IconsManager {
 
 pub(crate) mod uwp_processing {
     use std::path::{Path, PathBuf};
+    use tracing::error;
 
     pub struct ManifestParse { pub(crate) ico:PathBuf, pub(crate) exe:PathBuf }
 
@@ -271,7 +273,7 @@ pub(crate) mod uwp_processing {
             quick_xml::reader::Reader::from_file(mf) .ok() .iter_mut() .for_each ( |reader| {
                 loop {
                     match reader.read_event_into(&mut buf) {
-                        Err (e) => { eprintln!("Error at position {}: {:?}", reader.buffer_position(), e); break; },
+                        Err (e) => { error!("UWP Manifest parse error at position {}: {:?}", reader.buffer_position(), e); break; },
                         Ok (Eof) => break,
                         Ok (Start (ref e)) => {
                             reader.decoder() .decode (e.name().as_ref()) .ok() .iter() .for_each (|tag| {
@@ -331,7 +333,7 @@ pub(crate) mod icon_extraction {
     };
 
     pub unsafe fn extract_exe_path_icon (exe_path:&String) -> Option<String> {
-        //println!("exe-ico-ext-- {:?}", exe_path.split(r"\").last());
+        //debug!("exe-ico-ext-- {:?}", exe_path.split(r"\").last());
         let mut path_arr = [0u8; 128];
         path_arr[.. exe_path.len()] .copy_from_slice (exe_path.as_bytes());
         let mut icon_idx = 0u16;
@@ -385,7 +387,7 @@ pub(crate) mod icon_extraction {
         let _ = GetBitmapBits (info.hbmColor, buf_size, buf.as_mut_ptr() as _);
 
         //let title =  crate::switche::SwitcheState::instance().hwnd_map.read().unwrap().get(&_hwnd.0).and_then(|wde| wde.win_text.to_owned()).unwrap_or_default();
-        //println! ("hwnd:{} \t: w:{},h:{}, {}bpp .. {}", _hwnd.0, bmp.bmWidth, bmp.bmHeight, bmp.bmBitsPixel, title);
+        //debug! ("hwnd:{} \t: w:{},h:{}, {}bpp .. {}", _hwnd.0, bmp.bmWidth, bmp.bmHeight, bmp.bmBitsPixel, title);
 
         // we'll check to see if all alpha values are 0, in which case we'll fallback to looking at the mask
         let mut alpha_invalid = true;

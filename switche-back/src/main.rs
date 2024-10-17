@@ -5,9 +5,15 @@
 )]
 
 
-
 fn main() {
 
-    switche::tauri::run_switche_tauri ( &switche::switche::SwitcheState::instance() );
+    let ss = switche::switche::SwitcheState::instance();
+
+    // we want the non-blocking log-appender guard to be here in main, to ensure any pending logs get flushed upon crash etc
+    let _guard = ss.conf.setup_log_subscriber();
+
+    tracing::info! ("Starting Switche ...");
+
+    switche::tauri::run_switche_tauri ( &ss );
 
 }

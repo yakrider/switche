@@ -50,6 +50,13 @@ window_dimensions.location = { x = 0, y = 0 }
 window_dimensions.size = { width = 0, height = 0 }
 
 
+# Enable logging for debugging or reporting errors .. default is false
+# When enabled, the log files with names like "switche_log.<date>.log" will be generated in the same location as the active config file
+# Note: Enabling logging is ONLY picked up upon restarting (not just reloading) the application
+logging_enabled = false
+# Level of logging (if enabled) .. default is "INFO" .. options are "DEBUG", "INFO", "WARN", "ERROR"
+logging_level = "INFO"
+
 
 # List of exes to exclude from the displayed list of windows .. default has "WDADesktopService.exe"
 # for any specified exe, restriction to a specific title can be specified after a semicolon, e.g. "explorer.exe;QTTabBar Preview Window"

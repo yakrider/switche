@@ -1,6 +1,7 @@
 #![ allow (non_snake_case) ]
 
 use std::{thread, time};
+use tracing::{error};
 
 use windows::Win32::Foundation::{GetLastError, ERROR_ALREADY_EXISTS};
 use windows::Win32::System::Threading::CreateMutexW;
@@ -12,6 +13,7 @@ use tauri::{
     SystemTray, SystemTrayMenu, SystemTrayMenuItem, CustomMenuItem, AppHandle, Wry,
     GlobalShortcutManager, WindowEvent, RunEvent, SystemTrayEvent, Manager, App
 };
+
 
 
 
@@ -214,7 +216,7 @@ pub fn setup_self_window (ss:&SwitcheState) {
 fn proc_event_app_ready (ss:&SwitcheState, _ah:&AppHandle<Wry>) {
     // we want to store a cached value of our hwnd for exclusions-mgr (and general use)
     if let Some(hwnd) = extract_self_hwnd(ss) {
-        //println! ("App starting .. self-hwnd is : {:?}", hwnd );
+        //debug! ("App starting .. self-hwnd is : {:?}", hwnd );
         ss.store_self_hwnd(hwnd);
         setup_self_window (ss);
         //tauri_setup_self_window(ah);
@@ -262,7 +264,7 @@ pub fn setup_global_shortcuts (ss:&SwitcheState, ah:&AppHandle<Wry>) {
     {
         hotkeys .iter() .for_each (|hotkey| {
             if let Err(e) = ah.global_shortcut_manager().register (hotkey, handler_gen.clone() (ss.clone())) {
-                println! ("Failed to register hotkey {:?}: {}", hotkey, e);
+                error! ("Failed to register hotkey {:?}: {}", hotkey, e);
             }
         });
     }

@@ -20,6 +20,7 @@ use once_cell::sync::{Lazy, OnceCell};
 use serde::{Deserialize, Serialize};
 use strum_macros::{AsRefStr};
 use tauri::{AppHandle, Manager, Wry};
+use tracing::{info, warn, error};
 
 use windows::Win32::Foundation::{BOOL, HINSTANCE, HWND, LPARAM};
 use windows::Win32::UI::Accessibility::{HWINEVENTHOOK, SetWinEventHook};
@@ -368,7 +369,7 @@ impl SwitcheState {
         }
     }
     fn trigger_enum_windows_query_immdt (&self, qt: EnumWindowsReqType) {
-        println!("***** starting new enum-windows query! **** (query type: {:?})",qt);
+        info!("***** starting new enum-windows query! **** (query type: {:?})",qt);
         self.cur_win_enum_type.set(qt);    // we might be getting called directly, so gotta cache it up for that
         let call_id_old = self.cur_call_id.fetch_add (1, Ordering::Relaxed);
         *self.hwnds_acc.write().unwrap() = Vec::new();
@@ -379,7 +380,7 @@ impl SwitcheState {
             //let t = Instant::now();
             let res = EnumWindows ( Some(Self::enum_windows_streamed_callback), LPARAM (call_id_old + 1) );
             //let dur = Instant::now().duration_since(t).as_millis();
-            //println! ("enum-windows query completed in {dur} ms, with success result: {:?}", res); // --> 'light' ones now finish < 1ms
+            //debug! ("enum-windows query completed in {dur} ms, with success result: {:?}", res); // --> 'light' ones now finish < 1ms
             if res.is_err() { return }    // the call could have been superceded by a newer request
             ss.post_enum_win_call_cleanup();
         } );
@@ -390,13 +391,13 @@ impl SwitcheState {
         let ss = SwitcheState::instance();
         let latest_call_id = ss.cur_call_id .load (Ordering::Relaxed);
         if call_id.0 > latest_call_id {
-            println! ("WARNING: got win-api callback w higher call_id than last triggered .. will restart enum-call! !");
+            warn! ("WARNING: got win-api callback w higher call_id than last triggered .. will restart enum-call! !");
             ss.trigger_enum_windows_query_immdt (ss.cur_win_enum_type.get());
             return BOOL (false as i32)
         };
         if call_id.0 < latest_call_id {
             // if we're still getting callbacks with stale call_id, signal that call to stop
-            println! ("WARNING: got callbacks @cur-call-id {} from stale cb-id: {} .. ending it!!", latest_call_id, call_id.0);
+            warn! ("WARNING: got callbacks @cur-call-id {} from stale cb-id: {} .. ending it!!", latest_call_id, call_id.0);
             return BOOL (false as i32)
         };
         let passed = {
@@ -491,7 +492,7 @@ impl SwitcheState {
             } );
         // and we'll swap out the live order-list with the readied accumulator to make the new ordering current
         std::mem::swap (&mut *self.hwnds_ordered.write().unwrap(), &mut *self.hwnds_acc.write().unwrap());
-        //println!("hwnds:{}, hacc:{}", self.hwnds_ordered.read().unwrap().len(), self.hwnds_acc.read().unwrap().len());
+        //debug!("hwnds:{}, hacc:{}", self.hwnds_ordered.read().unwrap().len(), self.hwnds_acc.read().unwrap().len());
 
         // we'll also check/trigger the top in rendering list for once-only backed-off icon requeries
         let fgnd_hwnd_opt = self.hwnds_ordered.read().unwrap().iter().next().cloned(); // avoiding if-let to reduce lock scope
@@ -509,7 +510,7 @@ impl SwitcheState {
 
 
     fn handle_event__switche_fgnd (&self) {
-        //println! ("switche self-fgnd report .. refreshing window-list-top icon");
+        //debug! ("switche self-fgnd report .. refreshing window-list-top icon");
         if self.is_fgnd.is_set() { return }
 
         // we'll trigger an immdt query if its only just coming to fgnd .. (no time to queue, and its only about ~1ms)
@@ -638,7 +639,7 @@ impl SwitcheState {
     ) {
         if id_object == 0 && id_child == 0 {
             //let t = std::time::UNIX_EPOCH.elapsed().unwrap().as_millis();
-            //println!("--> {:16} : hook event: 0x{:X}, hwnd:{:?}, id_object: 0x{:4X}", t, event, hwnd, id_object);
+            //debug!("--> {:16} : hook event: 0x{:X}, hwnd:{:?}, id_object: 0x{:4X}", t, event, hwnd, id_object);
             // todo: prob need to figure out actual logging w debug/run switches .. theres samples incl in the other repo
             match event {
                 //
@@ -669,7 +670,7 @@ impl SwitcheState {
     fn check_owner_chain_in_render_list (&self, hwnd:Hwnd) -> bool {
         if self.check_hwnd_renderable_pre_passed(hwnd) { return true }
         let owner_hwnd = win_apis::get_window_owner(hwnd);
-        //println! ("owner-chain: {:?} -> {:?}", hwnd, owner_hwnd);
+        //debug! ("owner-chain: {:?} -> {:?}", hwnd, owner_hwnd);
         if owner_hwnd == 0 || owner_hwnd == hwnd { return false }
         self.check_owner_chain_in_render_list (owner_hwnd)
     }
@@ -677,7 +678,7 @@ impl SwitcheState {
     fn check_parent_chain_in_render_list (&self, hwnd:Hwnd) -> bool {
         if self.check_hwnd_renderable_pre_passed(hwnd) { return true }
         let parent_hwnd = win_apis::get_window_parent(hwnd);
-        //println! ("parent-chain: {:?} -> {:?}", hwnd, owner_hwnd);
+        //debug! ("parent-chain: {:?} -> {:?}", hwnd, owner_hwnd);
         if parent_hwnd == 0 || parent_hwnd == hwnd { return false }
         self.check_parent_chain_in_render_list (parent_hwnd)
     }
@@ -695,7 +696,7 @@ impl SwitcheState {
         } else { return }
 
         // and if all checks out, we can set off the once-only backed-off requeries for this renderable hwnd
-        println!("## triggering backed-off icon requeries for {:?}", hwnd);
+        info!("## triggering backed-off icon requeries for {:?}", hwnd);
         let ss = self.clone();
         spawn ( move || {
             for i in 1..15 {
@@ -707,7 +708,7 @@ impl SwitcheState {
     }
 
     pub fn proc_win_report__title_changed (&self, hwnd:Hwnd) {
-        //println! ("@{:?} title-changed: {:?}", self._stamp(), hwnd);
+        //debug! ("@{:?} title-changed: {:?}", self._stamp(), hwnd);
 
         let hmap = self.hwnd_map.read().unwrap();   // acquired read lock
         let wdeOpt = hmap.get(&hwnd);
@@ -731,7 +732,7 @@ impl SwitcheState {
 
 
     pub fn proc_win_report__fgnd_hwnd (&self, hwnd:Hwnd) {
-        println! ("@{:?} fgnd: {:?}", self._stamp(), hwnd);
+        info! ("@{:?} fgnd: {:?}", self._stamp(), hwnd);
 
         // first, we'll update self-fgnd state if either this is self hwnd, or if its a valid renderable hwnd coming to fgnd
         if self.check_self_hwnd(hwnd) {
@@ -757,13 +758,13 @@ impl SwitcheState {
     }
 
     pub fn proc_win_report__minimize_end (&self, hwnd:Hwnd) {
-        println! ("@{:?} minimize-ended: {:?}", self._stamp(), hwnd);
+        info! ("@{:?} minimize-ended: {:?}", self._stamp(), hwnd);
         // ehh, we can just treat this as a fgnd report (other than the printout above for identification)
         self.proc_win_report__fgnd_hwnd(hwnd);
     }
 
     pub fn proc_win_report__minimized (&self, hwnd:Hwnd) {
-        println! ("@{:?} minimized: {:?}", self._stamp(), hwnd);
+        info! ("@{:?} minimized: {:?}", self._stamp(), hwnd);
         // we only really want to query/update z-order here if this was in our windows list
         if self.check_hwnd_renderable_pre_passed (hwnd) {
             self .trigger_enum_windows_query_pending (EnumWindowsReqType::Light);
@@ -771,7 +772,7 @@ impl SwitcheState {
     }
 
     pub fn proc_win_report__obj_shown (&self, hwnd:Hwnd) {
-        //println! ("@{:?} obj-shown: {:?}", self._stamp(), hwnd);
+        //debug! ("@{:?} obj-shown: {:?}", self._stamp(), hwnd);
 
         // windows can get into nothing-in-fgnd state, and in such cases, if the new fgnd is the same as what was fgnd last ..
         // .. then it will not send a new fgnd report .. if this happens to switche, our is_fgnd flags get out of sync ..
@@ -793,7 +794,7 @@ impl SwitcheState {
     }
 
     pub fn proc_win_report__obj_destroyed (&self, hwnd:Hwnd) {
-        //println! ("@{:?} obj-destroyed: {:?}", self._stamp(), hwnd);
+        //debug! ("@{:?} obj-destroyed: {:?}", self._stamp(), hwnd);
 
         // this is counterpart to special swi handling in obj-shown
         if self.check_self_hwnd(hwnd) {
@@ -810,9 +811,9 @@ impl SwitcheState {
         } // else the destoryed hwnd wasnt even in our list .. we can ignore it
     }
 
-    pub fn proc_win_report__obj_reorder (&self, hwnd:Hwnd) {
+    pub fn proc_win_report__obj_reorder (&self, _hwnd:Hwnd) {
         // todo : prob no use for this .. it seems mostly to be for z-order reordering WITHIN an app's child windows
-        println! ("@{:?} obj-reorder: {:?}", self._stamp(), hwnd);
+        //debug! ("@{:?} obj-reorder: {:?}", self._stamp(), hwnd);
         // we'll just trigger a light enum-query to keep ordering in sync
         self .trigger_enum_windows_query_pending (EnumWindowsReqType::Light);
     }
@@ -935,6 +936,7 @@ impl SwitcheState {
     pub(crate) fn handle_req__data_load(&self) {
         // ^ this triggers on reload .. we'll use that to refresh our hooks, configs etc too
         self.conf.load();
+        self.conf.reload_log_level();
         crate::tauri::setup_self_window(self);
         self.render_lists_m .reload_exes_excl_set (self.conf.get_exe_exclusions_list());
         self.render_lists_m .reload_ordering_ref_map (self.conf.get_exe_manual_ordering_seq());
@@ -961,7 +963,7 @@ impl SwitcheState {
 
 
     pub fn handle_frontend_request (&self, r:&FrontendRequest) {
-        println! ("received {:?}", r);
+        info! ("received {:?}", r);
 
         match r.req.as_str() {
             "fe_req_window_activate"      => { r.hwnd .iter() .for_each (|&h| self.handle_req__window_activate (h as Hwnd) ); }
@@ -985,14 +987,14 @@ impl SwitcheState {
 
             "fe_req_debug_print"          => { self.handle_req__debug_print() }
 
-            _ => { println! ("unrecognized frontend cmd: {}", r.req) }
+            _ => { warn! ("unrecognized frontend cmd: {}", r.req) }
         }
     }
 
     pub fn setup_front_end_listener (&self, ah:&AppHandle<Wry>) {
         let ss = self.clone();
         let _ = ah .listen_global ( "frontend_request", move |event| {
-            //println!("got event with raw payload {:?}", &event.payload());
+            //debug!("got event with raw payload {:?}", &event.payload());
             event .payload() .and_then ( |ev| serde_json::from_str::<FrontendRequest>(ev).ok() )
                 .iter() .for_each (|ev| ss.handle_frontend_request(ev))
         } );
@@ -1066,7 +1068,8 @@ impl SwitcheState {
         self.activate_matching_window (exe, title, partial)
     }
 
-    pub fn proc_hot_key__snap_list_refresh (&self) { //println!("snaplist refresh");
+    pub fn proc_hot_key__snap_list_refresh (&self) {
+        //debug!("snaplist refresh");
         self .trigger_enum_windows_query_immdt (EnumWindowsReqType::Light);
         let ss = self.clone();
         spawn ( move || {
@@ -1100,36 +1103,36 @@ impl SwitcheState {
 
 
     pub fn emit_win_dat_entry (&self, wde:&WinDatEntry) {
-        //println! ("emitting **{notice}** win_dat_entry for: {:?}", wde.hwnd);
+        //debug! ("emitting **{notice}** win_dat_entry for: {:?}", wde.hwnd);
         let pl = WinDatEntry_Pl {
                 hwnd: wde.hwnd,
                 win_text: wde.win_text.clone(),
                 exe_path_name: wde.exe_path_name.clone(),
                 icon_cache_idx: self.icons_m.get_cached_icon_idx(wde).unwrap_or(0) as u32,
         };
-        //println! ("** wde-update for hwnd {:8} : ico-idx: {:?}, {:?}", pl.hwnd, pl.icon_cache_idx, pl.exe_path_name.as_ref().map(|p|p.name.clone()));
+        //debug! ("** wde-update for hwnd {:8} : ico-idx: {:?}, {:?}", pl.hwnd, pl.icon_cache_idx, pl.exe_path_name.as_ref().map(|p|p.name.clone()));
         self.app_handle.read().unwrap() .iter().for_each ( |ah| {
             serde_json::to_string(&pl) .map ( |pl| {
                 ah.emit_all::<String> (Backend_Event::updated_win_dat_entry.str(), pl )
-            } ) .err() .iter() .for_each (|err| println!{"win_dat emit failed: {:?}", err});
+            } ) .err() .iter() .for_each (|err| error!{"win_dat emit failed: {:?}", err});
         } );
     }
 
     pub fn emit_icon_entry (&self, ie:&IconEntry) {
-        //println! ("** icon-update for icon-id: {:?}", ie.ico_id);
+        //debug! ("** icon-update for icon-id: {:?}", ie.ico_id);
         self.app_handle .read().unwrap() .iter() .for_each ( |ah| {
             serde_json::to_string(ie) .map (|pl| {
                 ah.emit_all::<String> ( Backend_Event::updated_icon_entry.str(), pl )
-            } ) .err() .iter().for_each (|err| println!("icon-entry emit failed: {:?}", err));
+            } ) .err() .iter().for_each (|err| error!("icon-entry emit failed: {:?}", err));
         } );
     }
 
     pub fn emit_configs (&self) {
-        println! ("** emitting .. configs-update");
+        info! ("** emitting .. configs-update");
         self.app_handle .read().unwrap() .iter() .for_each ( |ah| {
             serde_json::to_string (&Configs_Pl::assemble(self)) .map (|pl| {
                 ah.emit_all::<String> ( Backend_Event::updated_configs.str(), pl )
-            } ) .err() .iter() .for_each (|err| println!("configs emit failed: {:?}", err));
+            } ) .err() .iter() .for_each (|err| error!("configs emit failed: {:?}", err));
         } );
     }
 
@@ -1138,9 +1141,9 @@ impl SwitcheState {
         let pl = BackendNotice_Pl { msg: notice.str().to_string() };
         self.app_handle.read().unwrap() .iter() .for_each ( |ah| {
             serde_json::to_string(&pl) .map ( |pl| {
-                println!("sending backend notice: {}", &pl);
+                info!("sending backend notice: {}", &pl);
                 ah.emit_all::<String> ( Backend_Event::backend_notice.str(), pl ) .map_err (|_| "emit failure")
-            } ) .err() .iter().for_each (|err| println!("render-list emit failed: {}", err));
+            } ) .err() .iter().for_each (|err| error!("render-list emit failed: {}", err));
         } )
     }
 
@@ -1150,11 +1153,11 @@ impl SwitcheState {
             rl  : self.render_lists_m.render_list.read().unwrap().clone(),
             grl : self.render_lists_m.grpd_render_list.read().unwrap().clone()
         };
-        //println!("emitting renderlist ({:?}): {:?}", rlp.rl.len(), serde_json::to_string(&rlp).unwrap());
+        //debug!("emitting renderlist ({:?}): {:?}", rlp.rl.len(), serde_json::to_string(&rlp).unwrap());
         self.app_handle.read().unwrap().iter().for_each ( |ah| {
             serde_json::to_string(&rlp).map(|pl| {
                 ah.emit_all::<String>(Backend_Event::updated_render_list.str(), pl) .map_err (|_| "emit failure")
-            }) .err() .iter().for_each (|err| println!("rl emit failed: {}", err));
+            }) .err() .iter().for_each (|err| error!("rl emit failed: {}", err));
         } )
     }
 
@@ -1170,7 +1173,7 @@ impl SwitcheState {
         let grl_cf = self.render_lists_m.grpd_render_list.read().unwrap().clone();
 
         self.render_lists_m.update_render_ready_lists(self);
-        //println!("rl;{:?}",self.render_lists_m.render_list.read().unwrap());
+        //debug!("rl;{:?}",self.render_lists_m.render_list.read().unwrap());
 
         if rl_cf != *self.render_lists_m.render_list.read().unwrap() ||
             grl_cf != *self.render_lists_m.grpd_render_list.read().unwrap()
@@ -1371,7 +1374,7 @@ impl RenderReadyListsManager {
         let grpd_render_list = grpd_render_list_builder .into_iter() .map ( |es| {
             es .into_iter() .map (|e| e.rle) .collect::<Vec<_>>()
         } ) .collect::<Vec<Vec<_>>>();
-        //println!("render-ready-list recalc -- rl:{:?}", filt_rl.len() ); println!();
+        //debug!("render-ready-list recalc -- rl:{:?}", filt_rl.len());
         ( filt_rl, grpd_render_list )
     }
 

@@ -8,6 +8,7 @@ use std::time;
 use std::thread::{sleep, spawn};
 
 use once_cell::sync::OnceCell;
+use tracing::{debug, info, warn, error};
 
 use windows::Win32::Foundation::{HINSTANCE, HWND, LPARAM, WPARAM, LRESULT, POINT, BOOL, GetLastError};
 use windows::Win32::System::Threading::GetCurrentThreadId;
@@ -100,7 +101,7 @@ impl InputProcessor {
                 ss.i_proc.set_mouse_hook(); some_hook_set = true;
             }
             if !some_hook_set {
-                println! ("WARNING: no hooks set .. no input-processing started !!");
+                warn! ("WARNING: no hooks set .. no input-processing started !!");
                 return
             }
 
@@ -119,7 +120,7 @@ impl InputProcessor {
             let mut msg: MSG = MSG::default();
             while BOOL(0) != GetMessageW (&mut msg, HWND(0), 0, 0) {
                 if msg.message == KILL_MSG {
-                    println! ("received kill-msg in input-processing thread .. terminating thread ..");
+                    warn! ("received kill-msg in input-processing thread .. terminating thread ..");
                     break
                 }
             }
@@ -147,15 +148,15 @@ fn unset_hook (hhook: &AtomicIsize) -> bool {
     if hhook.load (Ordering::SeqCst) != HHOOK::default().0 {
         if unsafe { UnhookWindowsHookEx ( HHOOK (hhook.load(Ordering::SeqCst)) ) .is_ok() } {
             hhook.store (HHOOK::default().0, Ordering::SeqCst);
-            println!("unhooking attempt .. succeeded!");
+            info!("unhooking attempt .. succeeded!");
             return true
         }
         // we'll print the error both to console, and windows debug-out (which can be checked via dbgview at runtime)
         let err = format! ("SWITCHE : unhooking attempt failed .. error code : {:?} !!", unsafe { GetLastError().0 } );
-        eprintln!("{}", &err);
+        error!("{}", &err);
         win_apis::write_win_dbg_string (&err)
     } else {
-        println!("unhooking attempt .. no prior hook found !!");
+        info!("unhooking attempt .. no prior hook found !!");
     }
     false
 }
@@ -172,7 +173,7 @@ fn is_alt_key (vk_code:u32) -> bool {
 
 
 fn _print_kbd_event (wp:&WPARAM, kbs:&KBDLLHOOKSTRUCT) {
-    println!("w_param: {:X}, vk_code: {:?}, scanCode: {:#06X}, flags: {:#018b}, time: {}, dwExtraInfo: {:X}",
+    debug!("w_param: {:X}, vk_code: {:?}, scanCode: {:#06X}, flags: {:#018b}, time: {}, dwExtraInfo: {:X}",
              wp.0, kbs.vkCode, kbs.scanCode, kbs.flags.0, kbs.time, kbs.dwExtraInfo);
 }
 
@@ -187,13 +188,13 @@ pub unsafe extern "system" fn kbd_hook_cb (code:c_int, w_param:WPARAM, l_param:L
     let kbs = *(l_param.0 as *const KBDLLHOOKSTRUCT);
 
     if kbs.dwExtraInfo == SWITCHE_INJECTED_IDENTIFIER_EXTRA_INFO {
-        //println! ("ignoring swi injected event");
+        //debug! ("ignoring swi injected event");
         return return_call()
     }
 
-    //println! ("vk: {:?}, ev: {:?}, inj: {:?}", kbs.vkCode, w_param.0, kbs.dwExtraInfo);
+    //debug! ("vk: {:?}, ev: {:?}, inj: {:?}", kbs.vkCode, w_param.0, kbs.dwExtraInfo);
 
-    if w_param.0 as u32 == WM_SYSKEYDOWN && is_alt_key(kbs.vkCode) {  //println! ("alt-press");
+    if w_param.0 as u32 == WM_SYSKEYDOWN && is_alt_key(kbs.vkCode) {  //debug! ("alt-press");
         let ss = SwitcheState::instance();
         if ss.was_alt_preloaded.is_clear() {
             ss.was_alt_preloaded.set();
@@ -221,7 +222,7 @@ pub unsafe extern "system" fn kbd_hook_cb (code:c_int, w_param:WPARAM, l_param:L
         return return_call()
         // ^^ note that we cant block it even if we send out a replacement because it could be left/right/virt whatever
     }
-    else if w_param.0 as u32 == WM_SYSKEYDOWN  && kbs.vkCode == VK_TAB.0 as u32 {  //println! ("alt-tab");
+    else if w_param.0 as u32 == WM_SYSKEYDOWN  && kbs.vkCode == VK_TAB.0 as u32 {  //debug! ("alt-tab");
         // when we get an actual alt-tab, we'll block the tab from going out to avoid conflict w native alt-tab
         // further, to remain in windows graces since it only lets us call fgnd if we handled last input etc, we'll send ourselves an input
         // the spawning in thread is VERY important, as that gives OS time to process msgs before we try to bring switche fgnd
@@ -305,7 +306,7 @@ fn mouse_hook_cb (code: c_int, w_param: WPARAM, l_param: LPARAM) -> LRESULT {
         // if we injected it ourselves, we should just bail (and call the next guy down the line)
         return return_call()
     }
-    //println!("{:#?}", mh_struct);
+    //debug!("{:#?}", mh_struct);
 
     let ss = SwitcheState::instance();
 
@@ -394,7 +395,7 @@ fn send_mouse_rbtn_release_masked() {
     win_apis::win_set_thread_dpi_aware();
 
     let cursor_orig_loc = get_cursor_pos();
-    //println! ("cursor-orig-loc: {:?}", cursor_orig_loc);
+    //debug! ("cursor-orig-loc: {:?}", cursor_orig_loc);
 
     //let cursor_mask_loc = POINT { x: 0xFFFF, y: 0xFFFF };
     // ^^ screen edge avoids the clicked-loc context menu .. but still produces a tiny desktop context menu
@@ -402,7 +403,7 @@ fn send_mouse_rbtn_release_masked() {
     // so we'll move to the bottom-right corner of the switche window instead .. that should prevent context menu from MOST apps
     let self_rect = win_apis::win_get_window_frame (SwitcheState::instance().get_self_hwnd());
     let cursor_mask_loc = POINT { x: self_rect.right - 10, y: self_rect.bottom - 10 };
-    //println! ("cursor-mask-loc: {:?}", cursor_mask_loc);
+    //debug! ("cursor-mask-loc: {:?}", cursor_mask_loc);
 
     // we'll add a delay before release, to avoid focus stealing from switche intended window etc
     cursor_move_abs (cursor_mask_loc.x, cursor_mask_loc.y);

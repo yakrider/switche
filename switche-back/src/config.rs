@@ -10,6 +10,17 @@ use std::time::SystemTime;
 use once_cell::sync::{Lazy, OnceCell};
 use tauri::Manager;
 use toml_edit::DocumentMut;
+
+use tracing::{info, error, warn};
+use tracing::metadata::LevelFilter;
+use tracing_appender::non_blocking;
+use tracing_appender::non_blocking::WorkerGuard;
+use tracing_appender::rolling::{RollingFileAppender, Rotation};
+use tracing_subscriber::{Layer, Registry, reload};
+use tracing_subscriber::fmt::time::LocalTime;
+use tracing_subscriber::reload::Handle;
+use tracing_subscriber::prelude::*;
+
 use crate::switche::SwitcheState;
 
 
@@ -30,8 +41,9 @@ pub type Action = Arc < dyn Fn() + Send + Sync + 'static >;
 
 # [ derive (Debug) ]
 pub struct _Config {
-    pub toml    : RwLock <Option <DocumentMut>>,
-    pub default : DocumentMut,
+    pub toml     : RwLock <Option <DocumentMut>>,
+    pub default  : DocumentMut,
+    pub loglevel : RwLock <Option <Handle <LevelFilter, Registry>>>,
 }
 
 
@@ -79,6 +91,7 @@ impl Config {
                 toml    : RwLock::new (None),
                 default : DocumentMut::from_str (include_str!("../../switche.conf.toml")).unwrap(),
                 // ^^ our switche.conf.toml is at root of project, the include_str macro will load the contents at compile time
+                loglevel : RwLock::new (None),
             } ) );
             conf.load();
             conf
@@ -91,7 +104,7 @@ impl Config {
     pub const SWITCHE_VERSION : &'static str = env!("CARGO_PKG_VERSION");
 
 
-    fn get_config_file (&self) -> Option<PathBuf> {  //println! ("get_config_file");
+    fn get_config_file (&self) -> Option<PathBuf> {  //debug! ("get_config_file called");
         let app_dir_loc = get_app_dir() .map (|p| p.join(Self::CONF_FILE_NAME));
         //println! ("app_dir_loc: {:?}", app_dir_loc);
         //win_apis::write_win_dbg_string (&format!("SWITCHE : app_dir_loc: {:?}", &app_dir_loc));
@@ -111,6 +124,14 @@ impl Config {
         }
         None
     }
+    pub fn get_log_loc (&self) -> Option<PathBuf> {
+        if let Some(conf_path) = self.get_config_file() {
+            if let Some(conf_loc) = conf_path.parent() {
+                return Some(conf_loc.to_path_buf())
+        } }
+        None
+    }
+
 
     pub fn trigger_config_file_edit (&self) {
         if let Some(conf_path) = self.get_config_file() {
@@ -136,8 +157,60 @@ impl Config {
         self.trigger_config_file_reset();
     }
 
+    pub fn reload_log_level (&self) {
+        // we'll revisit log-subscriber setup in case there was a switch from disabled to enabled
+        // (but note we still want to have the initial setup_log_subscriber called direct from main first to keep around the flush guard)
+        let _ = self.setup_log_subscriber();
+        let log_level = self.get_log_level();
+        warn! ("Setting log-level to {:?}", log_level.into_level());
+        self.loglevel.write().unwrap().as_ref() .map (|h| {
+            h.modify (|f| *f = log_level)
+        } );
+    }
 
-    fn write_back_toml (&self) {   //println! ("write_back_toml");
+    pub fn setup_log_subscriber (&self) -> Result <WorkerGuard, ()> {
+        // todo .. ^^ prob use actual errors, though little utility here
+
+        if self.check_flag__logging_enabled().not() ||  self.loglevel.read().unwrap().is_some() {
+            return Err(())
+        }
+
+        if let Some(log_loc) = self.get_log_loc() {
+
+            let log_appender = RollingFileAppender::builder()
+                .rotation(Rotation::DAILY)
+                .filename_prefix("switche_log")
+                .filename_suffix("log")
+                .max_log_files(7)
+                .build(log_loc)
+                .map_err (|_e| ())?;
+
+            let (nb_log_appender, guard) = non_blocking (log_appender);
+
+            let (level_filter, filter_handle) = reload::Layer::new(self.get_log_level());
+
+            *self.loglevel.write().unwrap() = Some(filter_handle);
+
+            let timer = LocalTime::new ( ::time::format_description::parse (
+                "[year]-[month]-[day] [hour]:[minute]:[second].[subsecond digits:3]"
+            ).unwrap() );
+
+            let subscriber = tracing_subscriber::fmt::Layer::new()
+                .with_writer(nb_log_appender)
+                .with_timer(timer)
+                .with_ansi(false)
+                .with_filter(level_filter);
+
+            tracing_subscriber::registry().with(subscriber).init();
+
+            return Ok(guard)
+        }
+        Err(())
+    }
+
+
+    fn write_back_toml (&self) {
+        //debug! ("write_back_toml");
         let conf_path = self.get_config_file();
         if conf_path.is_none() { return }
         let _ = fs::write (
@@ -192,6 +265,13 @@ impl Config {
             .unwrap_or (self.default.get(key).unwrap().as_integer().unwrap() as u32)
     }
 
+    fn get_string (&self, key:&str) -> String {
+        self.toml.read().unwrap().as_ref()
+            .and_then (|t| t.get(key))
+            .and_then (|t| t.as_str()) .map (|s| s.to_string())
+            .unwrap_or (self.default.get(key).unwrap().as_str().unwrap().to_string())
+    }
+
     fn get_string_array (&self, key:&str) -> Vec<String> {
         self.toml.read().unwrap() .as_ref()
             .and_then (|t| t.get(key))
@@ -209,6 +289,23 @@ impl Config {
     pub fn check_flag__rbtn_scroll_enabled        (&self) -> bool { self.check_flag ( "mouse_right_btn_scroll_enabled" ) }
     pub fn check_flag__restore_window_dimensions  (&self) -> bool { self.check_flag ( "restore_window_dimensions"      ) }
     pub fn check_flag__auto_order_window_groups   (&self) -> bool { self.check_flag ( "auto_order_window_groups"       ) }
+    pub fn check_flag__logging_enabled            (&self) -> bool { self.check_flag ( "logging_enabled"                ) }
+
+
+    pub fn get_log_level (&self) -> LevelFilter {
+        if !self.check_flag__logging_enabled() {
+            return LevelFilter::OFF;
+        }
+        match self.get_string("logging_level").as_str() {
+            "TRACE" => LevelFilter::TRACE,
+            "DEBUG" => LevelFilter::DEBUG,
+            //"INFO"  => LevelFilter::INFO,
+            "WARN"  => LevelFilter::WARN,
+            "ERROR" => LevelFilter::ERROR,
+            "OFF"   => LevelFilter::OFF,
+            _       => LevelFilter::INFO,
+        }
+    }
 
 
     // only a few flags are settable via code/UI .. (the rest can be changed directly in config file)
@@ -258,7 +355,8 @@ impl Config {
         } }
         None
     }
-    pub fn update_conf__switche_window (&self, ss:&SwitcheState) { println! ("update_conf__switche_window");
+    pub fn update_conf__switche_window (&self, ss:&SwitcheState) {
+        info! ("update_conf__switche_window");
         let (conf, ss) = (self.clone(), ss.clone());
         std::thread::spawn ( move || {
             if let Some(ah) = ss.app_handle.read().unwrap().as_ref() {
@@ -282,7 +380,7 @@ impl Config {
                             drop(toml_guard);
                             conf.write_back_toml_if_changed();
                         } else {
-                            eprintln!("update_conf__switche_window: failed to get window position, size, or toml doc");
+                            error!("update_conf__switche_window: failed to get window position, size, or toml doc");
                         }
             }  }  }
         } );
@@ -369,7 +467,7 @@ impl DeferredExecutor {
             action();
             *deadline = SystemTime::UNIX_EPOCH;
         } else {
-            //println! ("deadline reset or pushed forward, nothing to do")
+            //debug! ("deadline reset or pushed forward, nothing to do")
         }
     }
 
