@@ -102,11 +102,6 @@ pub fn run_switche_tauri (ss:&SwitcheState) {
         .expect ("error while building tauri application")
     };
 
-    // we'll setup the switche window always-on-top behavior based on configs
-    app .windows() .get("main") .map (|w|
-        w.set_always_on_top (ss.conf.check_flag__auto_hide_enabled())
-    );
-
     // we'll also check if we're admin, or the corresponding auto-start tasks are active and sync our tray flag accordingly
     autostart::update_tray_auto_start_admin_flags (&app.app_handle());
 
@@ -200,6 +195,14 @@ pub fn auto_setup_self_window (ss:&SwitcheState) {
 
     win_apis::win_move_to (ss.get_self_hwnd(), x, y, width, height);
 }
+pub fn sync_self_always_on_top (ss:&SwitcheState) {
+    ss.app_handle .read().unwrap() .iter() .for_each ( |ah| {
+        ah .windows() .get("main") .map (|w| {
+            w.set_always_on_top (ss.conf.check_flag__auto_hide_enabled())
+        });
+    } )
+}
+
 pub fn setup_self_window (ss:&SwitcheState) {
     // if there's a valid config, and the sizes are not zero (like at startup), we'll use those
     //if ss.conf.check_flag__restore_window_dimensions() {
@@ -207,10 +210,13 @@ pub fn setup_self_window (ss:&SwitcheState) {
     if let Some ((x,y,w,h)) = ss.conf.read_conf__window_dimensions() {
         if w > 0 && h > 0 {
             win_apis::win_move_to (ss.get_self_hwnd(), x, y, w, h);
-            return
-    } }
-    // else the default is to auto-calc window dimensions
-    auto_setup_self_window (ss);
+        }
+    } else {
+        // else the default is to auto-calc window dimensions
+        auto_setup_self_window (ss);
+    }
+    // finally, we'll also setup/sync the self-window always-on-top behavior
+    sync_self_always_on_top (ss);
 }
 
 fn proc_event_app_ready (ss:&SwitcheState, _ah:&AppHandle<Wry>) {
@@ -219,7 +225,6 @@ fn proc_event_app_ready (ss:&SwitcheState, _ah:&AppHandle<Wry>) {
         //debug! ("App starting .. self-hwnd is : {:?}", hwnd );
         ss.store_self_hwnd(hwnd);
         setup_self_window (ss);
-        //tauri_setup_self_window(ah);
     }
 }
 pub fn tauri_run_events_handler (ss:&SwitcheState, ah:&AppHandle<Wry>, event:RunEvent) {

@@ -530,7 +530,15 @@ impl SwitcheState {
 
         self.is_fgnd.clear();
         if self.conf.check_flag__auto_hide_enabled() {
-            self.handle_req__switche_escape()
+            //self.handle_req__switche_escape();
+            // ^^ instead of immediately hiding switche window, we'll come back after a delay and ensure its still not-fgnd before hiding it
+            // .. this reduces spurious auto-hide events from transient fgnd stealers
+            // .. (e.g. google-play-games service, which seems to steal fgnd (for ~100ms) soon after unlocking pc post win-L lock etc)
+            let ss = self.clone();
+            spawn (move || {
+                sleep (Duration::from_millis(150));
+                if !ss.is_fgnd.is_set() { ss.handle_req__switche_escape() }
+            } );
         } else {
             //self.app_handle .read().unwrap() .iter() .for_each ( |ah| {
             //    ah .windows() .get("main") .map (|w| w.set_always_on_top (false))
@@ -739,9 +747,11 @@ impl SwitcheState {
             self.handle_event__switche_fgnd();
             return
         }
-        // for everything that came to fgnd, we definitely want to reprocess it first (so its state, excl, icons can be updated)
-        // but first we'll set its icon to be refreshed upon reprocessing
-        if let Some(wde) = self.hwnd_map.read().unwrap() .get(&hwnd) { self.icons_m.mark_cached_icon_mapping_stale(wde) };
+        // first we'll set this hwnds icon to be refreshed upon reprocessing (if it was already in map)
+        if let Some(wde) = self.hwnd_map.read().unwrap() .get(&hwnd) {
+            self.icons_m.mark_cached_icon_mapping_stale(wde)
+        };
+        // now for everything that came to fgnd, we definitely want to reprocess it (so its state, excl, icons can be updated)
         let render_check_passed = self.process_discovered_hwnd(hwnd);
 
         // and if its renderable, we'll also check/set this for first-timer icon requeries
@@ -753,7 +763,11 @@ impl SwitcheState {
         // .. so we'll just requery light everytime .. (and profiling shows its pretty low cost anyway)
         self .trigger_enum_windows_query_pending (EnumWindowsReqType::Light);
 
+        //debug!("fgnd lost to : {:#?}\n{:#?}", &self.hwnd_map.read().unwrap().get(&hwnd), win_apis::win_get_window_frame(hwnd));
+
         // we'll do the fgnd-lost handling at last .. it might require FE messaging etc
+        //if render_check_passed && self.is_fgnd.is_set() { self.handle_event__switche_fgnd_lost() }
+        // ^^ gating by render-check-passed would keep switche up upon bringing fgnd child windows etc (e.g. IDE run window)
         if self.is_fgnd.is_set() { self.handle_event__switche_fgnd_lost() }
     }
 
@@ -918,13 +932,10 @@ impl SwitcheState {
         crate::tauri::auto_setup_self_window (self);
     }
     fn handle_req__toggle_auto_hide (&self) {
-        //let auto_hide_state = self.conf.toggle_flag__auto_hide_enabled();
-        if let Some(auto_hide_state) = self.conf.deferred_update_conf__auto_hide_toggle() {
-            self.emit_configs();
-            self.app_handle .read().unwrap() .iter() .for_each ( |ah| {
-                ah .windows() .get("main") .map (|w| w.set_always_on_top (auto_hide_state));
-            } )
-    }  }
+        self.conf.deferred_update_conf__auto_hide_toggle();
+        self.emit_configs();
+        crate::tauri::sync_self_always_on_top(&self);
+    }
 
     fn handle_req__debug_print (&self) { }
 
@@ -937,7 +948,7 @@ impl SwitcheState {
         // ^ this triggers on reload .. we'll use that to refresh our hooks, configs etc too
         self.conf.load();
         self.conf.reload_log_level();
-        crate::tauri::setup_self_window(self);
+        crate::tauri::setup_self_window(&self);
         self.render_lists_m .reload_exes_excl_set (self.conf.get_exe_exclusions_list());
         self.render_lists_m .reload_ordering_ref_map (self.conf.get_exe_manual_ordering_seq());
         self.i_proc.re_set_hooks();
