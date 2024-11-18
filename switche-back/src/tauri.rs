@@ -288,9 +288,11 @@ pub fn setup_global_shortcuts (ss:&SwitcheState, ah:&AppHandle<Wry>) {
 
 
     // and for hotkeys specified in config file to take snapshot of windows, and switch through them without bringing switche up
-    register_hotkeys (ah, ss, &ss.conf.get_windows_list_snapshot_hotkeys(),  |ss| Box::new (move || ss.proc_hot_key__snap_list_refresh() ) );
-    register_hotkeys (ah, ss, &ss.conf.get_snap_list_switch_next_hotkeys(),  |ss| Box::new (move || ss.proc_hot_key__snap_list_switch_next() ) );
-    register_hotkeys (ah, ss, &ss.conf.get_snap_list_switch_prev_hotkeys(),  |ss| Box::new (move || ss.proc_hot_key__snap_list_switch_prev() ) );
+    register_hotkeys (ah, ss, &ss.conf.get_windows_list_snapshot_hotkeys(),   |ss| Box::new (move || ss.proc_hot_key__snap_list_refresh() ) );
+    register_hotkeys (ah, ss, &ss.conf.get_snap_list_switch_next_hotkeys(),   |ss| Box::new (move || ss.proc_hot_key__snap_list_switch (|sl| sl.next_hwnd()) ) );
+    register_hotkeys (ah, ss, &ss.conf.get_snap_list_switch_prev_hotkeys(),   |ss| Box::new (move || ss.proc_hot_key__snap_list_switch (|sl| sl.prev_hwnd()) ) );
+    register_hotkeys (ah, ss, &ss.conf.get_snap_list_switch_top_hotkeys(),    |ss| Box::new (move || ss.proc_hot_key__snap_list_switch (|sl| sl.top_hwnd()) ) );
+    register_hotkeys (ah, ss, &ss.conf.get_snap_list_switch_bottom_hotkeys(), |ss| Box::new (move || ss.proc_hot_key__snap_list_switch (|sl| sl.bottom_hwnd()) ) );
 
     // finally, we'll also register any hotkeys specified in config file for direct switch to specific exe/title
     ss.conf.get_direct_app_switch_hotkeys() .into_iter() .for_each (|(hotkey, exe, title, partial)| {

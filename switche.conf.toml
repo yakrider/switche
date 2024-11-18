@@ -97,11 +97,13 @@ third_last_window_direct_switch_hotkeys = ["Alt+Shift+F1", "Ctrl+Alt+F18"]
 
 
 # Hotkeys to take a snapshot of the current list of windows, and scroll through them without bringing switche up
-# (defaults are "Alt+Shift+F15", "Alt+Shift+F16", "Alt+Shift+F17" for taking-snapshot, next-in-list, prev-in-list respectively
+# (defaults are "Alt+Shift+F15" for taking snapshot, and "Alt+Shift+[F16..F19]" for [next, prev, top, bottom] in list respectively
 # (note that the defaults are intended to be driven by external key manager from more ergonomic triggers)
 windows_list_snapshot_hotkeys = ["Alt+Shift+F15"]
 snap_list_switch_next_hotkeys = ["Alt+Shift+F16"]
 snap_list_switch_prev_hotkeys = ["Alt+Shift+F17"]
+snap_list_switch_top_hotkeys  = ["Alt+Shift+F18"]
+snap_list_switch_bottom_hotkeys = ["Alt+Shift+F19"]
 
 # Configuration for optional user-specifiable hotkeys to directly switch to specific app (if present at the time)
 # Each entry can be listed under [[flex_hotkey]] table heading, and must have a 'hotkey' specified

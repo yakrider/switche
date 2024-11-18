@@ -763,7 +763,7 @@ impl SwitcheState {
         // .. so we'll just requery light everytime .. (and profiling shows its pretty low cost anyway)
         self .trigger_enum_windows_query_pending (EnumWindowsReqType::Light);
 
-        //debug!("fgnd lost to : {:#?}\n{:#?}", &self.hwnd_map.read().unwrap().get(&hwnd), win_apis::win_get_window_frame(hwnd));
+        //tracing::debug! ("fgnd ({:?}) --> {:?}\n{:?}", self.is_fgnd.is_set(),  &self.hwnd_map.read().unwrap().get(&hwnd),  win_apis::win_get_window_frame(hwnd));
 
         // we'll do the fgnd-lost handling at last .. it might require FE messaging etc
         //if render_check_passed && self.is_fgnd.is_set() { self.handle_event__switche_fgnd_lost() }
@@ -1088,17 +1088,13 @@ impl SwitcheState {
             ss.snap_list_m.capture(&ss.render_lists_m);
         } );
     }
-    pub fn proc_hot_key__snap_list_switch_next (&self) {
-        if let Some(hwnd) = self.snap_list_m .next_hwnd() {
+    pub fn proc_hot_key__snap_list_switch <SLFN> (&self, slfn:SLFN)
+        where SLFN : Fn (&SnapListManager) -> Option<Hwnd>
+    {
+        if let Some(hwnd) = slfn (&self.snap_list_m) {
             win_apis::window_activate(hwnd)
         };
     }
-    pub fn proc_hot_key__snap_list_switch_prev (&self) {
-        if let Some(hwnd) = self.snap_list_m .prev_hwnd() {
-            win_apis::window_activate(hwnd)
-        };
-    }
-
     pub fn proc_menu_req__switche_reload (&self) {
         self.emit_backend_notice (Backend_Notice::backend_req__switche_reload)
     }
@@ -1425,6 +1421,19 @@ impl SnapListManager {
         if sl.is_empty() { return None }
         let idx = (self.cur_idx.fetch_sub(1, Ordering::Relaxed) - 1) .rem_euclid (sl.len() as isize);
         sl .get (idx as usize) .copied()
+    }
+    pub fn top_hwnd (&self) -> Option<Hwnd> {
+        let sl = self.snap_list.read().unwrap();
+        if sl.is_empty() { return None }
+        self.cur_idx.store (0, Ordering::Relaxed);
+        sl .get(0) .copied()
+    }
+    pub fn bottom_hwnd (&self) -> Option<Hwnd> {
+        let sl = self.snap_list.read().unwrap();
+        if sl.is_empty() { return None }
+        let idx = self.snap_list.read().unwrap().len() - 1;
+        self.cur_idx.store (idx as isize, Ordering::Relaxed);
+        sl .get (idx) .copied()
     }
 
 }

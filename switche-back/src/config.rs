@@ -407,6 +407,8 @@ impl Config {
     pub fn get_windows_list_snapshot_hotkeys     (&self)  -> Vec<String> { self.get_string_array ("windows_list_snapshot_hotkeys") }
     pub fn get_snap_list_switch_next_hotkeys     (&self)  -> Vec<String> { self.get_string_array ("snap_list_switch_next_hotkeys") }
     pub fn get_snap_list_switch_prev_hotkeys     (&self)  -> Vec<String> { self.get_string_array ("snap_list_switch_prev_hotkeys") }
+    pub fn get_snap_list_switch_top_hotkeys      (&self)  -> Vec<String> { self.get_string_array ("snap_list_switch_top_hotkeys") }
+    pub fn get_snap_list_switch_bottom_hotkeys   (&self)  -> Vec<String> { self.get_string_array ("snap_list_switch_bottom_hotkeys") }
 
 
     pub fn get_direct_app_switch_hotkeys (&self) -> Vec < (String, Option<String>, Option<String>, bool) > {
