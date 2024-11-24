@@ -171,7 +171,7 @@ fn enforce_single_instance (app: &App<Wry>) {
 fn extract_self_hwnd (ss:&SwitcheState) -> Option<Hwnd> {
     ss.app_handle.read().unwrap() .as_ref() .and_then (|ah| {
         ah.windows().values() .next() .and_then (|w| w.hwnd().ok())
-    } ) .map (|h| h.0)
+    } ) .map (|h| Hwnd(h.0))
 }
 
 pub fn auto_setup_self_window (ss:&SwitcheState) {

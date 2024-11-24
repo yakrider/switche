@@ -30,103 +30,103 @@ use crate::switche::Hwnd;
 
 
 pub fn check_window_visible (hwnd:Hwnd) -> bool { unsafe {
-    IsWindowVisible (HWND(hwnd)) .as_bool()
+    IsWindowVisible (hwnd.HWND()) .as_bool()
 } }
 
 pub fn check_window_cloaked (hwnd:Hwnd) -> bool { unsafe {
     let mut cloaked_state: isize = 0;
     let out_ptr = &mut cloaked_state as *mut isize as *mut c_void;
-    let _ = DwmGetWindowAttribute (HWND(hwnd), DWMWA_CLOAKED, out_ptr, size_of::<isize>() as u32);
+    let _ = DwmGetWindowAttribute (hwnd.HWND(), DWMWA_CLOAKED, out_ptr, size_of::<isize>() as u32);
     cloaked_state != 0
 } }
 
 pub fn check_if_app_window (hwnd:Hwnd) -> bool { unsafe {
-    GetWindowLongW (HWND(hwnd), GWL_EXSTYLE) & WS_EX_APPWINDOW.0 as i32 != 0
+    GetWindowLongW (hwnd.HWND(), GWL_EXSTYLE) & WS_EX_APPWINDOW.0 as i32 != 0
 } }
 
 pub fn check_if_tool_window (hwnd:Hwnd) -> bool { unsafe {
-    GetWindowLongW (HWND(hwnd), GWL_EXSTYLE) & WS_EX_TOOLWINDOW.0 as i32 != 0
+    GetWindowLongW (hwnd.HWND(), GWL_EXSTYLE) & WS_EX_TOOLWINDOW.0 as i32 != 0
 } }
 
 pub fn check_if_tool_tip (hwnd:Hwnd) -> bool { unsafe {
     let mut buf = vec![0u16; 512];
-    let len = GetClassNameW(HWND(hwnd), &mut buf);
+    let len = GetClassNameW(hwnd.HWND(), &mut buf);
     "tooltips_class32" == String::from_utf16_lossy (&buf [..len as usize])
 } }
 
 pub fn get_window_parent (hwnd:Hwnd) -> Hwnd { unsafe {
-    GetAncestor (HWND(hwnd), GA_PARENT).0 as Hwnd
+    GetAncestor (hwnd.HWND(), GA_PARENT).into()
 } }
 pub fn get_window_owner (hwnd:Hwnd) -> Hwnd { unsafe {
-    GetWindow (HWND(hwnd), GW_OWNER).0 as Hwnd
+    GetWindow (hwnd.HWND(), GW_OWNER) .ok() .map (|h| h.into()) .unwrap_or(Hwnd(0))
 } }
 pub fn get_window_root_owner (hwnd:Hwnd) -> Hwnd { unsafe {
-    //debug!("owner of {:?} : {:?}",hwnd, GetAncestor (HWND(hwnd), GA_ROOTOWNER).0 as Hwnd);
-    GetAncestor (HWND(hwnd), GA_ROOTOWNER).0 as Hwnd
+    //debug!("owner of {:?} : {:?}",hwnd, GetAncestor (hwnd.HWND(), GA_ROOTOWNER).into());
+    GetAncestor (hwnd.HWND(), GA_ROOTOWNER).into()
 } }
 pub fn check_window_has_owner (hwnd:Hwnd) -> bool { unsafe {
-    GetAncestor (HWND(hwnd), GA_ROOTOWNER).0 as Hwnd != hwnd
+    hwnd != GetAncestor (hwnd.HWND(), GA_ROOTOWNER).into()
 } }
 
 pub fn check_window_is_child (hwnd:Hwnd) -> bool { unsafe {
-    (GetWindowLongW (HWND(hwnd), GWL_STYLE) & WS_CHILD.0 as i32) != 0
+    (GetWindowLongW (hwnd.HWND(), GWL_STYLE) & WS_CHILD.0 as i32) != 0
 } }
 
 pub fn get_fgnd_window () -> Hwnd { unsafe {
-    GetForegroundWindow().0 as Hwnd
+    GetForegroundWindow().into()
 } }
 pub fn get_last_active_popup (hwnd:Hwnd) -> Hwnd { unsafe {
-    GetLastActivePopup (HWND(hwnd)).0 as Hwnd
+    GetLastActivePopup (hwnd.HWND()).into()
 } }
 
 
 
 pub fn window_activate (hwnd:Hwnd) { unsafe {
     info!("winapi activate {:?}",hwnd);
-    //ShowWindowAsync (HWND(hwnd), SW_NORMAL);
+    //ShowWindowAsync (hwnd.HWND(), SW_NORMAL);
     // ^^ this will cause minimized/maximized windows to be restored
     let mut win_state =  WINDOWPLACEMENT::default();
-    let _ = GetWindowPlacement (HWND(hwnd), &mut win_state);
+    let _ = GetWindowPlacement (hwnd.HWND(), &mut win_state);
     if win_state.showCmd == SW_SHOWMINIMIZED.0 as u32 {
-        //ShowWindow (HWND(hwnd), SW_RESTORE);
-        ShowWindowAsync (HWND(hwnd), SW_RESTORE);
+        //ShowWindow (hwnd.HWND(), SW_RESTORE);
+        let _ = ShowWindowAsync (hwnd.HWND(), SW_RESTORE);
     } else {
-        //ShowWindow (HWND(hwnd), SW_SHOW);
-        ShowWindowAsync (HWND(hwnd), SW_SHOW);
+        //ShowWindow (hwnd.HWND(), SW_SHOW);
+        let _ = ShowWindowAsync (hwnd.HWND(), SW_SHOW);
     }
     //keybd_event (0, 0, KEYBD_EVENT_FLAGS::default(), 0);
-    SetForegroundWindow (HWND(hwnd));
-    //std::thread::spawn ( move || SetForegroundWindow (HWND(hwnd)) );
+    let _ = SetForegroundWindow (hwnd.HWND());
+    //std::thread::spawn ( move || SetForegroundWindow (hwnd.HWND()) );
     // its a lil flaky, so we'll try the another call too, (plus the little delay from spawn should also help)
-    //std::thread::spawn (move || SwitchToThisWindow (HWND(hwnd), BOOL::from(true)) );
+    //std::thread::spawn (move || SwitchToThisWindow (hwnd.HWND(), BOOL::from(true)) );
     // ^^ appears basically the same as above calls, doesnt help when have issues, else isnt necessary
 
     // if the activated window had a popup active, we'll activate it so it has focus (which doesnt always seem to auto-happen)
     std::thread::spawn ( move || {  // spawning should give enough time for the window to finish processing its activation first
-        let lap = GetLastActivePopup (HWND(hwnd));
-        if lap.0 != hwnd { SetForegroundWindow (lap); }
+        let lap = GetLastActivePopup (hwnd.HWND());
+        if hwnd != lap.into() { let _ = SetForegroundWindow (lap); }
     } );
 } }
 
 
 pub fn window_hide (hwnd:Hwnd) { unsafe {
     info!("winapi hide {:?}",hwnd);
-    //ShowWindow (HWND(hwnd), SW_HIDE);
+    //ShowWindow (hwnd.HWND(), SW_HIDE);
     // ^^ since this calls from our thread, this can apparently be unable to remove kbd focus from the window being hidden!!
-    ShowWindowAsync (HWND(hwnd), SW_HIDE);
+    let _ = ShowWindowAsync (hwnd.HWND(), SW_HIDE);
 } }
 pub fn window_minimize (hwnd:Hwnd) { unsafe {
-    ShowWindowAsync (HWND(hwnd), SW_MINIMIZE);
+    let _ = ShowWindowAsync (hwnd.HWND(), SW_MINIMIZE);
 } }
 pub fn window_maximize (hwnd:Hwnd) { unsafe {
-    ShowWindowAsync (HWND(hwnd), SW_MAXIMIZE);
+    let _ = ShowWindowAsync (hwnd.HWND(), SW_MAXIMIZE);
 } }
 
 pub fn window_close (hwnd:Hwnd) { unsafe {
     info!("winapi close {:?}",hwnd);
-    //CloseWindow(HWND(hwnd));
+    //CloseWindow(hwnd.HWND());
     // note ^^ that the u32 'CloseWindow' cmd actually minimizes it, to close, send it a WM_CLOSE msg
-    let _ = PostMessageA (HWND(hwnd), WM_CLOSE, WPARAM::default(), LPARAM::default());
+    let _ = PostMessageA (hwnd.HWND(), WM_CLOSE, WPARAM::default(), LPARAM::default());
 } }
 
 
@@ -134,7 +134,7 @@ pub fn window_close (hwnd:Hwnd) { unsafe {
 pub fn get_window_text (hwnd:Hwnd) -> String { unsafe {
     const MAX_LEN : usize = 512;
     let mut lpstr = [0u16; MAX_LEN];
-    let copied_len = GetWindowTextW (HWND(hwnd), &mut lpstr);
+    let copied_len = GetWindowTextW (hwnd.HWND(), &mut lpstr);
     String::from_utf16_lossy (&lpstr[..(copied_len as _)])
     // ^^ todo: see if makes sense to do all string work everywhere with cow instead of cloned strings
 } }
@@ -148,12 +148,12 @@ pub fn win_get_work_area () -> RECT { unsafe {
 pub fn win_get_window_frame (hwnd:Hwnd) -> RECT { unsafe {
     // note that rect includes padding of the 'drop shadow' around the frame
     let mut rect = RECT::default();
-    let _ = DwmGetWindowAttribute (HWND(hwnd), DWMWA_EXTENDED_FRAME_BOUNDS, &mut rect as *mut RECT as *mut c_void, size_of::<RECT>() as u32);
+    let _ = DwmGetWindowAttribute (hwnd.HWND(), DWMWA_EXTENDED_FRAME_BOUNDS, &mut rect as *mut RECT as *mut c_void, size_of::<RECT>() as u32);
     rect
 } }
 
 pub fn win_move_to (hwnd:Hwnd, x:i32, y:i32, width:i32, height:i32) { unsafe {
-    let _ = MoveWindow (HWND(hwnd), x, y, width, height, true);
+    let _ = MoveWindow (hwnd.HWND(), x, y, width, height, true);
     // ^^ the bool param at end flags whether to repaint or not
 } }
 
@@ -161,7 +161,7 @@ pub fn win_move_to (hwnd:Hwnd, x:i32, y:i32, width:i32, height:i32) { unsafe {
 
 pub fn get_hwnd_exe_path (hwnd:Hwnd) -> Option<String> { unsafe {
     let mut pid : u32 = 0;
-    let _ = GetWindowThreadProcessId (HWND(hwnd), Some(&mut pid));
+    let _ = GetWindowThreadProcessId (hwnd.HWND(), Some(&mut pid));
     get_pid_exe_path (pid)
 } }
 fn get_pid_exe_path (pid:u32) -> Option<String> { unsafe {
@@ -177,10 +177,10 @@ fn get_pid_exe_path (pid:u32) -> Option<String> { unsafe {
 
 pub fn get_uwp_hwnd_exe_path (hwnd:Hwnd) -> Option<String> { unsafe {
     let mut frame_host_pid : u32 = 0;
-    let _ = GetWindowThreadProcessId (HWND(hwnd), Some(&mut frame_host_pid));
+    let _ = GetWindowThreadProcessId (hwnd.HWND(), Some(&mut frame_host_pid));
     let uwp_pid = get_child_windows (hwnd) .iter() .map (|cwh| {
         let mut pid = 0u32;
-        let _ = GetWindowThreadProcessId (HWND(*cwh), Some(&mut pid));
+        let _ = GetWindowThreadProcessId (cwh.HWND(), Some(&mut pid));
         pid
     } ) .filter (|pid| *pid != frame_host_pid) .collect::<Vec<u32>>();
     uwp_pid .first() .and_then (|&pid| get_pid_exe_path(pid))
@@ -188,7 +188,7 @@ pub fn get_uwp_hwnd_exe_path (hwnd:Hwnd) -> Option<String> { unsafe {
 
 pub fn get_aumid_from_hwnd (hwnd:Hwnd) -> Option<String> { unsafe {
     let mut pid : u32 = 0;
-    let _ = GetWindowThreadProcessId (HWND(hwnd), Some(&mut pid));  dbg!(pid);
+    let _ = GetWindowThreadProcessId (hwnd.HWND(), Some(&mut pid));  dbg!(pid);
     let handle = OpenProcess (PROCESS_QUERY_LIMITED_INFORMATION, BOOL::from(false), pid); dbg!(&handle);
     if handle.is_err() { return None }
     const AUMID_MAX_LEN : usize = 1024;
@@ -202,7 +202,7 @@ pub fn get_aumid_from_hwnd (hwnd:Hwnd) -> Option<String> { unsafe {
 
 pub fn get_package_path_from_hwnd (hwnd:Hwnd) -> Option<String> { unsafe {
 
-    let result = SHGetPropertyStoreForWindow(HWND(hwnd));
+    let result = SHGetPropertyStoreForWindow(hwnd.HWND());
     if result.is_err() { return None }
     let store : IPropertyStore = result.unwrap();
     //dbg!(&store);
@@ -324,10 +324,10 @@ pub fn check_shift_active () -> bool { unsafe {
 static child_windows_lock : Lazy <Arc <Mutex <()>>> = Lazy::new (|| Arc::new ( Mutex::new(())));
 static child_windows : Lazy <Arc <RwLock <Vec <Hwnd>>>> = Lazy::new (|| Arc::new ( RwLock::new (vec!()) ) );
 
-pub fn get_child_windows (hwnd:Hwnd) -> Vec<isize> { unsafe {
+pub fn get_child_windows (hwnd:Hwnd) -> Vec<Hwnd> { unsafe {
     let lock = child_windows_lock.lock().unwrap();
     *child_windows.write().unwrap() = vec!();
-    EnumChildWindows ( HWND(hwnd), Some(enum_child_windows_cb), LPARAM::default() );
+    let _ = EnumChildWindows ( hwnd.HWND(), Some(enum_child_windows_cb), LPARAM::default() );
     let cws = child_windows.read().unwrap().clone();
     drop(lock);
     cws
@@ -335,7 +335,7 @@ pub fn get_child_windows (hwnd:Hwnd) -> Vec<isize> { unsafe {
 
 #[ allow (clippy::missing_safety_doc) ]
 pub unsafe extern "system" fn enum_child_windows_cb (hwnd:HWND, _:LPARAM) -> BOOL {
-    child_windows.write().unwrap().push(hwnd.0);
+    child_windows.write().unwrap().push(hwnd.into());
     BOOL (true as i32)
 }
 

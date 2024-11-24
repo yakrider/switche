@@ -36,7 +36,28 @@ use crate::input_proc::InputProcessor;
 use crate::icons::IconsManager;
 use crate::config::Config;
 
-pub type Hwnd = isize;
+//pub type Hwnd = isize;
+//pub type Hwnd = *mut core::ffi::c_void;
+
+#[derive (Debug, Default, Copy, Clone, Eq, PartialEq, Hash, Serialize, Deserialize)]
+pub struct Hwnd (pub isize);
+
+impl Hwnd {
+    pub fn is_null(&self) -> bool {
+        self.0 == 0
+    }
+    pub fn HWND (&self) -> HWND {
+        HWND (self.0 as *mut _)
+    }
+}
+
+impl From<HWND> for Hwnd {
+    fn from (h:HWND) -> Self {
+        Hwnd (h.0 as isize)
+    }
+}
+
+
 
 
 
@@ -334,10 +355,10 @@ impl SwitcheState {
         *self.app_handle.write().unwrap() = Some(ah);
     }
     pub fn store_self_hwnd (&self, hwnd:Hwnd) {
-        self.self_hwnd.store (hwnd, Ordering::Relaxed)
+        self.self_hwnd.store (hwnd.0, Ordering::Relaxed)
     }
     pub fn get_self_hwnd (&self) -> Hwnd {
-        self.self_hwnd.load(Ordering::Relaxed)
+        Hwnd (self.self_hwnd.load(Ordering::Relaxed))
     }
     pub fn check_self_hwnd (&self, hwnd:Hwnd) -> bool {
         hwnd == self.get_self_hwnd()
@@ -401,10 +422,10 @@ impl SwitcheState {
             return BOOL (false as i32)
         };
         let passed = {
-            if ss.cur_win_enum_type.is_light() { ss.check_hwnd_renderable_pre_passed(hwnd.0) }
-            else { ss.process_discovered_hwnd(hwnd.0) }
+            if ss.cur_win_enum_type.is_light() { ss.check_hwnd_renderable_pre_passed(hwnd.into()) }
+            else { ss.process_discovered_hwnd(hwnd.into()) }
         };
-        if passed { ss.hwnds_acc .write().unwrap() .push (hwnd.0) }
+        if passed { ss.hwnds_acc .write().unwrap() .push (hwnd.into()) }
         BOOL (true as i32)
     }
 
@@ -635,7 +656,7 @@ impl SwitcheState {
             //     so we'll just leave a forever waiting GetMessage instead of setting up a msg-loop
             // .. basically while its waiting, the thread is awakened simply to call kbd hook (for an actual msg, itd awaken give the msg)
             let mut msg: MSG = MSG::default();
-            while BOOL(0) != GetMessageW (&mut msg, HWND(0), 0, 0) { };
+            while BOOL(0) != GetMessageW (&mut msg, Hwnd(0).HWND(), 0, 0) { };
         } );
     }
 
@@ -651,19 +672,19 @@ impl SwitcheState {
             // todo: prob need to figure out actual logging w debug/run switches .. theres samples incl in the other repo
             match event {
                 //
-                EVENT_SYSTEM_FOREGROUND    =>  SwitcheState::instance().proc_win_report__fgnd_hwnd     (hwnd.0),
-                EVENT_SYSTEM_MINIMIZESTART =>  SwitcheState::instance().proc_win_report__minimized     (hwnd.0),
-                EVENT_SYSTEM_MINIMIZEEND   =>  SwitcheState::instance().proc_win_report__minimize_end  (hwnd.0),
+                EVENT_SYSTEM_FOREGROUND    =>  SwitcheState::instance().proc_win_report__fgnd_hwnd     (hwnd.into()),
+                EVENT_SYSTEM_MINIMIZESTART =>  SwitcheState::instance().proc_win_report__minimized     (hwnd.into()),
+                EVENT_SYSTEM_MINIMIZEEND   =>  SwitcheState::instance().proc_win_report__minimize_end  (hwnd.into()),
                 //
-                EVENT_OBJECT_CREATE       =>  SwitcheState::instance().proc_win_report__obj_shown      (hwnd.0),
-                EVENT_OBJECT_DESTROY      =>  SwitcheState::instance().proc_win_report__obj_destroyed  (hwnd.0),
-                EVENT_OBJECT_SHOW         =>  SwitcheState::instance().proc_win_report__obj_shown      (hwnd.0),
-                EVENT_OBJECT_HIDE         =>  SwitcheState::instance().proc_win_report__obj_destroyed  (hwnd.0),
-                EVENT_OBJECT_REORDER      =>  SwitcheState::instance().proc_win_report__obj_reorder    (hwnd.0),
-                EVENT_OBJECT_FOCUS        =>  SwitcheState::instance().proc_win_report__fgnd_hwnd      (hwnd.0),
-                EVENT_OBJECT_NAMECHANGE   =>  SwitcheState::instance().proc_win_report__title_changed  (hwnd.0),
-                EVENT_OBJECT_CLOAKED      =>  SwitcheState::instance().proc_win_report__obj_destroyed  (hwnd.0),
-                EVENT_OBJECT_UNCLOAKED    =>  SwitcheState::instance().proc_win_report__obj_shown      (hwnd.0),
+                EVENT_OBJECT_CREATE       =>  SwitcheState::instance().proc_win_report__obj_shown      (hwnd.into()),
+                EVENT_OBJECT_DESTROY      =>  SwitcheState::instance().proc_win_report__obj_destroyed  (hwnd.into()),
+                EVENT_OBJECT_SHOW         =>  SwitcheState::instance().proc_win_report__obj_shown      (hwnd.into()),
+                EVENT_OBJECT_HIDE         =>  SwitcheState::instance().proc_win_report__obj_destroyed  (hwnd.into()),
+                EVENT_OBJECT_REORDER      =>  SwitcheState::instance().proc_win_report__obj_reorder    (hwnd.into()),
+                EVENT_OBJECT_FOCUS        =>  SwitcheState::instance().proc_win_report__fgnd_hwnd      (hwnd.into()),
+                EVENT_OBJECT_NAMECHANGE   =>  SwitcheState::instance().proc_win_report__title_changed  (hwnd.into()),
+                EVENT_OBJECT_CLOAKED      =>  SwitcheState::instance().proc_win_report__obj_destroyed  (hwnd.into()),
+                EVENT_OBJECT_UNCLOAKED    =>  SwitcheState::instance().proc_win_report__obj_shown      (hwnd.into()),
                 //
                 _ => { }
             }
@@ -679,7 +700,7 @@ impl SwitcheState {
         if self.check_hwnd_renderable_pre_passed(hwnd) { return true }
         let owner_hwnd = win_apis::get_window_owner(hwnd);
         //debug! ("owner-chain: {:?} -> {:?}", hwnd, owner_hwnd);
-        if owner_hwnd == 0 || owner_hwnd == hwnd { return false }
+        if owner_hwnd.is_null() || owner_hwnd == hwnd { return false }
         self.check_owner_chain_in_render_list (owner_hwnd)
     }
     # [ allow (dead_code) ]
@@ -687,7 +708,7 @@ impl SwitcheState {
         if self.check_hwnd_renderable_pre_passed(hwnd) { return true }
         let parent_hwnd = win_apis::get_window_parent(hwnd);
         //debug! ("parent-chain: {:?} -> {:?}", hwnd, owner_hwnd);
-        if parent_hwnd == 0 || parent_hwnd == hwnd { return false }
+        if parent_hwnd.is_null() || parent_hwnd == hwnd { return false }
         self.check_parent_chain_in_render_list (parent_hwnd)
     }
     fn check_for_once_only_backed_off_icon_requeries(&self, hwnd:Hwnd) {
@@ -977,11 +998,11 @@ impl SwitcheState {
         info! ("received {:?}", r);
 
         match r.req.as_str() {
-            "fe_req_window_activate"      => { r.hwnd .iter() .for_each (|&h| self.handle_req__window_activate (h as Hwnd) ); }
-            "fe_req_window_peek"          => { r.hwnd .iter() .for_each (|&h| self.handle_req__window_peek     (h as Hwnd) ); }
-            "fe_req_window_minimize"      => { r.hwnd .iter() .for_each (|&h| self.handle_req__window_minimize (h as Hwnd) ); }
-            "fe_req_window_maximize"      => { r.hwnd .iter() .for_each (|&h| self.handle_req__window_maximize (h as Hwnd) ); }
-            "fe_req_window_close"         => { r.hwnd .iter() .for_each (|&h| self.handle_req__window_close    (h as Hwnd) ); }
+            "fe_req_window_activate"      => { r.hwnd .iter() .for_each (|&h| self.handle_req__window_activate (Hwnd (h as isize)) ); }
+            "fe_req_window_peek"          => { r.hwnd .iter() .for_each (|&h| self.handle_req__window_peek     (Hwnd (h as isize)) ); }
+            "fe_req_window_minimize"      => { r.hwnd .iter() .for_each (|&h| self.handle_req__window_minimize (Hwnd (h as isize)) ); }
+            "fe_req_window_maximize"      => { r.hwnd .iter() .for_each (|&h| self.handle_req__window_maximize (Hwnd (h as isize)) ); }
+            "fe_req_window_close"         => { r.hwnd .iter() .for_each (|&h| self.handle_req__window_close    (Hwnd (h as isize)) ); }
 
             "fe_req_data_load"            => { self.handle_req__data_load()        }
             "fe_req_refresh"              => { self.handle_req__refresh()          }

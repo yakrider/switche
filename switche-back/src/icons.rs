@@ -13,7 +13,6 @@ use std::time::{Duration};
 use once_cell::sync::OnceCell;
 use rand::Rng;
 use tracing::warn;
-use windows::Win32::Foundation::HWND;
 
 
 use crate::switche::{Hwnd, IconEntry, SwitcheState, WinDatEntry};
@@ -128,7 +127,7 @@ impl IconsManager {
         // ^^ UWP apps sometimes seem to hang at hwnd icon query winapi calls, but we shouldnt get here anyway as they have separate handling now
         let (icmgr, hppc) = (self.clone(), hpp.clone());
         spawn ( move || unsafe {
-            if let Some(ico_str) = icon_extraction::extract_hwnd_icon (HWND(hppc.hwnd)) {
+            if let Some(ico_str) = icon_extraction::extract_hwnd_icon (hppc.hwnd.HWND()) {
                 icmgr.icon_string_callback (&hppc, ico_str, true);
             } else {
                 icmgr.queue_exe_icon_query (&hppc);
@@ -337,25 +336,25 @@ pub(crate) mod icon_extraction {
         let mut path_arr = [0u8; 128];
         path_arr[.. exe_path.len()] .copy_from_slice (exe_path.as_bytes());
         let mut icon_idx = 0u16;
-        let hicon = ExtractAssociatedIconA (HINSTANCE(0), &mut path_arr, &mut icon_idx);
+        let hicon = ExtractAssociatedIconA (HINSTANCE::default(), &mut path_arr, &mut icon_idx);
         hicon_to_base64_str(hicon)
     }
 
     pub unsafe fn extract_hwnd_icon (hwnd:HWND) -> Option<String> {
         let mut hicon = HICON::default();
         // first we'll ask the window directly for the latest icon it has
-        if hicon.is_invalid() { hicon = HICON ( SendMessageA     ( hwnd, WM_GETICON, WPARAM (ICON_BIG    as usize), LPARAM(0) ) .0 ) }
-        if hicon.is_invalid() { hicon = HICON ( SendMessageA     ( hwnd, WM_GETICON, WPARAM (ICON_SMALL  as usize), LPARAM(0) ) .0 ) }
-        if hicon.is_invalid() { hicon = HICON ( SendMessageA     ( hwnd, WM_GETICON, WPARAM (ICON_SMALL2 as usize), LPARAM(0) ) .0 ) }
+        if hicon.is_invalid() { hicon = HICON ( SendMessageA ( hwnd, WM_GETICON, WPARAM (ICON_BIG    as usize), LPARAM(0) ) .0 as *mut _ ) }
+        if hicon.is_invalid() { hicon = HICON ( SendMessageA ( hwnd, WM_GETICON, WPARAM (ICON_SMALL  as usize), LPARAM(0) ) .0 as *mut _ ) }
+        if hicon.is_invalid() { hicon = HICON ( SendMessageA ( hwnd, WM_GETICON, WPARAM (ICON_SMALL2 as usize), LPARAM(0) ) .0 as *mut _ ) }
         // else we'll try and get the icon for its registered window class
-        if hicon.is_invalid() { hicon = HICON ( GetClassLongPtrW ( hwnd, GCL_HICON ) as isize ) }
-        if hicon.is_invalid() { hicon = HICON ( GetClassLongPtrW ( hwnd, GCL_HICONSM ) as isize ) }
+        if hicon.is_invalid() { hicon = HICON ( GetClassLongPtrW ( hwnd, GCL_HICON ) as *mut _   ) }
+        if hicon.is_invalid() { hicon = HICON ( GetClassLongPtrW ( hwnd, GCL_HICONSM ) as *mut _  ) }
 
         hicon_to_base64_str(hicon)
     }
     pub unsafe fn get_default_icon () -> Option<String> {
         // IDI_APPLICATION pulls the default system 'application' icon as fallback
-        let hicon = LoadIconW (HINSTANCE(0), IDI_APPLICATION) .unwrap_or_default();
+        let hicon = LoadIconW (HINSTANCE::default(), IDI_APPLICATION) .unwrap_or_default();
         hicon_to_base64_str(hicon)
     }
     pub unsafe fn extract_png_icon (png_path:&str) -> Option<String> {

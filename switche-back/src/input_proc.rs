@@ -10,13 +10,13 @@ use std::thread::{sleep, spawn};
 use once_cell::sync::OnceCell;
 use tracing::{debug, info, warn, error};
 
-use windows::Win32::Foundation::{HINSTANCE, HWND, LPARAM, WPARAM, LRESULT, POINT, BOOL, GetLastError};
+use windows::Win32::Foundation::{HINSTANCE, LPARAM, WPARAM, LRESULT, POINT, BOOL, GetLastError};
 use windows::Win32::System::Threading::GetCurrentThreadId;
 use windows::Win32::UI::WindowsAndMessaging::{GetMessageW, MSG, SetWindowsHookExW, UnhookWindowsHookEx, WH_KEYBOARD_LL, CallNextHookEx, HHOOK, KBDLLHOOKSTRUCT, WM_SYSKEYDOWN, WM_SYSKEYUP, WM_KEYUP, WH_MOUSE_LL, WINDOWS_HOOK_ID, WM_RBUTTONDOWN, WM_RBUTTONUP, WM_MOUSEWHEEL, MSLLHOOKSTRUCT, SetCursorPos, GetCursorPos, WM_USER, PostThreadMessageW};
 use windows::Win32::UI::Input::KeyboardAndMouse::{INPUT, INPUT_0, INPUT_KEYBOARD, INPUT_MOUSE, KEYBD_EVENT_FLAGS, KEYBDINPUT, KEYEVENTF_KEYUP, MOUSE_EVENT_FLAGS, MOUSEEVENTF_ABSOLUTE, MOUSEEVENTF_RIGHTUP, MOUSEINPUT, SendInput, VIRTUAL_KEY, VK_LMENU, VK_MENU, VK_RMENU, VK_SPACE, VK_TAB};
 
 use crate::*;
-use crate::switche::SwitcheState;
+use crate::switche::{SwitcheState, Hwnd};
 
 
 
@@ -118,7 +118,7 @@ impl InputProcessor {
             //  so we wont get any actual messages, so we can just leave a forever waiting GetMessage instead of setting up a msg-loop
             // .. basically while its waiting, the thread is awakened simply to call kbd hook (for an actual msg, itd awaken give the msg)
             let mut msg: MSG = MSG::default();
-            while BOOL(0) != GetMessageW (&mut msg, HWND(0), 0, 0) {
+            while BOOL(0) != GetMessageW (&mut msg, Hwnd(0).HWND(), 0, 0) {
                 if msg.message == KILL_MSG {
                     warn! ("received kill-msg in input-processing thread .. terminating thread ..");
                     break
@@ -137,17 +137,17 @@ fn set_hook (
     hhook: &AtomicIsize,
     hook_proc: unsafe extern "system" fn (c_int, WPARAM, LPARAM) -> LRESULT,
 ) { unsafe {
-    SetWindowsHookExW (hook_id, Some(hook_proc), HINSTANCE(0), 0) .iter() .for_each ( |hh|
-        hhook.store (hh.0, Ordering::SeqCst)
+    SetWindowsHookExW (hook_id, Some(hook_proc), HINSTANCE::default(), 0) .iter() .for_each ( |hh|
+        hhook.store (hh.0 as isize, Ordering::SeqCst)
     );
 } }
 
 
 
 fn unset_hook (hhook: &AtomicIsize) -> bool {
-    if hhook.load (Ordering::SeqCst) != HHOOK::default().0 {
-        if unsafe { UnhookWindowsHookEx ( HHOOK (hhook.load(Ordering::SeqCst)) ) .is_ok() } {
-            hhook.store (HHOOK::default().0, Ordering::SeqCst);
+    if hhook.load (Ordering::SeqCst) != (HHOOK::default().0 as isize) {
+        if unsafe { UnhookWindowsHookEx ( HHOOK (hhook.load(Ordering::SeqCst) as *mut _) ) .is_ok() } {
+            hhook.store (0, Ordering::SeqCst);
             info!("unhooking attempt .. succeeded!");
             return true
         }
@@ -180,7 +180,7 @@ fn _print_kbd_event (wp:&WPARAM, kbs:&KBDLLHOOKSTRUCT) {
 /// Keyboard lower-level-hook processor
 pub unsafe extern "system" fn kbd_hook_cb (code:c_int, w_param:WPARAM, l_param:LPARAM) -> LRESULT {
 
-    let return_call  = || CallNextHookEx(HHOOK(0), code, w_param, l_param);
+    let return_call  = || CallNextHookEx(HHOOK::default(), code, w_param, l_param);
     let return_block = || LRESULT(1);    // returning with non-zero code signals OS to block further processing on the input event
 
     if code < 0 { return return_call() }
@@ -296,7 +296,7 @@ fn send_key_event (virt_key:VIRTUAL_KEY, is_key_up:bool) {
 pub unsafe extern "system"
 fn mouse_hook_cb (code: c_int, w_param: WPARAM, l_param: LPARAM) -> LRESULT {
 
-    let return_call = || { CallNextHookEx(HHOOK(0), code, w_param, l_param) };
+    let return_call = || { CallNextHookEx(HHOOK::default(), code, w_param, l_param) };
 
     if code < 0 { return return_call() }      // ms-docs says we MUST do this, so ig k fine
 
