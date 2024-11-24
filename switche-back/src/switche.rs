@@ -2,10 +2,6 @@
 #![ allow (non_snake_case) ]
 #![ allow (non_upper_case_globals) ]
 
-//#[macro_use] extern crate serde;
-//#[macro_use] extern crate serde_json;
-//#[macro_use] extern crate strum_macros;
-
 use std::collections::{HashMap, HashSet};
 use std::ops::{Deref, Not};
 use std::sync::Arc;
@@ -19,7 +15,7 @@ use grouping_by::GroupingBy;
 use once_cell::sync::{Lazy, OnceCell};
 use serde::{Deserialize, Serialize};
 use strum_macros::{AsRefStr};
-use tauri::{AppHandle, Manager, Wry};
+use tauri::{AppHandle, Emitter, Listener, Manager, Wry};
 use tracing::{info, warn, error};
 
 use windows::Win32::Foundation::{BOOL, HINSTANCE, HWND, LPARAM};
@@ -30,14 +26,12 @@ use windows::Win32::UI::WindowsAndMessaging::{
     EVENT_OBJECT_REORDER, EVENT_SYSTEM_MINIMIZESTART, EVENT_SYSTEM_MINIMIZEEND, GetMessageW, MSG
 };
 
-//use crate::*;
 use crate::{win_apis, icons};
 use crate::input_proc::InputProcessor;
 use crate::icons::IconsManager;
 use crate::config::Config;
 
-//pub type Hwnd = isize;
-//pub type Hwnd = *mut core::ffi::c_void;
+
 
 #[derive (Debug, Default, Copy, Clone, Eq, PartialEq, Hash, Serialize, Deserialize)]
 pub struct Hwnd (pub isize);
@@ -911,7 +905,7 @@ impl SwitcheState {
     fn self_window_activate (&self) {
         self.is_dismissed.clear();
         self.app_handle .read().unwrap() .iter() .for_each (|ah| {
-            ah .windows() .get("main") .iter() .for_each (|w| {
+            ah .webview_windows() .get("main") .iter() .for_each (|w| {
                 let (_, _) = ( w.show(), w.set_focus() );
                 //let (_, _, _) = ( w.show(), w.set_focus(), w.set_always_on_top(true) );
                 // ^^ disabling setting always-on-top since it doesnt play too well when auto-hide is disabled ..
@@ -922,7 +916,7 @@ impl SwitcheState {
     fn self_window_hide (&self) {
         self.is_dismissed.set();
         self.app_handle .read().unwrap() .iter() .for_each ( |ah| {
-            ah .windows() .get("main") .map (|w| w.hide() );
+            ah .webview_windows() .get("main") .map (|w| w.hide() );
         } );
     }
 
@@ -955,7 +949,7 @@ impl SwitcheState {
     fn handle_req__toggle_auto_hide (&self) {
         self.conf.deferred_update_conf__auto_hide_toggle();
         self.emit_configs();
-        crate::tauri::sync_self_always_on_top(&self);
+        crate::tauri::sync_self_always_on_top(self);
     }
 
     fn handle_req__debug_print (&self) { }
@@ -969,7 +963,7 @@ impl SwitcheState {
         // ^ this triggers on reload .. we'll use that to refresh our hooks, configs etc too
         self.conf.load();
         self.conf.reload_log_level();
-        crate::tauri::setup_self_window(&self);
+        crate::tauri::setup_self_window(self);
         self.render_lists_m .reload_exes_excl_set (self.conf.get_exe_exclusions_list());
         self.render_lists_m .reload_ordering_ref_map (self.conf.get_exe_manual_ordering_seq());
         self.i_proc.re_set_hooks();
@@ -1025,10 +1019,11 @@ impl SwitcheState {
 
     pub fn setup_front_end_listener (&self, ah:&AppHandle<Wry>) {
         let ss = self.clone();
-        let _ = ah .listen_global ( "frontend_request", move |event| {
+        let _ = ah .listen_any ( "frontend_request", move |event| {
             //debug!("got event with raw payload {:?}", &event.payload());
-            event .payload() .and_then ( |ev| serde_json::from_str::<FrontendRequest>(ev).ok() )
-                .iter() .for_each (|ev| ss.handle_frontend_request(ev))
+            if let Ok(req) = serde_json::from_str::<FrontendRequest>(event.payload()) {
+                ss.handle_frontend_request(&req)
+            }
         } );
     }
 
@@ -1141,7 +1136,7 @@ impl SwitcheState {
         //debug! ("** wde-update for hwnd {:8} : ico-idx: {:?}, {:?}", pl.hwnd, pl.icon_cache_idx, pl.exe_path_name.as_ref().map(|p|p.name.clone()));
         self.app_handle.read().unwrap() .iter().for_each ( |ah| {
             serde_json::to_string(&pl) .map ( |pl| {
-                ah.emit_all::<String> (Backend_Event::updated_win_dat_entry.str(), pl )
+                ah.emit::<String> (Backend_Event::updated_win_dat_entry.str(), pl )
             } ) .err() .iter() .for_each (|err| error!{"win_dat emit failed: {:?}", err});
         } );
     }
@@ -1150,7 +1145,7 @@ impl SwitcheState {
         //debug! ("** icon-update for icon-id: {:?}", ie.ico_id);
         self.app_handle .read().unwrap() .iter() .for_each ( |ah| {
             serde_json::to_string(ie) .map (|pl| {
-                ah.emit_all::<String> ( Backend_Event::updated_icon_entry.str(), pl )
+                ah.emit::<String> ( Backend_Event::updated_icon_entry.str(), pl )
             } ) .err() .iter().for_each (|err| error!("icon-entry emit failed: {:?}", err));
         } );
     }
@@ -1159,7 +1154,7 @@ impl SwitcheState {
         info! ("** emitting .. configs-update");
         self.app_handle .read().unwrap() .iter() .for_each ( |ah| {
             serde_json::to_string (&Configs_Pl::assemble(self)) .map (|pl| {
-                ah.emit_all::<String> ( Backend_Event::updated_configs.str(), pl )
+                ah.emit::<String> ( Backend_Event::updated_configs.str(), pl )
             } ) .err() .iter() .for_each (|err| error!("configs emit failed: {:?}", err));
         } );
     }
@@ -1170,7 +1165,7 @@ impl SwitcheState {
         self.app_handle.read().unwrap() .iter() .for_each ( |ah| {
             serde_json::to_string(&pl) .map ( |pl| {
                 info!("sending backend notice: {}", &pl);
-                ah.emit_all::<String> ( Backend_Event::backend_notice.str(), pl ) .map_err (|_| "emit failure")
+                ah.emit::<String> ( Backend_Event::backend_notice.str(), pl ) .map_err (|_| "emit failure")
             } ) .err() .iter().for_each (|err| error!("render-list emit failed: {}", err));
         } )
     }
@@ -1184,7 +1179,7 @@ impl SwitcheState {
         //debug!("emitting renderlist ({:?}): {:?}", rlp.rl.len(), serde_json::to_string(&rlp).unwrap());
         self.app_handle.read().unwrap().iter().for_each ( |ah| {
             serde_json::to_string(&rlp).map(|pl| {
-                ah.emit_all::<String>(Backend_Event::updated_render_list.str(), pl) .map_err (|_| "emit failure")
+                ah.emit::<String>(Backend_Event::updated_render_list.str(), pl) .map_err (|_| "emit failure")
             }) .err() .iter().for_each (|err| error!("rl emit failed: {}", err));
         } )
     }
@@ -1447,7 +1442,7 @@ impl SnapListManager {
         let sl = self.snap_list.read().unwrap();
         if sl.is_empty() { return None }
         self.cur_idx.store (0, Ordering::Relaxed);
-        sl .get(0) .copied()
+        sl .first() .copied()
     }
     pub fn bottom_hwnd (&self) -> Option<Hwnd> {
         let sl = self.snap_list.read().unwrap();
