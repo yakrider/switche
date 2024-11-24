@@ -3,7 +3,6 @@
 use std::error::Error;
 use std::thread::spawn;
 
-use tauri::{AppHandle, Wry};
 use tracing::{info, error};
 
 use planif::enums::TaskCreationFlags;
@@ -103,13 +102,12 @@ fn _setup_task__switche_autostart (elev:bool) -> Result<(), Box<dyn Error>> {
 
 
 
-pub fn proc_tray_event__toggle_switche_autostart (elev:bool, ah:&AppHandle<Wry>) {
+pub fn proc_tray_event__toggle_switche_autostart (elev:bool) {
     /*  for elev .. if elev-task enabled  .. disable it
         for elev .. if elev-task disabled .. enable it, and if successful, check as and disable it if enabled
         for n-el .. if n-el-task enabled  .. disable it
         for n-el .. if n-el-task disabled .. if as-e enabled, ignore req, else enable it
      */
-    let ah = ah.clone();
     spawn ( move || {
         // lets again get the state of the tasks first
         let (el_t, nel_t) = (autostart_task_name(true), autostart_task_name(false));
@@ -131,31 +129,32 @@ pub fn proc_tray_event__toggle_switche_autostart (elev:bool, ah:&AppHandle<Wry>)
             // we'll only enable the non-elev task if the elev task is not enabled
             let _ = setup_task__switche_autostart(false);
         }
-        update_tray_auto_start_admin_flags (&ah);
+        update_tray_auto_start_admin_flags ();
     } );
 }
 
 
 
-pub fn update_tray_auto_start_admin_flags (ah:&AppHandle<Wry>) {
+pub fn update_tray_auto_start_admin_flags () {
+    use crate::tauri::TrayMenuState;
     // note that this must be on a spawned thread because checking task-sched via the planif crate seems to change thread mode
-    let ah = ah.clone();
     spawn ( move || {
         // first we'll check both tasks whether they are enabled
         let el_en = autostart_task_name(true) .map_or (false, |n| check_sched_task_enabled (&n));
-        ah .tray_handle() .try_get_item("auto_start_admin") .map (|e| e.set_selected (el_en));
+        TrayMenuState::instance().set_checked__auto_start_admin (el_en);
 
         let nel_en = autostart_task_name(false) .map_or (false, |n| check_sched_task_enabled (&n));
-        ah .tray_handle() .try_get_item("auto_start") .map (|e| e.set_selected (nel_en));
+        TrayMenuState::instance().set_checked__auto_start (nel_en);
 
         if win_apis::check_cur_proc_elevated() == Some(true) {
             // while elev, elev tray-menu will be enabled, and non-elev will be disabled unless non-elev task is already enabled
-            ah .tray_handle() .try_get_item("auto_start_admin") .map (|e| e.set_enabled (true) );
-            ah .tray_handle() .try_get_item("auto_start") .map (|e| e.set_enabled (nel_en) );
+            TrayMenuState::instance().set_enabled__auto_start_admin (true);
+            TrayMenuState::instance().set_enabled__auto_start (nel_en);
         } else {
             // if not elev, elev tray-menu will be disabled, but non-elev will still be enabled if elev task is enabled and it is not
-            ah .tray_handle() .try_get_item("auto_start_admin") .map (|e| e.set_enabled (false) );
-            ah .tray_handle() .try_get_item("auto_start") .map (|e| e.set_enabled (nel_en || !el_en) );
+            TrayMenuState::instance().set_enabled__auto_start_admin (false);
+            TrayMenuState::instance().set_enabled__auto_start (nel_en || !el_en);
         }
     } );
 }
+
