@@ -1,6 +1,6 @@
 [package]
 name = "switche"
-version = "2.3.4"
+version = "2.4.0"
 # ^^ reminder to update this in tauri.conf.json as well
 description = "Switche - Searchable Task Switcher"
 authors = ["yakrider"]
@@ -12,16 +12,12 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [build-dependencies]
-tauri-build = { version = "1.5", features = [] }
+tauri-build = { version = "2", features = [] }
 
 
 [dependencies.tauri]
-version = "1.8"
-features = [
-    "window-unminimize", "fs-all", "global-shortcut-all", "process-all", "shell-open",
-    "system-tray", "window-close", "window-hide", "window-set-always-on-top", "window-set-focus",
-    "window-show", "window-start-dragging", "dialog",
-]
+version = "2"
+features = ["tray-icon"]
 
 [features]
 default = ["custom-protocol"]
@@ -34,13 +30,20 @@ custom-protocol = ["tauri/custom-protocol"]
 
 
 [dependencies]
+tauri-plugin-fs = "2"
+tauri-plugin-shell = "2"
+tauri-plugin-dialog = "2"
+tauri-plugin-process = "2"
+tauri-plugin-global-shortcut = "2"
+
 serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
+serde_json = "1"
 once_cell = "1"
 grouping_by = "0.2"
 atomic_enum = "0.3"
 strum_macros = "0.24"
 #no_deadlocks = "1.3.0"
+dirs = "5"
 image = "0.24"
 base64 = "0.21"
 rand = "0.8"

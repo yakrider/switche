@@ -111,7 +111,7 @@ impl Config {
         if app_dir_loc.as_ref() .is_some_and (|p| is_writeable(p)) {
             return app_dir_loc
         }
-        let swi_data_dir = tauri::api::path::local_data_dir() .map (|p| p.join("Switche"));
+        let swi_data_dir = dirs::data_local_dir() .map (|p| p.join("Switche"));
         if swi_data_dir .as_ref() .is_some_and (|p| !p.exists()) {
             let _ = fs::create_dir (swi_data_dir.as_ref().unwrap());
         }
@@ -168,6 +168,7 @@ impl Config {
         } );
     }
 
+    #[ allow (clippy::result_unit_err) ]
     pub fn setup_log_subscriber (&self) -> Result <WorkerGuard, ()> {
         // todo .. ^^ prob use actual errors, though little utility here
 
@@ -360,7 +361,7 @@ impl Config {
         let (conf, ss) = (self.clone(), ss.clone());
         std::thread::spawn ( move || {
             if let Some(ah) = ss.app_handle.read().unwrap().as_ref() {
-                if let Some(w) = ah.get_window("main") {
+                if let Some(w) = ah.get_webview_window("main") {
                     if let (Some(p), Some(s)) = (w.outer_position().ok(), w.outer_size().ok()) {
                         // want to confirm its not minimized before we update its dimensions in configs
                         // and despite tauri minimize check (below), we still sometimes get the minimized loc (-32000), so we'll filter those

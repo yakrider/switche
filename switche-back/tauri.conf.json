@@ -2,60 +2,31 @@
   "build": {
     "beforeBuildCommand": "npm run build",
     "beforeDevCommand": "npm run dev",
-    "devPath": "http://127.0.0.1:4173",
-    "distDir": "../switche-front/out/webapp",
-    "withGlobalTauri": true
+    "frontendDist": "../switche-front/out/webapp",
+    "devUrl": "http://127.0.0.1:4173"
   },
-  "package": {
-    "productName": "Switche",
-    "version": "2.3.4"
-  },
-  "tauri": {
-    "allowlist": {
-      "all": false,
-      "shell": {
-        "all": false,
-        "open": true
-      },
-      "globalShortcut": {
-        "all": true
-      },
-      "window": {
-        "close": true,
-        "show": true,
-        "hide": true,
-        "setFocus": true,
-        "setAlwaysOnTop": true,
-        "startDragging": true,
-        "unminimize": true
-      },
-      "fs": {
-        "all": true
-      },
-      "process": {
-        "all": true
+  "bundle": {
+    "active": true,
+    "icon": [
+      "switche.ico"
+    ],
+    "windows": {
+      "nsis": {
+        "installerIcon": "switche.ico"
       }
     },
-    "bundle": {
-      "active": true,
-      "icon": ["switche.ico"],
-      "identifier": "com.yakrider.switche",
-      "shortDescription": "Switche",
-      "longDescription": "Switche - Searchable Task Switcher",
-      "resources": [],
-      "targets": "nsis",
-      "windows": {
-        "nsis": {
-          "installerIcon": "switche.ico"
-        }
-      }
-    },
-    "security": {
-      "csp": null
-    },
-    "updater": {
-      "active": false
-    },
+    "shortDescription": "Switche",
+    "longDescription": "Switche - Searchable Task Switcher",
+    "resources": [],
+    "targets": "nsis"
+  },
+  "productName": "Switche",
+  "mainBinaryName": "Switche",
+  "version": "2.4.0",
+  "identifier": "com.yakrider.switche",
+  "plugins": {},
+  "app": {
+    "withGlobalTauri": true,
     "windows": [
       {
         "fullscreen": false,
@@ -74,11 +45,12 @@
         "focus": false,
         "visible": false,
         "skipTaskbar": true,
-        "additionalBrowserArgs": "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection,ElasticOverscroll"
+        "additionalBrowserArgs": "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection,ElasticOverscroll",
+        "useHttpsScheme": true
       }
     ],
-    "systemTray": {
-      "iconPath": "switche.ico"
+    "security": {
+      "csp": null
     }
   }
 }

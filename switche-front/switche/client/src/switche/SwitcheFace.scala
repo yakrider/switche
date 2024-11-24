@@ -897,8 +897,11 @@ object RibbonDisplay {
    armedIndicator .setTooltip ("Key Release Activation : Inactive")
    
    private val dragIndicator  = new Indicator ("dragIndicator" )
+   //dragIndicator.content.setAttribute("data-tauri-drag-region", "")
+   // ^^ tauri drag region by default maximizes on double-click simulating the titlebar .. ofc that wouldnt work for us
+   // .. instead, we'll set this as -webkit-app-region: drag in css .. but that makes double click not work, so we'll specify triple-click
    dragIndicator.content.ondblclick = {_ => SendMsgToBack.FE_Req_SelfAutoResize()}
-   dragIndicator .setTooltip ("Double-click here to Auto-Size")
+   dragIndicator .setTooltip ("Click and hold here to drag. \nTriple-click to Auto-Size")
    
    
    private val countSpan = span (`class`:="countSpan").render

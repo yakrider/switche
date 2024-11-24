@@ -175,8 +175,9 @@ body {
 
 .dragIndicator {
    color: var(--ribbon-color);
-   -webkit-app-region: drag; /*cursor: move;*/
-   /* webkit drag doesnt work in windows webview */
+   -webkit-app-region: drag;
+    /*cursor: move;*/
+    /*^^ 'drag region' seems to hijack all events, so click/cursor-change etc dont work */
 }
 .dragIndicator:before {
    content: "※"; font-size: 14px;
