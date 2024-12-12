@@ -1266,10 +1266,12 @@ impl RenderReadyListsManager {
         ees.clear();
         exes.into_iter() .for_each (|e| {
             if let Some ((exe, title)) = e.split_once(';') {
+                let title = title.to_lowercase();
+                let title = if title == "`" { "".into() } else { title };
                 if let Some(prior) = ees.get_mut(exe) {
-                    prior.insert (title.to_string().to_lowercase());
+                    prior.insert (title);
                 } else {
-                    ees .insert (exe.to_string(), HashSet::from ([title.to_string().to_lowercase()]));
+                    ees .insert (exe.to_string(), HashSet::from ([title]));
                 }
             } else {
                 ees.insert (e, HashSet::default());
@@ -1301,9 +1303,12 @@ impl RenderReadyListsManager {
     pub fn runtime_should_excl_check (&self, ss:&SwitcheState, wde:&WinDatEntry) -> bool {
         wde.should_exclude .unwrap_or_else ( move || self.calc_excl_flag(ss,wde) )
     }
-    fn exes_excl_check (&self, estr:&str, wde:&WinDatEntry) -> bool {
-        self.exes_excl_map.read().unwrap().get(estr) .is_some_and ( |ot|
-            ot.is_empty() || wde.win_text.as_ref().is_some_and (|t| ot.contains(&t.to_lowercase()))
+    fn exes_excl_check (&self, exe:&str, wde:&WinDatEntry) -> bool {
+        self.exes_excl_map.read().unwrap().get(exe) .is_some_and ( |ot|
+            // we exclude if exe matches and no title was specified in config, or if title matches too
+            ot.is_empty() ||
+                ( wde.win_text.as_ref().is_none()  &&  ot.contains("") ) ||
+                wde.win_text.as_ref().is_some_and (|t| ot.contains(&t.to_lowercase()))
         )
     }
 

@@ -60,6 +60,7 @@ logging_level = "INFO"
 
 # List of exes to exclude from the displayed list of windows .. default has "WDADesktopService.exe"
 # for any specified exe, restriction to a specific title can be specified after a semicolon, e.g. "explorer.exe;QTTabBar Preview Window"
+# to specifying empty title for exclusion, use a single backtick (`)
 exe_exclusions_list = [
     "WDADesktopService.exe",
     "SearchUI.exe"

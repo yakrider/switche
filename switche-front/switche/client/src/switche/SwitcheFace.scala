@@ -213,10 +213,10 @@ object SwitcheFacePage {
          // ^^ tab w/o alt should be regular next-nav, but w/o arming scroll-end .. (and w/ alt, shouldnt get here w hook interception)
          
          // arrow up/down nav .. consistent regardless of everything else
-         case (_, _, _, _, "ArrowUp")    => if (e.shiftKey) focusBlockElem_Prev()   else focusElem_Prev()
-         case (_, _, _, _, "ArrowDown")  => if (e.shiftKey) focusBlockElem_Next()   else focusElem_Next()
-         case (_, _, _, _, "PageUp")     => if (e.shiftKey) focusBlockElem_Top()    else focusElem_Top()
-         case (_, _, _, _, "PageDown")   => if (e.shiftKey) focusBlockElem_Bottom() else focusElem_Bottom()
+         case (_, _, _, _, "ArrowUp")    => if (e.shiftKey) focusElem_Prev()   else focusBlockElem_Prev()
+         case (_, _, _, _, "ArrowDown")  => if (e.shiftKey) focusElem_Next()   else focusBlockElem_Next()
+         case (_, _, _, _, "PageUp")     => if (e.shiftKey) focusElem_Top()    else focusBlockElem_Top()
+         case (_, _, _, _, "PageDown")   => if (e.shiftKey) focusElem_Bottom() else focusBlockElem_Bottom()
          
          // arrow left-right group nav while armed, w alt, or non-search .. else it'll just pass on to searchbox
          case (_, _, _, _, "ArrowLeft")   if (!inSearchState || scrollEnd_armed || e.altKey)  => focusGroup_Prev()
@@ -242,10 +242,10 @@ object SwitcheFacePage {
          //   (arm, srch, alt, ctrl, key)
          case (_, _, true, _, _) | (true, _, _, _, _) => {
             e.key match {
-               case "i"  => focusElem_Prev()
-               case ","  => focusElem_Next()
-               case "u"  => focusElem_Top()
-               case "m"  => focusElem_Bottom()
+               case "i"  => if (e.shiftKey) focusElem_Prev()   else focusBlockElem_Prev()
+               case ","  => if (e.shiftKey) focusElem_Next()   else focusBlockElem_Next()
+               case "u"  => if (e.shiftKey) focusElem_Top()    else focusBlockElem_Top()
+               case "m"  => if (e.shiftKey) focusElem_Bottom() else focusBlockElem_Bottom()
                case "j"  => focusGroup_Prev()
                case "k"  => focusGroup_Next()
                case "r"  => handleReq_Refresh()
