@@ -13,7 +13,7 @@ use tracing::{debug, info, warn, error};
 use windows::Win32::Foundation::{HINSTANCE, LPARAM, WPARAM, LRESULT, POINT, BOOL, GetLastError};
 use windows::Win32::System::Threading::GetCurrentThreadId;
 use windows::Win32::UI::WindowsAndMessaging::{GetMessageW, MSG, SetWindowsHookExW, UnhookWindowsHookEx, WH_KEYBOARD_LL, CallNextHookEx, HHOOK, KBDLLHOOKSTRUCT, WM_SYSKEYDOWN, WM_SYSKEYUP, WM_KEYUP, WH_MOUSE_LL, WINDOWS_HOOK_ID, WM_RBUTTONDOWN, WM_RBUTTONUP, WM_MOUSEWHEEL, MSLLHOOKSTRUCT, SetCursorPos, GetCursorPos, WM_USER, PostThreadMessageW};
-use windows::Win32::UI::Input::KeyboardAndMouse::{INPUT, INPUT_0, INPUT_KEYBOARD, INPUT_MOUSE, KEYBD_EVENT_FLAGS, KEYBDINPUT, KEYEVENTF_KEYUP, MOUSE_EVENT_FLAGS, MOUSEEVENTF_ABSOLUTE, MOUSEEVENTF_RIGHTUP, MOUSEINPUT, SendInput, VIRTUAL_KEY, VK_LMENU, VK_MENU, VK_RMENU, VK_SPACE, VK_TAB};
+use windows::Win32::UI::Input::KeyboardAndMouse::{INPUT, INPUT_0, INPUT_KEYBOARD, INPUT_MOUSE, KEYBD_EVENT_FLAGS, KEYBDINPUT, KEYEVENTF_KEYUP, MOUSE_EVENT_FLAGS, MOUSEEVENTF_ABSOLUTE, MOUSEEVENTF_RIGHTUP, MOUSEINPUT, SendInput, VIRTUAL_KEY, VK_ESCAPE, VK_LMENU, VK_MENU, VK_RMENU, VK_SPACE, VK_TAB};
 
 use crate::*;
 use crate::switche::{SwitcheState, Hwnd};
@@ -252,6 +252,17 @@ pub unsafe extern "system" fn kbd_hook_cb (code:c_int, w_param:WPARAM, l_param:L
         let ss = SwitcheState::instance();
         if ss.is_fgnd.is_set() {
             spawn ( move || ss.proc_hot_key__scroll_end_disarm() );
+            return return_block()
+        }
+        return return_call()
+    }
+    else if w_param.0 as u32 == WM_SYSKEYDOWN && kbs.vkCode == VK_ESCAPE.0 as u32 {
+        // we want to use alt-escape to hide sw when fgnd
+        // .. we need this here as OS captures alt-escape and the browser/webapp doesnt ever see it
+        // .. (by default it would send-to-back, which would mostly work, except when the swi the only active window, and auto-hide disabled)
+        let ss = SwitcheState::instance();
+        if ss.is_fgnd.is_set() {
+            spawn ( move || ss.proc_hot_key__switche_escape() );
             return return_block()
         }
         return return_call()

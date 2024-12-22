@@ -361,6 +361,7 @@ pub fn setup_global_shortcuts (ss:&SwitcheState, ah:&AppHandle<Wry>) {
     register_hotkeys (ah, ss, &ss.conf.get_second_last_window_switch_hotkeys(), |ss| ss.proc_hot_key__switch_z_idx(2) );
     register_hotkeys (ah, ss, &ss.conf.get_third_last_window_switch_hotkeys(),  |ss| ss.proc_hot_key__switch_z_idx(3) );
 
+    register_hotkeys (ah, ss, &ss.conf.get_switch_next_non_minimized_hotkeys(),  |ss| ss.proc_hot_key__switch_next_non_minimized() );
 
     // and for hotkeys specified in config file to take snapshot of windows, and switch through them without bringing switche up
     register_hotkeys (ah, ss, &ss.conf.get_windows_list_snapshot_hotkeys(),   |ss| ss.proc_hot_key__snap_list_refresh() );

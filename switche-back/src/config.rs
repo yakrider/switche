@@ -1,6 +1,6 @@
 #![ allow (non_snake_case, non_upper_case_globals) ]
 
-use std::{fs, time};
+use std::{fs, io, time};
 use std::ops::{Deref, Not};
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
@@ -11,7 +11,7 @@ use once_cell::sync::{Lazy, OnceCell};
 use tauri::Manager;
 use toml_edit::DocumentMut;
 
-use tracing::{info, error, warn};
+use tracing::{info, error, warn, Level};
 use tracing::metadata::LevelFilter;
 use tracing_appender::non_blocking;
 use tracing_appender::non_blocking::WorkerGuard;
@@ -190,19 +190,21 @@ impl Config {
 
             let (level_filter, filter_handle) = reload::Layer::new(self.get_log_level());
 
-            *self.loglevel.write().unwrap() = Some(filter_handle);
+            *self.loglevel.write().unwrap() = Some(filter_handle.clone());
 
             let timer = LocalTime::new ( ::time::format_description::parse (
                 "[year]-[month]-[day] [hour]:[minute]:[second].[subsecond digits:3]"
             ).unwrap() );
 
-            let subscriber = tracing_subscriber::fmt::Layer::new()
+            let file_subscriber = tracing_subscriber::fmt::Layer::new()
                 .with_writer(nb_log_appender)
-                .with_timer(timer)
-                .with_ansi(false)
-                .with_filter(level_filter);
+                .with_ansi(false) .with_timer(timer.clone()) .with_filter(level_filter);
 
-            tracing_subscriber::registry().with(subscriber).init();
+            let console_subscriber = tracing_subscriber::fmt::Layer::new()
+                .with_ansi(true) .with_timer(timer.clone()) //.with_filter(filter_handle)
+                .with_writer ( io::stderr.with_min_level(Level::WARN) .or_else(io::stdout) );
+
+            tracing_subscriber::registry() .with (file_subscriber) .with (console_subscriber) .init();
 
             return Ok(guard)
         }
@@ -404,6 +406,8 @@ impl Config {
     pub fn get_direct_last_window_switch_hotkeys (&self)  -> Vec<String> { self.get_string_array ("last_window_direct_switch_hotkeys") }
     pub fn get_second_last_window_switch_hotkeys (&self)  -> Vec<String> { self.get_string_array ("second_last_window_direct_switch_hotkeys") }
     pub fn get_third_last_window_switch_hotkeys  (&self)  -> Vec<String> { self.get_string_array ("third_last_window_direct_switch_hotkeys") }
+
+    pub fn get_switch_next_non_minimized_hotkeys (&self)  -> Vec<String> { self.get_string_array ("switch_next_non_minimized_hotkeys") }
 
     pub fn get_windows_list_snapshot_hotkeys     (&self)  -> Vec<String> { self.get_string_array ("windows_list_snapshot_hotkeys") }
     pub fn get_snap_list_switch_next_hotkeys     (&self)  -> Vec<String> { self.get_string_array ("snap_list_switch_next_hotkeys") }

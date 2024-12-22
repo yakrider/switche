@@ -542,27 +542,23 @@ impl SwitcheState {
     }
     fn handle_event__switche_fgnd_lost (&self) {
         if self.is_fgnd.is_clear() { return }
-
         self.is_fgnd.clear();
-        if self.conf.check_flag__auto_hide_enabled() {
-            //self.handle_req__switche_escape();
-            // ^^ instead of immediately hiding switche window, we'll come back after a delay and ensure its still not-fgnd before hiding it
-            // .. this reduces spurious auto-hide events from transient fgnd stealers
-            // .. (e.g. google-play-games service, which seems to steal fgnd (for ~100ms) soon after unlocking pc post win-L lock etc)
-            let ss = self.clone();
-            spawn (move || {
-                sleep (Duration::from_millis(150));
-                if !ss.is_fgnd.is_set() { ss.handle_req__switche_escape() }
-            } );
-        } else {
-            //self.app_handle .read().unwrap() .iter() .for_each ( |ah| {
-            //    ah .windows() .get("main") .map (|w| w.set_always_on_top (false))
-            //} );
-            // ^^ disabled because removing always-on-top here seems to be too late for the window coming to fgnd ..
-            // .. in theory we could then try to re-bring the 'fgnd' to fgnd, but eitherway, the topmost enablement here has minimal utility
-            // .. esp since, w auto-hide-enabled all those issues are avoided anyway (by always keeping always-on-top)
-        }
-        self.emit_backend_notice (Backend_Notice::switche_event__fgnd_lost);
+        //if self.conf.check_flag__auto_hide_enabled() { self.handle_req__switche_escape() }
+        // ^^ instead of immediately hiding switche window, we'll come back after a delay and ensure its still not-fgnd before hiding it
+        // .. this reduces spurious auto-hide events from transient fgnd stealers
+        // .. (e.g. google-play-games service, which seems to steal fgnd (for ~100ms) soon after unlocking pc post win-L lock etc)
+        // .. (or the krusty quick-bar, which however, is verry transient .. usually within 50ms)
+        let ss = self.clone();
+        spawn (move || {
+            sleep (Duration::from_millis(150));
+            if ss.is_fgnd.is_clear() {
+                if ss.conf.check_flag__auto_hide_enabled() {
+                    ss.handle_req__switche_escape();
+                }
+                ss.emit_backend_notice (Backend_Notice::switche_event__fgnd_lost);
+                // ^^ will reset selection to 2nd from top in frontend
+            }
+        } );
     }
 
     fn activate_matching_window (&self, exe:Option<&str>, title:Option<&str>, partial:bool) {
@@ -942,6 +938,12 @@ impl SwitcheState {
         spawn ( move || hwnd.map(win_apis::window_activate) );
     }
 
+    fn handle_req__next_non_minimized_window_activate (&self) {
+        let hwnd = self.render_lists_m.render_list.read().unwrap() .iter() .map (|e| e.hwnd)
+            .enumerate() .find (|&(i,h)| i!=0 && !win_apis::check_window_minimized(h)) .map (|(_,h)| h);
+        spawn ( move || hwnd.map(win_apis::window_activate) );
+    }
+
 
     fn handle_req__switche_dismiss (&self) {
         // this is called after some window-activation
@@ -1098,6 +1100,15 @@ impl SwitcheState {
     pub fn proc_hot_key__switche_escape (&self) {
         self.handle_req__switche_escape();
         self.emit_backend_notice (Backend_Notice::backend_req__switche_escape)
+    }
+
+    pub fn proc_hot_key__switch_next_non_minimized (&self) {
+        self .trigger_enum_windows_query_immdt (EnumWindowsReqType::Light);
+        let ss = self.clone();
+        spawn ( move || {
+            sleep (Duration::from_millis(10));
+            ss .handle_req__next_non_minimized_window_activate();
+        } );
     }
 
     pub fn proc_hot_key__switch_z_idx (&self, z:usize) {

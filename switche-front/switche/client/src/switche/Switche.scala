@@ -179,6 +179,7 @@ object Switche {
       if (isDismissed || !isFgnd) {
          setNotDismissed(); setIsFgnd()
          SwitchePageState.resetFocus()
+         // ^^ will auto put focus on right elem (second from top)
       }
       else { ElemsDisplay.focusElem_Next() }
    }
@@ -195,6 +196,8 @@ object Switche {
       if (isDismissed || !isFgnd) {
          setNotDismissed(); setIsFgnd()
          SwitchePageState.resetFocus()
+         // ^^ this puts focus on second from top, so we'll want to move up as well
+         ElemsDisplay.focusElem_Prev()
       }
       else { ElemsDisplay.focusElem_Prev() }
    }
