@@ -26,7 +26,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
     EVENT_OBJECT_REORDER, EVENT_SYSTEM_MINIMIZESTART, EVENT_SYSTEM_MINIMIZEEND, GetMessageW, MSG
 };
 
-use crate::{win_apis, icons};
+use crate::{win_apis, icons, pipe_proc};
 use crate::input_proc::InputProcessor;
 use crate::icons::IconsManager;
 use crate::config::Config;
@@ -338,6 +338,7 @@ impl SwitcheState {
                 self_hwnd      : AtomicIsize::default(),
             } ) );
             // lets do some init for the new instance
+            pipe_proc::start_pipe_processor();
             ss.setup_win_event_hooks();
             //ss.i_proc.begin_input_processing(&ss);
             // ^^ instead, we do this everytime on reload (which front-end requests on first load too)

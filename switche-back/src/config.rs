@@ -265,14 +265,14 @@ impl Config {
         self.toml.read().unwrap().as_ref()
             .and_then (|t| t.get(key))
             .and_then (|t| t.as_integer().map(|n| n as u32))
-            .unwrap_or (self.default.get(key).unwrap().as_integer().unwrap() as u32)
+            .unwrap_or ( self.default.get(key) .and_then (|t| t.as_integer().map(|n| n as u32)) .unwrap_or_default() )
     }
 
     fn get_string (&self, key:&str) -> String {
         self.toml.read().unwrap().as_ref()
             .and_then (|t| t.get(key))
             .and_then (|t| t.as_str()) .map (|s| s.to_string())
-            .unwrap_or (self.default.get(key).unwrap().as_str().unwrap().to_string())
+            .unwrap_or ( self.default.get(key) .and_then (|t| t.as_str()) .map (|s| s.to_string()) .unwrap_or_default() )
     }
 
     fn get_string_array (&self, key:&str) -> Vec<String> {
@@ -280,7 +280,11 @@ impl Config {
             .and_then (|t| t.get(key))
             .and_then (|t| t.as_array())
             .map (|t| t.iter() .filter_map (|v| v.as_str().map(|s| s.to_string())) .collect())
-            .unwrap_or ( self.default.get(key).unwrap().as_array().unwrap().iter() .map (|v| v.as_str().unwrap().to_string()) .collect() )
+            .unwrap_or (
+                self.default.get(key) .and_then (|t| t.as_array())
+                    .map (|t| t.iter() .filter_map (|v| v.as_str().map(|s| s.to_string())) .collect())
+                    .unwrap_or_default()
+            )
     }
 
 
