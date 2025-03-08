@@ -136,7 +136,7 @@ pub fn proc_tray_event__toggle_switche_autostart (elev:bool) {
 
 
 pub fn update_tray_auto_start_admin_flags () {
-    use crate::tauri::TrayMenuState;
+    use crate::tray::TrayMenuState;
     // note that this must be on a spawned thread because checking task-sched via the planif crate seems to change thread mode
     spawn ( move || {
         // first we'll check both tasks whether they are enabled

@@ -1,7 +1,7 @@
 #![ allow (non_snake_case, non_upper_case_globals) ]
 
 use std::{fs, io, time};
-use std::ops::{Deref, Not};
+use std::ops::Not;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::sync::{Arc, Mutex, RwLock};
@@ -40,19 +40,10 @@ pub type Action = Arc < dyn Fn() + Send + Sync + 'static >;
 
 
 # [ derive (Debug) ]
-pub struct _Config {
+pub struct Config {
     pub toml     : RwLock <Option <DocumentMut>>,
     pub default  : DocumentMut,
     pub loglevel : RwLock <Option <Handle <LevelFilter, Registry>>>,
-}
-
-
-# [ derive (Debug, Clone) ]
-pub struct Config ( Arc <_Config> );
-
-impl Deref for Config {
-    type Target = _Config;
-    fn deref (&self) -> &_Config { &self.0 }
 }
 
 
@@ -84,18 +75,18 @@ fn is_writeable (path: &Path) -> bool {
 
 impl Config {
 
-    pub fn instance () -> Config {
+    pub fn instance () -> &'static Config {
         static INSTANCE: OnceCell <Config> = OnceCell::new();
         INSTANCE .get_or_init ( || {
-            let conf = Config ( Arc::new ( _Config {
+            let conf = Config {
                 toml    : RwLock::new (None),
                 default : DocumentMut::from_str (include_str!("../../switche.conf.toml")).unwrap(),
                 // ^^ our switche.conf.toml is at root of project, the include_str macro will load the contents at compile time
                 loglevel : RwLock::new (None),
-            } ) );
+            };
             conf.load();
             conf
-        } ) .clone()
+        } )
     }
 
     pub const CONF_FILE_NAME  : &'static str = "switche.conf.toml";
@@ -133,7 +124,7 @@ impl Config {
     }
 
 
-    pub fn trigger_config_file_edit (&self) {
+    pub fn trigger_config_file_edit (&'static self) {
         if let Some(conf_path) = self.get_config_file() {
             let _ = std::process::Command::new("cmd").arg("/c").arg("start").arg(conf_path).spawn();
         }
@@ -221,7 +212,7 @@ impl Config {
             self.toml.read().unwrap().as_ref() .map (|d| d.to_string()).unwrap_or_default()
         );
     }
-    fn write_back_toml_if_changed (&self) {
+    fn write_back_toml_if_changed (&'static self) {
         let conf_path = self.get_config_file();
         if conf_path.is_none() { return }
         let toml_str = self.toml.read().unwrap().as_ref() .map (|d| d.to_string()) .unwrap_or_default();
@@ -230,10 +221,9 @@ impl Config {
             let _ = fs::write (conf_path.as_ref().unwrap(), toml_str);
         }
     }
-    pub fn deferred_write_back_toml (&self) {
+    pub fn deferred_write_back_toml (&'static self) {
         static dfr_ex: Lazy<DeferredExecutor> = Lazy::new (DeferredExecutor::default);
-        let conf = self.clone();
-        let action = Arc::new (move || conf.write_back_toml_if_changed());
+        let action = Arc::new (move || self.write_back_toml_if_changed());
         dfr_ex .setup_deferred_action (action, time::Duration::from_millis(300));
     }
 
@@ -246,14 +236,14 @@ impl Config {
             .unwrap_or (self.default.get(flag_name).unwrap().as_bool().unwrap())
     }
     # [ allow (dead_code) ]
-    fn set_flag (&self, flag_name:&str, flag_val:bool) {
+    fn set_flag (&'static self, flag_name:&str, flag_val:bool) {
         if let Some(toml) = self.toml.write().unwrap().as_mut() {
             toml [flag_name] = toml_edit::value (flag_val);
             self.deferred_write_back_toml();
         }
     }
     # [ allow (dead_code) ]
-    fn toggle_flag (&self, flag_name:&str) -> bool {
+    fn toggle_flag (&'static self, flag_name:&str) -> bool {
         // WARNING: this fn is not synchronized, it is NOT suitable for unguarded high-freq or multi-threaded use
         let flag_val = self.check_flag(flag_name);
         self.set_flag(flag_name, flag_val.not());
@@ -321,7 +311,7 @@ impl Config {
     // ^^ disabled since we only want to use the deferred update functionality for these
 
 
-    pub fn deferred_update_conf__auto_hide_toggle (&self) -> Option<bool> {
+    pub fn deferred_update_conf__auto_hide_toggle (&'static self) -> Option<bool> {
         if let Some(toml) = self.toml.write().unwrap().as_mut() { // serves as re-entrancy guard too
             //let new_state = self.toggle_flag("auto_hide_enabled");
             // ^^ cant do this as rust read/write guards (even in the same thread) are not recursion capable and will panic
@@ -333,15 +323,15 @@ impl Config {
         None
     }
 
-    pub fn get_n_grp_mode_top_recents (&self) -> u32 {
+    pub fn get_n_grp_mode_top_recents (&'static self) -> u32 {
         let ngmtr = self.get_number("number_of_top_recents_in_grouped_mode");
         if ngmtr > 2 { ngmtr } else { 2 }
         // ^^ we enforce a min of 2 as that is necessary to make the basic switch-to-next work (and for scroll across grp logic etc)
     }
-    pub fn get_n_grp_mode_last_recents (&self) -> u32 {
+    pub fn get_n_grp_mode_last_recents (&'static self) -> u32 {
         self.get_number("number_of_last_recents_in_grouped_mode")
     }
-    pub fn deferred_update_conf__grp_mode (&self, grp_mode:bool) {
+    pub fn deferred_update_conf__grp_mode (&'static self, grp_mode:bool) {
         if let Some(toml) = self.toml.write().unwrap().as_mut() {   // serves as re-entrancy guard too
             toml["group_mode_enabled"] = toml_edit::value (grp_mode);
             self.deferred_write_back_toml();
@@ -350,7 +340,7 @@ impl Config {
 
 
 
-    pub fn read_conf__window_dimensions (&self) -> Option<(i32, i32, i32, i32)> {
+    pub fn read_conf__window_dimensions (&'static self) -> Option<(i32, i32, i32, i32)> {
         if let Some(toml) = self.toml.read().unwrap().as_ref() {
             if let ( Some(x), Some(y), Some(w), Some(h) ) = (
                 toml .get("window_dimensions") .and_then (|t| t.get("location")) .and_then (|t| t.get("x"))  .and_then (|v| v.as_integer()),
@@ -362,9 +352,8 @@ impl Config {
         } }
         None
     }
-    pub fn update_conf__switche_window (&self, ss:&SwitcheState) {
+    pub fn update_conf__switche_window (&'static self, ss: &'static SwitcheState) {
         info! ("update_conf__switche_window");
-        let (conf, ss) = (self.clone(), ss.clone());
         std::thread::spawn ( move || {
             if let Some(ah) = ss.app_handle.read().unwrap().as_ref() {
                 if let Some(w) = ah.get_webview_window("main") {
@@ -378,25 +367,24 @@ impl Config {
                             ss.proc_menu_req__switche_reload();
                             return
                         }
-                        let mut toml_guard = conf.toml.write().unwrap();
+                        let mut toml_guard = self.toml.write().unwrap();
                         if let Some(toml) = toml_guard.as_mut() {
                             toml ["window_dimensions"] ["location"] ["x"]  = toml_edit::value (p.x as i64);
                             toml ["window_dimensions"] ["location"] ["y"]  = toml_edit::value (p.y as i64);
                             toml ["window_dimensions"] ["size"] ["width"]  = toml_edit::value (s.width  as i64);
                             toml ["window_dimensions"] ["size"] ["height"] = toml_edit::value (s.height as i64);
                             drop(toml_guard);
-                            conf.write_back_toml_if_changed();
+                            self.write_back_toml_if_changed();
                         } else {
                             error!("update_conf__switche_window: failed to get window position, size, or toml doc");
                         }
             }  }  }
         } );
     }
-    pub fn deferred_update_conf__switche_window (&self, ss:&SwitcheState) {
+    pub fn deferred_update_conf__switche_window (&'static self, ss: &'static SwitcheState) {
         static dfr_ex: Lazy<DeferredExecutor> = Lazy::new (DeferredExecutor::default);
         if !self.check_flag__restore_window_dimensions() { return }
-        let (conf, ss) = (self.clone(), ss.clone());
-        let action = Arc::new ( move || conf.update_conf__switche_window(&ss) );
+        let action = Arc::new ( move || self.update_conf__switche_window(ss) );
         dfr_ex .setup_deferred_action (action, time::Duration::from_millis(1000));
     }
 
@@ -420,7 +408,7 @@ impl Config {
     pub fn get_snap_list_switch_bottom_hotkeys   (&self)  -> Vec<String> { self.get_string_array ("snap_list_switch_bottom_hotkeys") }
 
 
-    pub fn get_direct_app_switch_hotkeys (&self) -> Vec < (String, Option<String>, Option<String>, bool) > {
+    pub fn get_direct_app_switch_hotkeys (&'static self) -> Vec < (String, Option<String>, Option<String>, bool) > {
         self.toml.read().unwrap().as_ref()
             .and_then (|t| t.get("flex_hotkey"))
             .and_then (|t| t.as_array_of_tables())

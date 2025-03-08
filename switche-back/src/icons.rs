@@ -2,9 +2,7 @@
 
 use std::collections::{HashMap, HashSet};
 use std::hash::Hash;
-use std::ops::Deref;
 use std::string::ToString;
-use std::sync::{Arc};
 use std::sync::{RwLock};
 //use no_deadlocks::RwLock;
 use std::thread::{sleep, spawn};
@@ -15,7 +13,7 @@ use rand::Rng;
 use tracing::warn;
 
 
-use crate::switche::{Hwnd, IconEntry, SwitcheState, WinDatEntry};
+use crate::switche::{Hwnd, SwitcheState, WinDatEntry, IconEntry_Pl};
 
 
 
@@ -25,8 +23,9 @@ struct HwndExePathPair { hwnd:Hwnd, path:String, is_uwp:bool }
 #[derive (Debug, Default, Eq, PartialEq, Hash, Copy, Clone)]
 struct IconCacheMapping { cache_idx:usize, is_stale:bool }
 
-# [ derive ( ) ]
-pub struct _IconsManager {
+
+# [ derive (Default) ]
+pub struct IconsManager {
 
     // we'll store icons in a vec and just add remove mappings to its indices for associated hwnds
     icons_cache        : RwLock <Vec <String>>,
@@ -46,38 +45,21 @@ pub struct _IconsManager {
 
 }
 
-# [ derive (Clone) ]
-pub struct IconsManager ( Arc <_IconsManager> );
-
-impl Deref for IconsManager {
-    type Target = _IconsManager;
-    fn deref(&self) -> &_IconsManager { &self.0 }
-}
-
 
 
 impl IconsManager {
 
-    pub fn instance () -> IconsManager {
+    pub fn instance () -> &'static IconsManager {
         static INSTANCE: OnceCell <IconsManager> = OnceCell::new();
         INSTANCE .get_or_init ( || {
-            //let icons_mgr = IconsManager ( Arc::new ( _IconsManager::default() ) );
-            // ^^ when trying no-deadlock, cant do that as it doesnt impl default
-            let icons_mgr = IconsManager ( Arc::new ( _IconsManager {
-                icons_cache        : RwLock::new(Default::default()),
-                icons_idx_map      : RwLock::new(Default::default()),
-                icons_hpp_map      : RwLock::new(Default::default()),
-                icons_exe_map      : RwLock::new(Default::default()),
-                queried_exe_cache  : RwLock::new(Default::default()),
-                queried_hpp_cache  : RwLock::new(Default::default()),
-            } ) );
+            let icons_mgr = IconsManager::default();
             let empty_icon : String = {
                 "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAAAklEQVR4AewaftIAAAAPSURBVGMYBaNgFIwCKAAABBAAAY7F3VUAAAAASUVORK5CYII="
             } .to_string();
             icons_mgr.icons_idx_map .write().unwrap() .insert (empty_icon.clone(), 0);
             icons_mgr.icons_cache .write().unwrap() .push (empty_icon);
             icons_mgr
-        } ) .clone()
+        } )
     }
 
     fn make_hwnd_path_pair (wde:&WinDatEntry) -> Option<HwndExePathPair> {
@@ -88,14 +70,14 @@ impl IconsManager {
         ico_path .map (|p| HwndExePathPair { hwnd:wde.hwnd, path:p.to_string(), is_uwp: wde.is_uwp_app == Some(true) } )
     }
 
-    pub fn get_cached_icon_idx (&self, wde:&WinDatEntry) -> Option<usize> {
+    pub fn get_cached_icon_idx (&'static self, wde:&WinDatEntry) -> Option<usize> {
         // note that to allow marking stale, we always return from hwnd map, even for those where the cache idx is from exe-icon cache
         Self::make_hwnd_path_pair (wde) .and_then ( |hpp| {
             self.icons_hpp_map.read().unwrap() .get(&hpp) .map (|icm| icm.cache_idx) .filter (|idx| *idx != 0)
         } )
     }
 
-    pub fn remove_cached_icon_mapping (&self, wde:&WinDatEntry) {
+    pub fn remove_cached_icon_mapping (&'static self, wde:&WinDatEntry) {
         Self::make_hwnd_path_pair (wde) .into_iter() .for_each ( |hpp| {
             self.icons_hpp_map .write().unwrap() .remove(&hpp);
             self.queried_hpp_cache .write().unwrap() .remove(&hpp.hwnd);
@@ -103,47 +85,46 @@ impl IconsManager {
     }
 
 
-    pub fn mark_cached_icon_mapping_stale (&self, wde:&WinDatEntry) {
+    pub fn mark_cached_icon_mapping_stale (&'static self, wde:&WinDatEntry) {
         if let Some(hpp) = Self::make_hwnd_path_pair(wde) {
             self.icons_hpp_map.write().unwrap() .get_mut(&hpp) .iter_mut().for_each (|icm| { icm.is_stale = true });
         }
     }
-    pub fn mark_all_cached_icon_mappings_stale (&self) {
+    pub fn mark_all_cached_icon_mappings_stale (&'static self) {
         self.icons_hpp_map.write().unwrap() .iter_mut() .for_each (|(_,icm)| { icm.is_stale = true })
     }
 
-    pub fn queue_icon_refresh (&self, wde:&WinDatEntry) {
+    pub fn queue_icon_refresh (&'static self, wde:&WinDatEntry) {
         self.mark_cached_icon_mapping_stale(wde);
         self.process_found_hwnd_exe_path(wde);
     }
 
-    pub fn clear_dead_hwnd (&self, wde:&WinDatEntry) {
+    pub fn clear_dead_hwnd (&'static self, wde:&WinDatEntry) {
         self.remove_cached_icon_mapping(wde)
     }
 
-    fn queue_hwnd_icon_query (&self, hpp:&HwndExePathPair) {
+    fn queue_hwnd_icon_query (&'static self, hpp:&HwndExePathPair) {
         //debug!("hwnd icon query: {:?} : {:?}", &hpp.hwnd, &hpp.path.clone().split(r"\").last());
         if hpp.is_uwp { return }
         // ^^ UWP apps sometimes seem to hang at hwnd icon query winapi calls, but we shouldnt get here anyway as they have separate handling now
-        let (icmgr, hppc) = (self.clone(), hpp.clone());
+        let hppc = hpp.clone();
         spawn ( move || unsafe {
             if let Some(ico_str) = icon_extraction::extract_hwnd_icon (hppc.hwnd.HWND()) {
-                icmgr.icon_string_callback (&hppc, ico_str, true);
+                self.icon_string_callback (&hppc, ico_str, true);
             } else {
-                icmgr.queue_exe_icon_query (&hppc);
+                self.queue_exe_icon_query (&hppc);
             }
         } );
     }
 
-    fn queue_exe_icon_query (&self, hpp:&HwndExePathPair) {
-        let icmgr = self.clone();
+    fn queue_exe_icon_query (&'static self, hpp:&HwndExePathPair) {
         let hppc = hpp.clone();
         spawn ( move || unsafe {
             let delay = rand::thread_rng().gen_range(10..80);
             sleep (Duration::from_millis(delay));   // randomized so multiple fallbacks on same exe dont race together
-            let was_past_queried = icmgr.queried_exe_cache.read().unwrap().contains(&hppc.path);
+            let was_past_queried = self.queried_exe_cache.read().unwrap().contains(&hppc.path);
             if !was_past_queried {
-                icmgr.queried_exe_cache .write().unwrap() .insert (hppc.path.clone());
+                self.queried_exe_cache .write().unwrap() .insert (hppc.path.clone());
                 let ico_str = if hppc.is_uwp {
                     // note that for uwm, the hpp has already been populated with icon path (instead of exe path)
                     icon_extraction::extract_png_icon (hppc.path.as_str())
@@ -152,20 +133,20 @@ impl IconsManager {
                 };
                 let ico_str = ico_str .or_else (|| icon_extraction::get_default_icon());
                 // note ^^ this is the win default 'exe' icon, not our empty icon
-                ico_str .into_iter() .for_each (|s| icmgr.icon_string_callback (&hppc, s, false));
+                ico_str .into_iter() .for_each (|s| self.icon_string_callback (&hppc, s, false));
             } else {
                 // if multiple hwnds for same app get queued, because of random delay and cache checking the second one might end up here
                 // so hopefully we have a cached icon and we can populate its icm with it
-                let cache_idx_opt = icmgr.icons_exe_map .read().unwrap() .get(&hppc.path) .copied();
+                let cache_idx_opt = self.icons_exe_map .read().unwrap() .get(&hppc.path) .copied();
                 if let Some(cache_idx) = cache_idx_opt {
-                    icmgr.handle_icon_cache_mapping_update (cache_idx, false, false, &hppc);
+                    self.handle_icon_cache_mapping_update (cache_idx, false, false, &hppc);
                 } else { warn!("WARNING: exe icon lookup says prior-queried but nothing in cache!")
                     // means we tried the exe query and failed .. nothing to do as thats prob not gonna change
                 }
         } } );
     }
 
-    fn icon_string_callback (&self, hpp:&HwndExePathPair, icon_str:String, is_from_hwnd:bool) {
+    fn icon_string_callback (&'static self, hpp:&HwndExePathPair, icon_str:String, is_from_hwnd:bool) {
         if !icon_str.is_empty() {
             let ss = SwitcheState::instance();
             // we'll acquire write locks on cache and idx so there's no race w multiple cbs hitting here
@@ -181,7 +162,7 @@ impl IconsManager {
             // lets release the guards before we call anywhere outside to emit updates
             drop(icm); drop(iidm);
             if prior_cache_idx.is_none() {
-                ss .emit_icon_entry ( &IconEntry { ico_id: cache_idx, ico_str: icon_str } );
+                ss .emit_icon_entry ( &IconEntry_Pl { ico_id: cache_idx, ico_str: icon_str } );
             }
             //debug!("ico-cb (exe?:{:?}) (idx:{:?}) : {:?}", !is_from_hwnd, cache_idx, hpp.path.clone().split(r"\").last());
             // now we can send it for hwnd/path icon-idx mappings
@@ -191,7 +172,7 @@ impl IconsManager {
             if is_from_hwnd { self.queue_exe_icon_query (hpp) }
         }
     }
-    fn handle_icon_cache_mapping_update (&self, cache_idx:usize, is_from_hwnd:bool, is_new_icon:bool, hpp:&HwndExePathPair) {
+    fn handle_icon_cache_mapping_update (&'static self, cache_idx:usize, is_from_hwnd:bool, is_new_icon:bool, hpp:&HwndExePathPair) {
         let ss = SwitcheState::instance();
         // we'll update mappings, and use the return val to see if the mapping is new or changed
         let is_mapping_update = if is_from_hwnd {
@@ -204,7 +185,7 @@ impl IconsManager {
         };
         if is_new_icon || is_mapping_update {
             // send out updates for the specific wde, then queue up to send a renderlist
-            ss.hwnd_map .read().unwrap() .get(&hpp.hwnd) .iter().for_each (|wde| ss.emit_win_dat_entry (wde));
+            ss.win_dats_m.hwnd_map .read().unwrap() .get(&hpp.hwnd) .iter().for_each (|wde| ss.emit_win_dat_entry (wde));
             ss.emit_render_lists_queued(false);
         }
     }
@@ -218,10 +199,10 @@ impl IconsManager {
     // */
 
 
-    pub fn emit_all_icon_entries (&self) {
+    pub fn emit_all_icon_entries (&'static self) {
         let ss = SwitcheState::instance();
         self.icons_cache .read().unwrap() .iter() .enumerate() .for_each (|(iid, ico)| {
-            ss .emit_icon_entry ( &IconEntry { ico_id: iid, ico_str: ico.clone() } );
+            ss .emit_icon_entry ( &IconEntry_Pl { ico_id: iid, ico_str: ico.clone() } );
         } );
         // this should only happen on reload etc, fine time to dump out icons and mappings for examination too
         //self.icons_hpp_map .read().unwrap() .iter().for_each(|(hpp,icm)| debug!("{:?}, {:?}", icm, hpp));
@@ -229,7 +210,7 @@ impl IconsManager {
     }
 
 
-    pub fn process_found_hwnd_exe_path (&self, wde:&WinDatEntry) {
+    pub fn process_found_hwnd_exe_path (&'static self, wde:&WinDatEntry) {
         if wde.should_exclude == Some(true) { return }
         if let Some(hpp) = Self::make_hwnd_path_pair(wde) {
             let was_past_queried = self.queried_hpp_cache.read().unwrap().get(&wde.hwnd).filter(|h| *h == &hpp).is_some();

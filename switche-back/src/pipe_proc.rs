@@ -21,19 +21,50 @@ pub enum PipeCommand {
     ScrollUp,
     ScrollEnd,
     ScrollEndDisarm,
-    SwitchNextNonMinimized,
-    SwitchZIndex(usize),
+
     SnapListRefresh,
     SnapListSwitchNext,
     SnapListSwitchPrev,
     SnapListSwitchTop,
     SnapListSwitchBottom,
+
+    SwitchNextNonMinimized,
+    SwitchZIndex(usize),
     SwitchApp {
         exe: Option<String>,
         title: Option<String>,
         partial: bool,
     },
 }
+
+
+pub fn handle_pipe_cmd (cmd: PipeCommand) {
+    use PipeCommand::*;
+    let ss = SwitcheState::instance();
+
+    match cmd {
+        Invoke            =>  ss.proc_hot_key__invoke(),
+        ScrollDown        =>  ss.proc_hot_key__scroll_down(),
+        ScrollUp          =>  ss.proc_hot_key__scroll_up(),
+        ScrollEnd         =>  ss.proc_hot_key__scroll_end(),
+        ScrollEndDisarm   =>  ss.proc_hot_key__scroll_end_disarm(),
+        // ^^ note that backend scroll-up/dn always arm scroll-end activation
+
+        SnapListRefresh       =>  ss.proc_hot_key__snap_list_refresh(),
+        SnapListSwitchNext    =>  ss.proc_hot_key__snap_list_switch (|sl| sl.next_hwnd()   ),
+        SnapListSwitchPrev    =>  ss.proc_hot_key__snap_list_switch (|sl| sl.prev_hwnd()   ),
+        SnapListSwitchTop     =>  ss.proc_hot_key__snap_list_switch (|sl| sl.top_hwnd()    ),
+        SnapListSwitchBottom  =>  ss.proc_hot_key__snap_list_switch (|sl| sl.bottom_hwnd() ),
+
+        SwitchNextNonMinimized  =>  ss.proc_hot_key__switch_next_non_minimized(),
+        SwitchZIndex (z)        =>  ss.proc_hot_key__switch_z_idx(z),
+
+        SwitchApp { exe, title, partial } => {
+            ss.proc_hot_key__switch_app ( exe.as_deref(), title.as_deref(), partial );
+        }
+    }
+}
+
 
 
 pub fn start_pipe_processor() {
@@ -80,30 +111,4 @@ pub fn start_pipe_processor() {
             let _ = CloseHandle (pipe);
         } }
     } );
-}
-
-
-pub fn handle_pipe_cmd (cmd: PipeCommand) {
-    use PipeCommand::*;
-    let ss = SwitcheState::instance();
-
-    match cmd {
-        Invoke                  =>  ss.proc_hot_key__invoke(),
-        ScrollDown              =>  ss.proc_hot_key__scroll_down(),
-        ScrollUp                =>  ss.proc_hot_key__scroll_up(),
-        ScrollEnd               =>  ss.proc_hot_key__scroll_end(),
-        ScrollEndDisarm         =>  ss.proc_hot_key__scroll_end_disarm(),
-        SwitchNextNonMinimized  =>  ss.proc_hot_key__switch_next_non_minimized(),
-        SwitchZIndex (z)        =>  ss.proc_hot_key__switch_z_idx(z),
-
-        SnapListRefresh         =>  ss.proc_hot_key__snap_list_refresh(),
-        SnapListSwitchNext      =>  ss.proc_hot_key__snap_list_switch (|sl| sl.next_hwnd()   ),
-        SnapListSwitchPrev      =>  ss.proc_hot_key__snap_list_switch (|sl| sl.prev_hwnd()   ),
-        SnapListSwitchTop       =>  ss.proc_hot_key__snap_list_switch (|sl| sl.top_hwnd()    ),
-        SnapListSwitchBottom    =>  ss.proc_hot_key__snap_list_switch (|sl| sl.bottom_hwnd() ),
-
-        SwitchApp { exe, title, partial } => {
-            ss.proc_hot_key__switch_app ( exe.as_deref(), title.as_deref(), partial );
-        }
-    }
 }

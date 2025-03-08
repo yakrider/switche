@@ -14,6 +14,6 @@ fn main() {
 
     tracing::info! ("Starting Switche ...");
 
-    switche::tauri::run_switche_tauri ( &ss );
+    switche::tauri::run_switche_tauri (ss);
 
 }

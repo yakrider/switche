@@ -1,8 +1,7 @@
 #![ allow (non_snake_case) ]
 
 use std::{thread, time};
-use std::sync::{Arc, Mutex};
-use once_cell::sync::Lazy;
+use std::sync::Arc;
 use tracing::{error};
 
 use windows::Win32::Foundation::{GetLastError, ERROR_ALREADY_EXISTS};
@@ -10,156 +9,14 @@ use windows::Win32::System::Threading::CreateMutexW;
 
 use crate::{win_apis, autostart};
 use crate::switche::{Hwnd, SwitcheState};
+use crate::tray::*;
 
 use tauri::{ AppHandle, Wry, WindowEvent, RunEvent, Manager, App };
-use tauri::menu::{CheckMenuItem, CheckMenuItemBuilder, MenuBuilder, MenuItemBuilder, PredefinedMenuItem};
-use tauri::tray::{ MouseButton, MouseButtonState, TrayIcon, TrayIconBuilder, TrayIconEvent };
 use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut, ShortcutEvent, ShortcutState, ShortcutWrapper};
 
 
-
-
-#[derive (Default)]
-struct _TrayMenuState {
-    pub auto_start       : Option <CheckMenuItem<Wry>>,
-    pub auto_start_admin : Option <CheckMenuItem<Wry>>,
-}
-#[derive (Clone)]
-pub struct TrayMenuState ( Arc<Mutex<_TrayMenuState>> );
-
-
-impl TrayMenuState {
-
-    pub fn instance () -> TrayMenuState {
-        static INSTANCE : Lazy<TrayMenuState> = Lazy::new (|| TrayMenuState ( Arc::new ( Mutex::new (
-            _TrayMenuState { auto_start: None, auto_start_admin: None }
-        ) ) ) );
-        INSTANCE.clone()
-    }
-
-    pub fn store__auto_start (&self, cmi : CheckMenuItem<Wry>) {
-        self.0 .lock().unwrap() .auto_start = Some(cmi);
-    }
-    pub fn store__auto_start_admin (&self, cmi : CheckMenuItem<Wry>) {
-        self.0 .lock().unwrap() .auto_start_admin = Some(cmi);
-    }
-
-    pub fn set_checked__auto_start (&self, checked:bool) {
-        if let Some(c) = self.0 .lock().unwrap() .auto_start .as_ref()  {
-            let _ = c.set_checked (checked);
-        }
-    }
-    pub fn set_checked__auto_start_admin (&self, checked:bool) {
-        if let Some(c) = self.0 .lock().unwrap() .auto_start_admin .as_ref()  {
-            let _ = c.set_checked (checked);
-        }
-    }
-
-    pub fn set_enabled__auto_start (&self, enabled:bool) {
-        if let Some(c) = self.0 .lock().unwrap() .auto_start .as_ref()  {
-            let _ = c.set_enabled (enabled);
-        }
-    }
-    pub fn set_enabled__auto_start_admin (&self, enabled:bool) {
-        if let Some(c) = self.0 .lock().unwrap() .auto_start_admin .as_ref()  {
-            let _ = c.set_enabled (enabled);
-        }
-    }
-
-}
-
-
-const MENU_AUTO_START       : &str = "auto_start";
-const MENU_AUTO_START_ADMIN : &str = "auto_start_admin";
-const MENU_EDIT_CONF        : &str = "edit_conf";
-const MENU_RESET_CONF       : &str = "reset_conf";
-const MENU_RELOAD           : &str = "reload";
-const MENU_RESTART          : &str = "restart";
-const MENU_QUIT             : &str = "quit";
-// note: ^^ its easier to define these as consts instead of enums as that makes it easier to match against id-strings later
-
-fn menu_disp_str (id:&str) -> &str {
-    match id {
-        MENU_AUTO_START       => "Auto-Start on Login",
-        MENU_AUTO_START_ADMIN => "Auto-Start as Admin",
-        MENU_EDIT_CONF        => "Edit Config",
-        MENU_RESET_CONF       => "Reset Config",
-        MENU_RELOAD           => "Reload",
-        MENU_RESTART          => "Restart",
-        MENU_QUIT             => "Quit",
-        _ => ""
-    }
-}
-fn exec_menu_action (id:&str, ss:&SwitcheState, ah:&AppHandle<Wry>) {
-    match id {
-        MENU_AUTO_START       => { autostart::proc_tray_event__toggle_switche_autostart (false) }
-        MENU_AUTO_START_ADMIN => { autostart::proc_tray_event__toggle_switche_autostart (true) }
-        MENU_EDIT_CONF        => { ss.conf.trigger_config_file_edit() }
-        MENU_RESET_CONF       => { ss.conf.trigger_config_file_reset() }
-        MENU_RELOAD           => { ss.proc_menu_req__switche_reload() }
-        MENU_RESTART          => { ah.restart() }
-        MENU_QUIT             => { ah.exit(0) }
-        _ => { }
-    }
-}
-
-pub fn handle_trayicon_action (ss:&SwitcheState, event:TrayIconEvent) {
-    // we want to make left-click activate switche, the rest we can ignore .. (and default right click will bring menu)
-    if let TrayIconEvent::Click { button: MouseButton::Left,  button_state: MouseButtonState::Up, .. } = event {
-        ss.checked_self_activate()
-    }
-}
-
-
-
-
-pub fn run_switche_tauri (ss:&SwitcheState) {
-
-    // we'll setup tray-icon support to pass into app builder
-    fn gen_tray (ss:&SwitcheState, ah:&App) -> tauri::Result<TrayIcon> {
-
-        // utility closures to gen the menu items
-        let make_menu_item  = |id| MenuItemBuilder::with_id (id, menu_disp_str(id)) .build(ah);
-        let make_menu_check = |id| CheckMenuItemBuilder::with_id (id, menu_disp_str(id)) .build(ah);
-
-        // first, lets build the menu items we might need to update later
-        let menu_auto_start       = make_menu_check (MENU_AUTO_START) .expect("couldnt build tray-menu");
-        let menu_auto_start_admin = make_menu_check (MENU_AUTO_START_ADMIN) .expect("couldnt build tray-menu");
-
-        // and store them for reference later
-        TrayMenuState::instance().store__auto_start (menu_auto_start.clone());
-        TrayMenuState::instance().store__auto_start_admin (menu_auto_start_admin.clone());
-
-        let menu = MenuBuilder::new(ah)
-            // first we'll put the configs
-            .item ( & menu_auto_start )
-            .item ( & menu_auto_start_admin )
-            .item ( & PredefinedMenuItem::separator(ah)? )
-
-            // the special entry to trigger opening the config file for editing
-            .item ( & make_menu_item (MENU_EDIT_CONF )? )
-            .item ( & make_menu_item (MENU_RESET_CONF)? )
-            .item ( & PredefinedMenuItem::separator(ah)? )
-
-            // then the actions
-            .item ( & make_menu_item (MENU_RELOAD )? )
-            .item ( & make_menu_item (MENU_RESTART)? )
-            .item ( & make_menu_item (MENU_QUIT   )? )
-            .build()?;
-
-        let (ss1, ss2) = (ss.clone(), ss.clone());
-
-        TrayIconBuilder::new()
-            .icon (ah.default_window_icon().unwrap().clone())
-            .tooltip ("Switche")
-            .menu(&menu)
-            .menu_on_left_click(false)
-            .on_menu_event ( move |ah, event| exec_menu_action (&event.id.0, &ss1, ah) )
-            .on_tray_icon_event ( move |_tray, event| handle_trayicon_action (&ss2, event) )
-            .build(ah)
-
-    }
+pub fn run_switche_tauri (ss: &'static SwitcheState) {
 
     let app = {
         tauri::Builder::default()
@@ -171,12 +28,11 @@ pub fn run_switche_tauri (ss:&SwitcheState) {
             .device_event_filter (tauri::DeviceEventFilter::Always)
             // ^^ w/o this, our own LL input hooks will not receive events when tauri window is fgnd
             .setup ( {
-                let ss = ss.clone();
                 move |app| {
-                    gen_tray (&ss, app)?;
+                    gen_tray (ss, app)?;
                     enforce_single_instance (app);
                     autostart::update_tray_auto_start_admin_flags();
-                    setup_global_shortcuts (&ss, app.handle());
+                    setup_global_shortcuts (ss, app.handle());
                     ss.setup_front_end_listener (app.handle());
                     Ok(())
                 }
@@ -192,8 +48,7 @@ pub fn run_switche_tauri (ss:&SwitcheState) {
     // just a reminder that configs load at instantiation, and everytime the app is reloaded
 
     // now lets finally actually start the app! .. note that the run call wont return!
-    let ssc = ss.clone();
-    app .run ( move |ah, event| { tauri_run_events_handler (&ssc, ah, event) } );
+    app .run ( move |ah, event| { tauri_run_events_handler (ss, ah, event) } );
 
 }
 
@@ -201,7 +56,7 @@ pub fn run_switche_tauri (ss:&SwitcheState) {
 
 
 
-fn tauri_window_events_handler (ss:&SwitcheState, _ah:&AppHandle, ev:&WindowEvent) {
+fn tauri_window_events_handler (ss: &'static SwitcheState, _ah:&AppHandle, ev:&WindowEvent) {
     match ev {
         WindowEvent::Focused (true)       => { ss.proc_app_window_event__focus() }
         WindowEvent::Focused (false)      => { ss.proc_app_window_event__focus_lost() }
@@ -211,6 +66,17 @@ fn tauri_window_events_handler (ss:&SwitcheState, _ah:&AppHandle, ev:&WindowEven
         _ => { }
     }
 }
+
+pub fn tauri_run_events_handler (ss: &'static SwitcheState, ah:&AppHandle<Wry>, event:RunEvent) {
+    match event {
+        RunEvent::Ready                        => { proc_event_app_ready (ss, ah) }
+        RunEvent::WindowEvent   { event, .. }  => { tauri_window_events_handler (ss, ah, &event) }
+        RunEvent::ExitRequested { .. }         => { /* api.prevent_exit() */ }
+        _ => {}
+    }
+}
+
+
 
 
 fn check_another_instance_running () -> bool { unsafe {
@@ -224,6 +90,7 @@ fn check_another_instance_running () -> bool { unsafe {
     }
     false
 } }
+
 fn display_mult_instance_error (app: &App<Wry>) {
     let ah = app.handle().clone();
     // blocking dialog requires it be not in the main thread
@@ -250,18 +117,21 @@ fn display_mult_instance_error (app: &App<Wry>) {
         ah.exit(1);
     } );
 }
+
 fn enforce_single_instance (app: &App<Wry>) {
     if check_another_instance_running() { display_mult_instance_error(app) }
 }
 
 
-fn extract_self_hwnd (ss:&SwitcheState) -> Option<Hwnd> {
+
+fn extract_self_hwnd (ss: &'static SwitcheState) -> Option<Hwnd> {
     ss.app_handle.read().unwrap() .as_ref() .and_then (|ah| {
         ah.webview_windows().values() .next() .and_then (|w| w.hwnd().ok())
     } ) .map (|h| h.into())
 }
 
-pub fn auto_setup_self_window (ss:&SwitcheState) {
+
+pub fn auto_setup_self_window (ss: &'static SwitcheState) {
     let wa = win_apis::win_get_work_area();
 
     //let (x, y, width, height) = ( wa.left + (wa.right-wa.left)/3, 0, (wa.right-wa.left)/2,  wa.bottom - wa.top);
@@ -282,7 +152,8 @@ pub fn auto_setup_self_window (ss:&SwitcheState) {
 
     win_apis::win_move_to (ss.get_self_hwnd(), x, y, width, height);
 }
-pub fn sync_self_always_on_top (ss:&SwitcheState) {
+
+pub fn sync_self_always_on_top (ss: &'static SwitcheState) {
     ss.app_handle .read().unwrap() .iter() .for_each ( |ah| {
         ah .webview_windows() .get("main") .map (|w| {
             w.set_always_on_top (ss.conf.check_flag__auto_hide_enabled())
@@ -290,7 +161,8 @@ pub fn sync_self_always_on_top (ss:&SwitcheState) {
     } )
 }
 
-pub fn setup_self_window (ss:&SwitcheState) {
+
+pub fn setup_self_window (ss: &'static SwitcheState) {
     // if there's a valid config, and the sizes are not zero (like at startup), we'll use those
     //if ss.conf.check_flag__restore_window_dimensions() {
     // ^^ disabled as we'd still rather use (valid) dimensions from configs even if not set to restore last-closed position
@@ -306,7 +178,8 @@ pub fn setup_self_window (ss:&SwitcheState) {
     sync_self_always_on_top (ss);
 }
 
-fn proc_event_app_ready (ss:&SwitcheState, _ah:&AppHandle<Wry>) {
+
+fn proc_event_app_ready (ss: &'static SwitcheState, _ah:&AppHandle<Wry>) {
     // we want to store a cached value of our hwnd for exclusions-mgr (and general use)
     if let Some(hwnd) = extract_self_hwnd(ss) {
         //debug! ("App starting .. self-hwnd is : {:?}", hwnd );
@@ -314,32 +187,20 @@ fn proc_event_app_ready (ss:&SwitcheState, _ah:&AppHandle<Wry>) {
         setup_self_window (ss);
     }
 }
-pub fn tauri_run_events_handler (ss:&SwitcheState, ah:&AppHandle<Wry>, event:RunEvent) {
-    match event {
-        RunEvent::Ready                        => { proc_event_app_ready (ss, ah) }
-        RunEvent::WindowEvent   { event, .. }  => { tauri_window_events_handler (ss, ah, &event) }
-        RunEvent::ExitRequested { .. }         => { /* api.prevent_exit() */ }
-        _ => {}
-    }
-}
 
 
+pub fn setup_global_shortcuts (ss: &'static SwitcheState, ah:&AppHandle<Wry>) {
 
-
-pub fn setup_global_shortcuts (ss:&SwitcheState, ah:&AppHandle<Wry>) {
-
-    fn register_hotkeys <SSF> (ah:&AppHandle<Wry>, ss:&SwitcheState, hotkeys:&[String], ssf:SSF) where
-        SSF : Fn (&SwitcheState) + Send + Sync + 'static,
+    fn register_hotkeys <SSF> (ah:&AppHandle<Wry>, ss: &'static SwitcheState, hotkeys:&[String], ssf:SSF) where
+        SSF : Fn (&'static SwitcheState) + Send + Sync + 'static,
     {
         // we'll generate the actual handler-fn from the simpler handling action generator we take in
         type HF = Box <dyn Fn(&AppHandle, &Shortcut, ShortcutEvent) + Send + Sync + 'static>;
 
-        // we'll need everything to be cloneable to use in loop iteration
-        let (ss, ssf) = (ss.clone(), Arc::new(ssf));
-
         // now we can build a registration closure that returns a Result for easier err handling
+        let ssf = Arc::new(ssf);
         let reg_fn = |hk:&str| {
-            let hf : HF = Box::new (move |_,_,e| { if e.state == ShortcutState::Pressed { ssf(&ss) } } );
+            let hf : HF = Box::new (move |_,_,e| { if e.state == ShortcutState::Pressed { ssf(ss) } } );
             let hk = ShortcutWrapper::try_from(hk)?;
             ah .global_shortcut() .on_shortcut (hk, hf)
         };

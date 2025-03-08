@@ -1,9 +1,7 @@
 #![ allow (non_snake_case, clippy::missing_safety_doc) ]
 
-use std::sync::Arc;
 use std::sync::atomic::{AtomicIsize, AtomicU32, Ordering};
 use std::os::raw::c_int;
-use std::ops::Deref;
 use std::time;
 use std::thread::{sleep, spawn};
 
@@ -31,31 +29,24 @@ fn hi_word(l: u32) -> u16 { ((l >> 16) & 0xffff) as u16 }
 
 
 # [ derive (Debug) ]
-pub struct _InputProcessor {
+pub struct InputProcessor {
     kbd_hook     : AtomicIsize,
     mouse_hook   : AtomicIsize,
     iproc_thread : AtomicU32,
 }
 
-# [ derive (Debug, Clone) ]
-pub struct InputProcessor ( Arc <_InputProcessor> );
-
-impl Deref for InputProcessor {
-    type Target = _InputProcessor;
-    fn deref (&self) -> &_InputProcessor { &self.0 }
-}
 
 impl InputProcessor {
 
-    pub fn instance () -> InputProcessor {
+    pub fn instance () -> &'static InputProcessor {
         static INSTANCE: OnceCell <InputProcessor> = OnceCell::new();
         INSTANCE .get_or_init ( || {
-            InputProcessor ( Arc::new ( _InputProcessor {
+            InputProcessor {
                 kbd_hook     : AtomicIsize::default(),
                 mouse_hook   : AtomicIsize::default(),
                 iproc_thread : AtomicU32::default(),
-            } ) )
-        } ) .clone()
+            }
+        } )
     }
 
 
@@ -366,7 +357,7 @@ fn mouse_hook_cb (code: c_int, w_param: WPARAM, l_param: LPARAM) -> LRESULT {
     // ^^ any other case than explicitly cut short above, we'll let it pass through
 }
 
-fn right_btn_dn_scroll_action (delta:i32, ss:SwitcheState) {
+fn right_btn_dn_scroll_action (delta:i32, ss: &'static SwitcheState) {
     if delta > 0 { ss.proc_hot_key__scroll_up() }
     else         { ss.proc_hot_key__scroll_down() }
 }
