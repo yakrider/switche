@@ -233,7 +233,7 @@ pub fn setup_global_shortcuts (ss: &'static SwitcheState, ah:&AppHandle<Wry>) {
 
     // finally, we'll also register any hotkeys specified in config file for direct switch to specific exe/title
     ss.conf.get_direct_app_switch_hotkeys() .into_iter() .for_each (|(hotkey, exe, title, partial)| {
-        register_hotkeys (ah, ss, &[hotkey], move |ss| ss.proc_hot_key__switch_app (exe.as_deref(), title.as_deref(), partial) )
+        register_hotkeys (ah, ss, &[hotkey], move |ss| ss.proc_hot_key__switch_app (&exe.as_slice().to_vec(), title.as_deref(), partial) )
     });
 
 }

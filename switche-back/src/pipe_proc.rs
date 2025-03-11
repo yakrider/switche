@@ -31,7 +31,7 @@ pub enum PipeCommand {
     SwitchNextNonMinimized,
     SwitchZIndex(usize),
     SwitchApp {
-        exe: Option<String>,
+        exes: Vec<String>,
         title: Option<String>,
         partial: bool,
     },
@@ -59,8 +59,8 @@ pub fn handle_pipe_cmd (cmd: PipeCommand) {
         SwitchNextNonMinimized  =>  ss.proc_hot_key__switch_next_non_minimized(),
         SwitchZIndex (z)        =>  ss.proc_hot_key__switch_z_idx(z),
 
-        SwitchApp { exe, title, partial } => {
-            ss.proc_hot_key__switch_app ( exe.as_deref(), title.as_deref(), partial );
+        SwitchApp { exes, title, partial } => {
+            ss.proc_hot_key__switch_app ( &exes, title.as_deref(), partial );
         }
     }
 }

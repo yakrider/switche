@@ -278,7 +278,7 @@ impl SwitcheState {
         } );
     }
 
-    pub(crate) fn activate_matching_window (&'static self, exe:Option<&str>, title:Option<&str>, partial:bool) {
+    pub(crate) fn activate_matching_window (&'static self, exes:&Vec<String>, title:Option<&str>, partial:bool) {
 
         let hwnd_map = self.win_dats_m.hwnd_map.read().unwrap();
 
@@ -286,10 +286,15 @@ impl SwitcheState {
 
         let top2 : Vec<Hwnd> = self.render_lists_m.render_list.read().unwrap()
             .iter() .filter_map ( |rle| hwnd_map .get (&rle.hwnd))
-            .filter ( |wde|
-                ( exe.is_none()   || exe .filter (|&p| wde.exe_path_name.as_ref().filter(|_p| _p.name.as_str() == p).is_some()).is_some() ) &&
-                ( title.is_none() || title .filter (|&t| wde.win_text.as_ref().filter(|_t| match_fn(_t.as_str(),t)).is_some()).is_some() )
-            ) .take(2) .map (|wde| wde.hwnd) .collect::<Vec<_>>();
+            .filter ( |wde| {
+                let exe_pass = exes.is_empty() || exes .iter() .any ( |p|
+                    wde.exe_path_name.as_ref() .is_some_and (|_p| _p.name.as_str() == p.as_str())
+                );
+                let title_pass = title.is_none() || title .is_some_and ( |t|
+                    wde.win_text.as_ref() .is_some_and (|_t| match_fn(_t.as_str(),t))
+                );
+                exe_pass && title_pass
+            } ) .take(2) .map (|wde| wde.hwnd) .collect::<Vec<_>>();
 
         if top2.is_empty() { return }
 
@@ -590,8 +595,8 @@ impl SwitcheState {
         } );
     }
 
-    pub fn proc_hot_key__switch_app (&'static self, exe:Option<&str>, title:Option<&str>, partial:bool) {
-        self.activate_matching_window (exe, title, partial)
+    pub fn proc_hot_key__switch_app (&'static self, exes:&Vec<String>, title:Option<&str>, partial:bool) {
+        self.activate_matching_window (exes, title, partial)
     }
 
     pub fn proc_hot_key__snap_list_refresh (&'static self) {

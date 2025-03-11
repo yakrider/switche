@@ -64,18 +64,37 @@ logging_level = "INFO"
 # to specifying empty title for exclusion, use a single backtick (`)
 exe_exclusions_list = [
     "WDADesktopService.exe",
-    "SearchUI.exe"
+    "SearchUI.exe",
+	"explorer.exe;QTTabBar Preview Window",
+	"explorer.exe;NameDisplayTipWindow",
+	"explorer.exe;SubFolderTipWindow",
+	"explorer.exe;SubFolderTipGhostWindow",
+	"krustyboard.exe",
+	"MusicBee.exe;`",
+	"chrome.exe;`"
 ]
 
 
 # Enable auto-ordering of windows groups by their z-index aggregated over time .. default is true
 # If this is set to false, group ordering specified in the 'exe_manual_ordering_seq' will be used
-auto_order_window_groups = true
+auto_order_window_groups = false
 
 # Manual specification of ordering of (groups of) exes if the above is false .. default is empty
 # The ordering position for windows of unspecified exes can be denoted as "__unknown__" (while others are e.g. "some_app.exe")
 exe_manual_ordering_seq = [
-    "__unknown__"
+    "idea64.exe",
+    "rustrover64.exe",
+    "rider64.exe",
+    "notepad++.exe",
+    "explorer.exe",
+    "Q-Dir.exe",
+    "WindowsTerminal.exe",
+    "WindowsTerminalPreview.exe",
+    "__unknown__",
+    "chrome.exe",
+	"msedge.exe",
+    "firefox.exe",
+    "MusicBee.exe"
 ]
 
 
