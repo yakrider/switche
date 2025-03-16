@@ -118,6 +118,11 @@ pub struct WinDatsManager {
 
 
 
+pub fn _stamp() -> u128 {
+    SystemTime::UNIX_EPOCH.elapsed().unwrap().as_millis()
+}
+
+
 impl WinDatsManager {
 
     pub fn instance () -> &'static WinDatsManager {
@@ -287,8 +292,12 @@ impl WinDatsManager {
         std::mem::swap (&mut *self.hwnds_ordered.write().unwrap(), &mut *self.hwnds_acc.write().unwrap());
         //debug!("hwnds:{}, hacc:{}", self.hwnds_ordered.read().unwrap().len(), self.hwnds_acc.read().unwrap().len());
 
+        // Clean up the MRU list to remove any windows that no longer exist
+        ss.render_lists_m.mru_list__post_win_enum_kick(ss);
+
         // we'll also check/trigger the top in rendering list for once-only backed-off icon requeries
-        let fgnd_hwnd_opt = self.hwnds_ordered.read().unwrap().iter().next().cloned(); // avoiding if-let to reduce lock scope
+        //let fgnd_hwnd_opt = self.hwnds_ordered.read().unwrap().iter().next().cloned(); // avoiding if-let to reduce lock scope
+        let fgnd_hwnd_opt = ss.render_lists_m.render_list.read() .ok() .and_then (|rl| rl.first().map(|rle| rle.hwnd));
         if let Some(hwnd) = fgnd_hwnd_opt { self.check_for_once_only_backed_off_icon_requeries (hwnd, ss) }
 
         ss.emit_render_lists_queued(false);    // we'll queue it as icon upates might tack on more in a bit
@@ -385,9 +394,6 @@ impl WinDatsManager {
 
 
 
-    pub fn _stamp (&self) -> u128 {
-        SystemTime::UNIX_EPOCH.elapsed().unwrap().as_millis()
-    }
     # [ allow (dead_code) ]
     fn check_owner_chain_in_render_list (&'static self, hwnd:Hwnd) -> bool {
         if self.check_hwnd_renderable_pre_passed(hwnd) { return true }
@@ -454,13 +460,14 @@ impl WinDatsManager {
 
 
     pub fn proc_win_report__fgnd_hwnd (&'static self, hwnd:Hwnd, ss: &'static SwitcheState) {
-        info! ("@{:?} fgnd: {:?}", self._stamp(), hwnd);
+        info! ("@{:?} fgnd: {:?}", _stamp(), hwnd);
 
         // first, we'll update self-fgnd state if either this is self hwnd, or if its a valid renderable hwnd coming to fgnd
         if ss.check_self_hwnd(hwnd) {
             ss.handle_event__switche_fgnd();
             return
         }
+
         // first we'll set this hwnds icon to be refreshed upon reprocessing (if it was already in map)
         if let Some(wde) = self.hwnd_map.read().unwrap() .get(&hwnd) {
             ss.icons_m.mark_cached_icon_mapping_stale(wde)
@@ -471,11 +478,19 @@ impl WinDatsManager {
         // and if its renderable, we'll also check/set this for first-timer icon requeries
         if render_check_passed { self.check_for_once_only_backed_off_icon_requeries(hwnd, ss) }
 
-        // now, we'd normally only requery for ordering if this was render-check passed ..
+        // now, we'd normally only requery for ordering (and emit udpates) if this was render-check passed ..
         // .. but windows often reorders the parent window if its child or owned window etc etc comes to fgnd ..
         // .. and checking for owner/parent directly, didnt seem to catch all such cases,
         // .. so we'll just requery light everytime .. (and profiling shows its pretty low cost anyway)
         self .trigger_enum_windows_query_pending (EnumWindowsReqType::Light);
+
+        // and we'll update the MRU list with this hwnd (and again, incl its root parent etc)
+        ss.render_lists_m.mru_list__register_fgnd_hwnd(hwnd);
+        let parent_root = win_apis::get_window_root_parent(hwnd);
+        let owner_root = win_apis::get_window_root_owner(hwnd);
+        //tracing::debug!((hwnd, parent_root, owner_root));
+        if hwnd != parent_root { ss.render_lists_m.mru_list__register_fgnd_hwnd(parent_root); }
+        if hwnd != owner_root  { ss.render_lists_m.mru_list__register_fgnd_hwnd(owner_root); }
 
         //tracing::debug! ("fgnd ({:?}) --> {:?}\n{:?}", self.is_fgnd.is_set(),  &self.hwnd_map.read().unwrap().get(&hwnd),  win_apis::win_get_window_frame(hwnd));
 
@@ -487,14 +502,14 @@ impl WinDatsManager {
 
 
     pub fn proc_win_report__minimize_end (&'static self, hwnd:Hwnd, ss: &'static SwitcheState) {
-        info! ("@{:?} minimize-ended: {:?}", self._stamp(), hwnd);
+        info! ("@{:?} minimize-ended: {:?}", _stamp(), hwnd);
         // ehh, we can just treat this as a fgnd report (other than the printout above for identification)
         self.proc_win_report__fgnd_hwnd (hwnd, ss);
     }
 
 
     pub fn proc_win_report__minimized (&'static self, hwnd:Hwnd, _ss: &'static SwitcheState) {
-        info! ("@{:?} minimized: {:?}", self._stamp(), hwnd);
+        info! ("@{:?} minimized: {:?}", _stamp(), hwnd);
         // we only really want to query/update z-order here if this was in our windows list
         if self.check_hwnd_renderable_pre_passed (hwnd) {
             self .trigger_enum_windows_query_pending (EnumWindowsReqType::Light);
@@ -503,9 +518,12 @@ impl WinDatsManager {
 
 
     pub fn proc_win_report__obj_shown (&'static self, hwnd:Hwnd, ss: &'static SwitcheState) {
-        //debug! ("@{:?} obj-shown: {:?}", self._stamp(), hwnd);
+        //tracing::debug! ("@{:?} obj-shown: {:?}", self._stamp(), hwnd);
 
-        // windows can get into nothing-in-fgnd state, and in such cases, if the new fgnd is the same as what was fgnd last ..
+        // this is important, as there are cases like for new file-explorer window creation, where it seems to take some time
+        //   after first fgnd report before the hwnd even shows up in the enum-call .. so listening to this helps catch those
+
+        // also, windows can get into nothing-in-fgnd state, and in such cases, if the new fgnd is the same as what was fgnd last ..
         // .. then it will not send a new fgnd report .. if this happens to switche, our is_fgnd flags get out of sync ..
         // .. so we'll handle this here directly .. and in fgnd report we'll ignore if our is_fgnd flag is already set
         if ss.check_self_hwnd(hwnd) {
@@ -526,7 +544,7 @@ impl WinDatsManager {
 
 
     pub fn proc_win_report__obj_destroyed (&'static self, hwnd:Hwnd, ss: &'static SwitcheState) {
-        //debug! ("@{:?} obj-destroyed: {:?}", self._stamp(), hwnd);
+        //tracing::debug! ("@{:?} obj-destroyed: {:?}", self._stamp(), hwnd);
 
         // this is counterpart to special swi handling in obj-shown
         if ss.check_self_hwnd(hwnd) {
@@ -546,7 +564,7 @@ impl WinDatsManager {
 
     pub fn proc_win_report__obj_reorder (&'static self, _hwnd:Hwnd, _ss: &'static SwitcheState) {
         // todo : prob no use for this .. it seems mostly to be for z-order reordering WITHIN an app's child windows
-        //debug! ("@{:?} obj-reorder: {:?}", self._stamp(), hwnd);
+        //tracing::debug! ("@{:?} obj-reorder: {:?}", self._stamp(), hwnd);
         // we'll just trigger a light enum-query to keep ordering in sync
         self .trigger_enum_windows_query_pending (EnumWindowsReqType::Light);
     }

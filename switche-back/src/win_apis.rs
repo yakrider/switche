@@ -22,7 +22,7 @@ use windows::Win32::System::WindowsProgramming::GetUserNameW;
 use windows::Win32::UI::Input::KeyboardAndMouse::{GetKeyState, VK_SHIFT};
 use windows::Win32::UI::Shell::PropertiesSystem::{IPropertyStore, PROPERTYKEY, SHGetPropertyStoreForWindow};
 use windows::Win32::UI::HiDpi::{DPI_AWARENESS_CONTEXT_SYSTEM_AWARE, SetThreadDpiAwarenessContext};
-use windows::Win32::UI::WindowsAndMessaging::{GetForegroundWindow, GetWindowPlacement, GetWindowTextW, IsWindowVisible, GetAncestor, GetWindowThreadProcessId, PostMessageA, SetForegroundWindow, ShowWindowAsync, GetWindowLongW, WINDOWPLACEMENT, EnumChildWindows, SystemParametersInfoW, WM_CLOSE, SW_HIDE, SW_MAXIMIZE, SW_MINIMIZE, SW_RESTORE, SW_SHOW, SW_SHOWMINIMIZED, WS_CHILD, GWL_STYLE, GA_ROOTOWNER, WS_EX_APPWINDOW, WS_EX_TOOLWINDOW, GWL_EXSTYLE, SPI_GETWORKAREA, SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS, MoveWindow, GA_PARENT, GetWindow, GW_OWNER, GetLastActivePopup, GetClassNameW, IsIconic};
+use windows::Win32::UI::WindowsAndMessaging::{GetForegroundWindow, GetWindowPlacement, GetWindowTextW, IsWindowVisible, GetAncestor, GetWindowThreadProcessId, PostMessageA, SetForegroundWindow, ShowWindowAsync, GetWindowLongW, WINDOWPLACEMENT, EnumChildWindows, SystemParametersInfoW, WM_CLOSE, SW_HIDE, SW_MAXIMIZE, SW_MINIMIZE, SW_RESTORE, SW_SHOW, SW_SHOWMINIMIZED, WS_CHILD, GWL_STYLE, GA_ROOTOWNER, WS_EX_APPWINDOW, WS_EX_TOOLWINDOW, GWL_EXSTYLE, SPI_GETWORKAREA, SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS, MoveWindow, GA_PARENT, GetWindow, GW_OWNER, GetLastActivePopup, GetClassNameW, IsIconic, GA_ROOT};
 
 
 use crate::switche::Hwnd;
@@ -67,6 +67,9 @@ pub fn get_window_owner (hwnd:Hwnd) -> Hwnd { unsafe {
 pub fn get_window_root_owner (hwnd:Hwnd) -> Hwnd { unsafe {
     //debug!("owner of {:?} : {:?}",hwnd, GetAncestor (hwnd.HWND(), GA_ROOTOWNER).into());
     GetAncestor (hwnd.HWND(), GA_ROOTOWNER).into()
+} }
+pub fn get_window_root_parent (hwnd:Hwnd) -> Hwnd { unsafe {
+    GetAncestor (hwnd.HWND(), GA_ROOT).into()
 } }
 pub fn check_window_has_owner (hwnd:Hwnd) -> bool { unsafe {
     hwnd != GetAncestor (hwnd.HWND(), GA_ROOTOWNER).into()

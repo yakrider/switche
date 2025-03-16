@@ -278,7 +278,7 @@ impl SwitcheState {
         } );
     }
 
-    pub(crate) fn activate_matching_window (&'static self, exes:&Vec<String>, title:Option<&str>, partial:bool) {
+    pub(crate) fn activate_matching_window (&'static self, exes:&[String], title:Option<&str>, partial:bool) {
 
         let hwnd_map = self.win_dats_m.hwnd_map.read().unwrap();
 
@@ -595,7 +595,7 @@ impl SwitcheState {
         } );
     }
 
-    pub fn proc_hot_key__switch_app (&'static self, exes:&Vec<String>, title:Option<&str>, partial:bool) {
+    pub fn proc_hot_key__switch_app (&'static self, exes:&[String], title:Option<&str>, partial:bool) {
         self.activate_matching_window (exes, title, partial)
     }
 

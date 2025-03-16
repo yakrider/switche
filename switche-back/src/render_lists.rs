@@ -2,10 +2,10 @@
 #![ allow (non_snake_case) ]
 #![ allow (non_upper_case_globals) ]
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::RwLock;
 use std::sync::atomic::{AtomicIsize, Ordering};
-
+use std::time::{Duration, Instant};
 use grouping_by::GroupingBy;
 use serde::{Deserialize, Serialize};
 
@@ -39,11 +39,21 @@ pub struct GroupSortingEntry {
 
 # [ derive (Debug, Default) ]
 pub struct RenderReadyListsManager {
-    pub grp_sorting_map  : RwLock <HashMap <String, GroupSortingEntry>>,
+
     pub render_list      : RwLock <Vec <RenderListEntry>>,
+    pub render_hwnds     : RwLock <HashSet <Hwnd>>,
+
+    pub grp_sorting_map  : RwLock <HashMap <String, GroupSortingEntry>>,
     pub grpd_render_list : RwLock <Vec <Vec <RenderListEntry>>>,
-    pub exes_excl_map    : RwLock <HashMap <String, HashSet<String>>>,   // Map of exe-name to set of titles
+
+    pub mru_hwnd_list    : RwLock <VecDeque <(Hwnd, Instant)>>,
+    pub mru_hwnd_set     : RwLock <HashSet <Hwnd>>,
+
+    pub exes_excl_map    : RwLock <HashMap <String, HashSet<String>>>,
+    // ^^ map of exe-name to set of titles to exclude .. (read from user configs)
+
     pub ordering_ref_map : RwLock <HashMap <String, usize>>,
+    // ^^ map of exe names to absolute ordering reference .. (read from user configs)
 }
 
 
@@ -65,6 +75,49 @@ impl RenderReadyListsManager {
     // -- creation --
     // ^^ happens via derived default
 
+
+
+    // --- MRU tracking ---
+    
+    pub fn mru_list__register_fgnd_hwnd (&self, hwnd: Hwnd) {
+        let mut mru_list = self.mru_hwnd_list.write().unwrap();
+        mru_list .retain (|(h,_)| *h != hwnd);
+        mru_list .push_front ((hwnd, Instant::now()));
+        self.mru_hwnd_set.write().unwrap().insert(hwnd);
+    }
+
+    pub fn mru_list__post_win_enum_kick (&self, ss: &SwitcheState) {
+        // first we'll clean up any hwnds no longer reported ..
+        // however, for new windows (e.g. win-explorer), it can take a while after the fgnd report for the hwnd to show up in win-enums
+        // so we'll need to allow a long enough grace before removing MRU recorded hwnds that dont show up in win-enum z-list
+
+        let Ok(mut mru_list) = self.mru_hwnd_list.write() else { return };
+        let Ok(mut mru_set) = self.mru_hwnd_set.write() else { return };
+
+        let z_order_hwnds = ss.win_dats_m.hwnds_ordered.read().unwrap();
+        let z_order_set: HashSet<Hwnd> = z_order_hwnds.iter().copied().collect();
+        mru_list .retain (|(h,t)| {
+            let zap_it = !z_order_set.contains(h) && t.elapsed() > Duration::from_millis(500);
+            if zap_it { mru_set.remove(h); }
+            !zap_it
+        });
+
+        // then we'll also try and catch any sent-to-back hwnd and mirror that in mru-list ..
+        // we'll scan from the z-list bottom for the first hwnd that was already in our rendered list
+        // and if that hwnd was also the MRU-list top, must have been a send-to-back operation, so we'll kick it off our MRU list !!
+        let rl_hwnds = self.render_hwnds.read().unwrap();
+        let rl0 = self.render_list .read().unwrap() .first() .map (|rle| rle.hwnd);
+        for &z_hwnd in z_order_hwnds.iter().rev() {
+            if rl_hwnds.contains(&z_hwnd) {
+                if Some(z_hwnd) == rl0 {
+                    tracing::debug! ("@{:?} sent-to-back: {:?}", crate::win_dats::_stamp(), z_hwnd.0);
+                    mru_list.retain (|(h,_)| *h != z_hwnd);
+                    mru_set.remove (&z_hwnd);
+                }
+                break;
+            }
+        }
+    }
 
 
     // --- data reloads ---
@@ -156,10 +209,22 @@ impl RenderReadyListsManager {
         struct RenderListEntryInfo<'a> { exe_path_name: Option <&'a ExePathName>, ico_idx: i32, rle: RenderListEntry }
 
         let is_dismissed = ss.is_dismissed.check();     // local copy to avoid guarded accesses in a loop
-        let hwnds = ss.win_dats_m.hwnds_ordered.read().unwrap();
         let hwnd_map = ss.win_dats_m.hwnd_map.read().unwrap();
-        let filt_wdes = hwnds .iter() .flat_map (|h| hwnd_map.get(h))
-            .filter (|&wde| !self.runtime_should_excl_check(ss,wde)) .collect::<Vec<_>>();
+        
+        // we want to preserve mru ordering, then append any window not in mru list by z-order
+        let mru_list = self.mru_hwnd_list.read().unwrap();
+        let mru_set = self.mru_hwnd_set.read().unwrap();
+        let z_order_hwnds = ss.win_dats_m.hwnds_ordered.read().unwrap();
+        
+        let mut rl = Vec::with_capacity(z_order_hwnds.len());
+        mru_list .iter() .for_each (|(h,_)| rl.push(*h));
+        z_order_hwnds .iter().for_each (|h| if !mru_set.contains(h) { rl.push(*h); });
+
+        // Filter the windows based on exclusion criteria
+        let filt_wdes = rl.iter()
+            .flat_map (|h| hwnd_map.get(h))
+            .filter (|&wde| !self.runtime_should_excl_check(ss, wde))
+            .collect::<Vec<_>>();
 
         // we'll gather all the info to sort the renderlist entries and their groups
         let filt_rle_info = filt_wdes .iter() .enumerate() .map ( |(i,wde)| {
@@ -176,12 +241,12 @@ impl RenderReadyListsManager {
             }
         } ) .collect::<Vec<_>>();
 
-        // for recents, we simply order by the natural z-order as returned by the enum call
+        // for recents, we use the MRU order as reflected in the filt_rle_info
         let filt_rl = filt_rle_info .iter() .map (|e| e.rle) .collect::<Vec<_>>();
 
         let mut grpd_render_list_builder = filt_rle_info .iter() .grouping_by (|e| e.exe_path_name) .into_values() .collect::<Vec<_>>();
 
-        // within each group, we want to keep the z-order, but first sort by icon-count and icon-idx (mostly for things like chrome apps)
+        // within each group, we want to keep the MRU order, but first sort by icon-count and icon-idx (mostly for things like chrome apps)
         let ico_freqs = filt_rle_info .iter() .fold ( HashMap::new(), |mut m, e| { *m.entry(e.ico_idx).or_insert(0) -= 1; m } );
         // ^^ we use negative counts so that we can sort by descending freq count
 
@@ -233,6 +298,7 @@ impl RenderReadyListsManager {
 
     pub(crate) fn update_render_ready_lists (&self, ss:&SwitcheState) {
         let (rl, grl) = self.recalc_render_ready_lists (ss);
+        *self.render_hwnds.write().unwrap() = HashSet::from_iter(rl.iter().map(|rle| &rle.hwnd).cloned());
         *self.render_list.write().unwrap() = rl;
         *self.grpd_render_list.write().unwrap() = grl;
     }

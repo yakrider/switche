@@ -84,7 +84,11 @@ auto_order_window_groups = false
 exe_manual_ordering_seq = [
     "idea64.exe",
     "rustrover64.exe",
+	"goland64.exe",
     "rider64.exe",
+	"clion64.exe",
+	"webstorm64.exe",
+	"pycharm64.exe",
     "notepad++.exe",
     "explorer.exe",
     "Q-Dir.exe",
