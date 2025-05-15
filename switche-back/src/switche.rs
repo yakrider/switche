@@ -1,14 +1,12 @@
-#![ allow (non_camel_case_types, non_snake_case, non_upper_case_globals) ]
+#![allow (non_camel_case_types, non_snake_case, non_upper_case_globals)]
 
 use std::ops::Not;
-use std::sync::Arc;
 //use no_deadlocks::RwLock;
-use std::sync::RwLock;
+use std::sync::{Arc, LazyLock, OnceLock};
 use std::sync::atomic::{AtomicBool, AtomicIsize, Ordering};
 use std::thread::{sleep, spawn};
 use std::time::Duration;
 
-use once_cell::sync::{Lazy, OnceCell};
 use serde::{Deserialize, Serialize};
 use strum_macros::{AsRefStr};
 use tauri::{AppHandle, Emitter, Listener, Wry};
@@ -30,9 +28,9 @@ pub use crate::win_dats::{Hwnd, ExePathName, WinDatEntry};
 
 
 
-#[allow(non_camel_case_types)]
+#[allow (non_camel_case_types)]
 #[derive (Debug, Eq, PartialEq, Hash, Copy, Clone, AsRefStr, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
+#[serde (rename_all = "snake_case")]
 pub enum Backend_Notice {
     backend_req__app_invoke,
     backend_req__scroll_down,
@@ -48,7 +46,7 @@ impl Backend_Notice {
     fn str (&self) -> &str { self.as_ref() }
 }
 
-# [ derive (Debug, Eq, PartialEq, Hash, Default, Clone, Serialize, Deserialize) ]
+#[derive (Debug, Eq, PartialEq, Hash, Default, Clone, Serialize, Deserialize)]
 struct BackendNotice_Pl {
     msg: String
 }
@@ -56,9 +54,9 @@ struct BackendNotice_Pl {
 
 
 
-#[allow(non_camel_case_types)]
+#[allow (non_camel_case_types)]
 #[derive (Debug, Eq, PartialEq, Hash, Copy, Clone, AsRefStr, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
+#[serde (rename_all = "snake_case")]
 pub enum Backend_Event {
     backend_notice,
     updated_win_dat_entry,
@@ -84,19 +82,20 @@ pub struct FrontendRequest {
 
 
 /// The WinDatEntry_Pl is the subset of WinDatEntry that we send to the front-end
-# [ derive (Debug, Clone, Serialize, Deserialize) ]
+#[derive (Debug, Clone, Serialize, Deserialize)]
 pub struct WinDatEntry_Pl {
     pub hwnd           : Hwnd,
     pub win_text       : Option<String>,
     pub exe_path_name  : Option<ExePathName>,
     pub icon_cache_idx : u32,
+    pub is_elevated    : bool,
 }
 
 
 
 
 /// The IconEntry_Pl is the icon-specific payload we send out to the front-end
-# [ derive (Debug, Default, Eq, PartialEq, Hash, Clone, Serialize, Deserialize) ]
+#[derive (Debug, Default, Eq, PartialEq, Hash, Clone, Serialize, Deserialize)]
 pub struct IconEntry_Pl {
     pub ico_id  : usize,
     pub ico_str : String,
@@ -106,7 +105,7 @@ pub struct IconEntry_Pl {
 
 
 /// Configs-payload contains the subset of configs that we send out to the front-end
-# [ derive (Debug, Eq, PartialEq, Hash, Default, Clone, Serialize, Deserialize) ]
+#[derive (Debug, Eq, PartialEq, Hash, Default, Clone, Serialize, Deserialize)]
 pub struct Configs_Pl {
     switche_version         : &'static str,
     is_elevated             : bool,
@@ -136,7 +135,7 @@ impl Configs_Pl {
 
 
 
-# [ derive (Debug, Default, Clone) ]
+#[derive (Debug, Default, Clone)]
 /// pure sugar for representation of our atomic-bool flags
 pub struct Flag (Arc <AtomicBool>);
 // ^^ simple sugar that helps reduce clutter in code
@@ -158,7 +157,7 @@ impl Flag {
 
 
 
-# [ derive ( ) ]
+#[derive ()]
 pub struct SwitcheState {
 
     pub conf    : &'static Config,
@@ -178,7 +177,7 @@ pub struct SwitcheState {
     pub is_mouse_right_down       : Flag,
     pub in_right_btn_scroll_state : Flag,
 
-    pub app_handle : RwLock < Option <AppHandle<Wry>>>,
+        app_handle : OnceLock <AppHandle<Wry>>,
     pub self_hwnd  : AtomicIsize,
 
 }
@@ -189,7 +188,7 @@ pub struct SwitcheState {
 impl SwitcheState {
 
     pub fn instance () -> &'static SwitcheState {
-        static INSTANCE: OnceCell <SwitcheState> = OnceCell::new();
+        static INSTANCE: OnceLock <SwitcheState> = OnceLock::new();
         INSTANCE .get_or_init ( || {
             let ss = SwitcheState {
                 conf           : Config::instance(),
@@ -209,7 +208,7 @@ impl SwitcheState {
                 is_mouse_right_down       : Flag::default(),
                 in_right_btn_scroll_state : Flag::default(),
 
-                app_handle     : RwLock::new (None),
+                app_handle     : OnceLock::new(),
                 self_hwnd      : AtomicIsize::default(),
             };
             // lets do some init for the new instance
@@ -223,8 +222,14 @@ impl SwitcheState {
 
 
     pub fn register_app_handle (&self, ah:AppHandle<Wry>) {
-        *self.app_handle.write().unwrap() = Some(ah);
+        let _ = self.app_handle.set(ah);
     }
+
+    // access sugar for the OnceLock .. as if we dont even have have an AppHandle might as well exit
+    pub fn get_app_handle(&self) -> &AppHandle<Wry> {
+        self.app_handle .get() .expect("AppHandle not initialized")
+    }
+
     pub fn store_self_hwnd (&self, hwnd:Hwnd) {
         self.self_hwnd.store (hwnd.0, Ordering::Relaxed)
     }
@@ -242,7 +247,7 @@ impl SwitcheState {
     /*****  some support functions  ******/
 
     pub(crate) fn handle_event__switche_fgnd (&'static self) {
-        //debug! ("switche self-fgnd report .. refreshing window-list-top icon");
+        //tracing::debug! ("switche self-fgnd report .. refreshing window-list-top icon");
         if self.is_fgnd.is_set() { return }
 
         // we'll trigger an immdt query if its only just coming to fgnd .. (no time to queue, and its only about ~1ms)
@@ -429,17 +434,20 @@ impl SwitcheState {
     }
 
     fn handle_req__switche_quit (&'static self) {
-        if let Some(ah) = self.app_handle.read().unwrap().as_ref() { ah.exit(0); }
+        self.get_app_handle().exit(0);
     }
 
     fn handle_req__self_auto_resize (&'static self) {
         crate::tauri::auto_setup_self_window (self);
     }
 
-    fn handle_req__toggle_auto_hide (&'static self) {
-        self.conf.deferred_update_conf__auto_hide_toggle();
-        self.emit_configs();
-        crate::tauri::sync_self_always_on_top(self);
+    fn handle_req__update_group_mode (&'static self, enabled:bool) {
+        self.conf.deferred_update_conf__grp_mode (enabled);
+    }
+
+    fn handle_req__update_auto_hide (&'static self, enabled:bool) {
+        crate::tauri::sync_self_always_on_top (self, enabled);
+        self.conf.deferred_update_conf__auto_hide (enabled);
     }
 
     fn handle_req__debug_print (&'static self) { }
@@ -495,9 +503,11 @@ impl SwitcheState {
             "fe_req_switche_quit"         => { self.handle_req__switche_quit()     }
             "fe_req_self_auto_resize"     => { self.handle_req__self_auto_resize() }
 
-            "fe_req_grp_mode_enable"      => { self.conf.deferred_update_conf__grp_mode (true)  }
-            "fe_req_grp_mode_disable"     => { self.conf.deferred_update_conf__grp_mode (false) }
-            "fe_req_auto_hide_toggle"     => { self.handle_req__toggle_auto_hide() }
+            "fe_req_grp_mode_enable"      => { self.handle_req__update_group_mode (true)  }
+            "fe_req_grp_mode_disable"     => { self.handle_req__update_group_mode (false) }
+
+            "fe_req_auto_hide_enable"     => { self.handle_req__update_auto_hide (true) }
+            "fe_req_auto_hide_disable"    => { self.handle_req__update_auto_hide (false) }
 
             "fe_req_edit_config"          => { self.conf.trigger_config_file_edit() }
             "fe_req_reset_config"         => { self.conf.trigger_config_file_reset(); self.handle_req__data_load() }
@@ -632,46 +642,39 @@ impl SwitcheState {
     pub fn emit_win_dat_entry (&'static self, wde:&WinDatEntry) {
         //debug! ("emitting **{notice}** win_dat_entry for: {:?}", wde.hwnd);
         let pl = WinDatEntry_Pl {
-                hwnd: wde.hwnd,
-                win_text: wde.win_text.clone(),
-                exe_path_name: wde.exe_path_name.clone(),
-                icon_cache_idx: self.icons_m.get_cached_icon_idx(wde).unwrap_or(0) as u32,
+            hwnd: wde.hwnd,
+            win_text: wde.win_text.clone(),
+            exe_path_name: wde.exe_path_name.clone(),
+            icon_cache_idx: self.icons_m.get_cached_icon_idx(wde).unwrap_or(0) as u32,
+            is_elevated: wde.is_elevated,
         };
         //debug! ("** wde-update for hwnd {:8} : ico-idx: {:?}, {:?}", pl.hwnd, pl.icon_cache_idx, pl.exe_path_name.as_ref().map(|p|p.name.clone()));
-        self.app_handle.read().unwrap() .iter().for_each ( |ah| {
-            serde_json::to_string(&pl) .map ( |pl| {
-                ah.emit::<String> (Backend_Event::updated_win_dat_entry.str(), pl )
-            } ) .err() .iter() .for_each (|err| error!{"win_dat emit failed: {:?}", err});
-        } );
+        serde_json::to_string(&pl) .map ( |pl| {
+            self.get_app_handle().emit::<String> (Backend_Event::updated_win_dat_entry.str(), pl )
+        } ) .err() .iter() .for_each (|err| error!{"win_dat emit failed: {:?}", err});
     }
 
     pub fn emit_icon_entry (&'static self, ie:&IconEntry_Pl) {
         //debug! ("** icon-update for icon-id: {:?}", ie.ico_id);
-        self.app_handle .read().unwrap() .iter() .for_each ( |ah| {
-            serde_json::to_string(ie) .map (|pl| {
-                ah.emit::<String> ( Backend_Event::updated_icon_entry.str(), pl )
-            } ) .err() .iter().for_each (|err| error!("icon-entry emit failed: {:?}", err));
-        } );
+        serde_json::to_string(ie) .map (|pl| {
+            self.get_app_handle().emit::<String> ( Backend_Event::updated_icon_entry.str(), pl )
+        } ) .err() .iter().for_each (|err| error!("icon-entry emit failed: {:?}", err));
     }
 
     pub fn emit_configs (&'static self) {
         info! ("** emitting .. configs-update");
-        self.app_handle .read().unwrap() .iter() .for_each ( |ah| {
-            serde_json::to_string (&Configs_Pl::assemble(self)) .map (|pl| {
-                ah.emit::<String> ( Backend_Event::updated_configs.str(), pl )
-            } ) .err() .iter() .for_each (|err| error!("configs emit failed: {:?}", err));
-        } );
+        serde_json::to_string (&Configs_Pl::assemble(self)) .map (|pl| {
+            self.get_app_handle().emit::<String> ( Backend_Event::updated_configs.str(), pl )
+        } ) .err() .iter() .for_each (|err| error!("configs emit failed: {:?}", err));
     }
 
 
     pub fn emit_backend_notice (&'static self, notice: Backend_Notice) {
         let pl = BackendNotice_Pl { msg: notice.str().to_string() };
-        self.app_handle.read().unwrap() .iter() .for_each ( |ah| {
-            serde_json::to_string(&pl) .map ( |pl| {
-                info!("sending backend notice: {}", &pl);
-                ah.emit::<String> ( Backend_Event::backend_notice.str(), pl ) .map_err (|_| "emit failure")
-            } ) .err() .iter().for_each (|err| error!("render-list emit failed: {}", err));
-        } )
+        serde_json::to_string(&pl) .map ( |pl| {
+            info!("sending backend notice: {}", &pl);
+            self.get_app_handle().emit::<String> ( Backend_Event::backend_notice.str(), pl ) .map_err (|_| "emit failure")
+        } ) .err() .iter().for_each (|err| error!("render-list emit failed: {}", err));
     }
 
 
@@ -681,11 +684,9 @@ impl SwitcheState {
             grl : self.render_lists_m.grpd_render_list.read().unwrap().clone()
         };
         //debug!("emitting renderlist ({:?}): {:?}", rlp.rl.len(), serde_json::to_string(&rlp).unwrap());
-        self.app_handle.read().unwrap().iter().for_each ( |ah| {
-            serde_json::to_string(&rlp).map(|pl| {
-                ah.emit::<String>(Backend_Event::updated_render_list.str(), pl) .map_err (|_| "emit failure")
-            }) .err() .iter().for_each (|err| error!("rl emit failed: {}", err));
-        } )
+        serde_json::to_string(&rlp).map(|pl| {
+            self.get_app_handle().emit::<String> (Backend_Event::updated_render_list.str(), pl) .map_err (|_| "emit failure")
+        }) .err() .iter().for_each (|err| error!("rl emit failed: {}", err));
     }
 
     pub fn emit_render_lists_immdt (&'static self, force:bool) {
@@ -708,8 +709,8 @@ impl SwitcheState {
     }
 
     pub fn emit_render_lists_queued (&'static self, force:bool) {
-        static do_forced      : Lazy<Flag> = Lazy::new (|| {Flag::default()});
-        static render_pending : Lazy<Flag> = Lazy::new (|| {Flag::default()});
+        static do_forced      : LazyLock <Flag> = LazyLock::new (|| {Flag::default()});
+        static render_pending : LazyLock <Flag> = LazyLock::new (|| {Flag::default()});
         if force { do_forced.set() }
         // note that we dont want to keep pushing this out while there are updates ..
         // (we just want to bunch up some but keep pushing when/if there's a stream of updates)

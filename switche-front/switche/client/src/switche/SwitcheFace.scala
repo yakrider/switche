@@ -236,7 +236,7 @@ object SwitcheFacePage {
          case (_, _, true, _, "F4")   =>  handleReq_SwitcheQuit()
          
          // alt-ctrl-a .. toggle auto-hide mode .. (for easy switch during dev, else via configs is sufficient)
-         case (_, _, true, true, "a") =>  SendMsgToBack.FE_Req_AutoHideToggle()
+         case (_, _, true, true, "a") =>  handleReq_AutoHideToggle()
         
          // alt-key or scroll-end-armed ..  we'll setup alt-tab state key nav options
          //   (arm, srch, alt, ctrl, key)
@@ -330,7 +330,7 @@ object SwitchePageState {
    def getCappedRecents() : Seq[(RenderListEntry, GrpT)] = {
       // we'll compile the capped-recents list (to incl both the top-recents and last-recents) first ..
       // .. then we'll tag the beginning (if any) of the last-recents block, so we can mark it up for css
-      val cappedRecents = if (inGroupedMode) {
+      val cappedRecents = if (groupModeEnabled) {
          val (nfirst, nlast) = (configs.n_grp_mode_top_recents, configs.n_grp_mode_last_recents)
          val ngap = renderList.size - nfirst - nlast    // we rely on this possibly being negative in which case the drop does nothing
          renderList.take(nfirst) ++ renderList.drop(nfirst).drop(ngap)
@@ -374,9 +374,13 @@ object SwitchePageState {
       dom.window.location.reload()
    }
    def handleReq_GroupModeToggle() = {
-      inGroupedMode = !inGroupedMode;
-      SendMsgToBack.FE_Req_GrpModeEnabled(inGroupedMode)
+      groupModeEnabled = !groupModeEnabled
+      SendMsgToBack.FE_Req_GrpModeEnabled(groupModeEnabled)
       RenderSpacer.queueSpacedRender()
+   }
+   def handleReq_AutoHideToggle() = {
+      autoHideEnabled = !autoHideEnabled
+      SendMsgToBack.FE_Req_AutoHideEnabled(autoHideEnabled)
    }
    
    def handleReq_CurElemActivation() : Unit = {
@@ -467,13 +471,13 @@ object ElemsDisplay {
       val searchedDiv : Div = {
          if (inSearchState) {
             SearchDisplay.rebuildSearchStateElems()
-            if (inGroupedMode) {
+            if (groupModeEnabled) {
                //makeElemsDiv (ElemTs.G, StateTs.S)      // uncommenting this instead of below will remove top-recents in grpd search state
                div ( makeElemsDiv (ElemTs.GR, StateTs.S), makeElemsDiv (ElemTs.G, StateTs.S) ) .render
             } else { makeElemsDiv (ElemTs.R,  StateTs.S) }
          } else {
             rebuildRecentsElems()
-            if (inGroupedMode) {
+            if (groupModeEnabled) {
                rebuildGroupedElems()
                div ( makeElemsDiv (ElemTs.GR, StateTs.L), makeElemsDiv (ElemTs.G, StateTs.L) ) .render
             } else { makeElemsDiv (ElemTs.R,  StateTs.L) }
@@ -489,7 +493,8 @@ object ElemsDisplay {
 
    def makeElemBox (idStr:String, wde:WinDatEntry, y:Int, elemT:ElemT, grpT:GrpT) : Div = {
       val exeInnerSpan = span ( wde.exe_path_name.map(_.name).getOrElse("exe..") ).render
-      val yInnerSpan = span (`class`:="ySpan", f"${y}%2d" ).render
+      val ySpanCls = if (wde.is_elevated) "ySpan elev" else "ySpan"
+      val yInnerSpan = span (`class`:=ySpanCls, f"${y}%2d" ).render
       val titleInnerSpan = span ( wde.win_text.getOrElse("-- no title --") ).render
       makeElemBox ( idStr, wde, y, elemT, grpT, exeInnerSpan, yInnerSpan, titleInnerSpan )
    }
@@ -517,7 +522,7 @@ object ElemsDisplay {
       val elemsMap = mutable.LinkedHashMap[String,OrderedElemsEntry]()
       getCappedRecents() .flatMap {case (e,gt) => hwndMap.get(e.hwnd).map(d => (d,e,gt)) } .zipWithIndex .foreach { case ((wde,rle,gt),i) =>
          val id = recentsId (wde.hwnd)
-         val elemT = if (inGroupedMode) ElemTs.GR else ElemTs.R
+         val elemT = if (groupModeEnabled) ElemTs.GR else ElemTs.R
          val elem = makeElemBox (id, wde, rle.y, elemT, gt)
          elemsMap.put (id, OrderedElemsEntry (i, elem))
       }
@@ -565,7 +570,7 @@ object ElemsDisplay {
          triggerHoverLockTimeout()
          // ^^ for multiple scroll-into-views, we dont want the mouse being at say bottom to keep triggering it
       }
-      if (inSearchState && inGroupedMode) { // in group-mode search-state see if we can find another in recents to highlight too
+      if (inSearchState && groupModeEnabled) { // in group-mode search-state see if we can find another in recents to highlight too
          idToHwnd (newFocusElem.id) .map (recentsId) .flatMap (recentsElemsMap.get) .foreach (_.elem.classList.add("curElem"))
       }
    }
@@ -575,7 +580,7 @@ object ElemsDisplay {
       // ^^ our (old) sjs versions doesnt have NodeList conversion to scala iterable ..
       // .. so for now, we'll just try it twice, as there are at most two of these (if there's one in recents too during search)
       Option (doc.querySelector(s".curElem")) .foreach(_.classList.remove("curElem"))
-      if (inSearchState && inGroupedMode) { // if in grouped-mode search-state try to clear one more
+      if (inSearchState && groupModeEnabled) { // if in grouped-mode search-state try to clear one more
          Option (doc.querySelector(s".curElem")) .foreach(_.classList.remove("curElem"))
       }
    }
@@ -631,7 +636,7 @@ object ElemsDisplay {
          val ((curIdm,_,curMap),(_,wrapVec,wrapMap)) = getIdfnVecAndMap(curBlock) -> getIdfnVecAndMap(wrapBlock)
          idToHwnd(curElemId) .map(curIdm) .flatMap(curMap.get) .orElse ( wrapVec.headOption.flatMap(wrapMap.get) )
       }
-      (inSearchState, inGroupedMode) match {
+      (inSearchState, groupModeEnabled) match {
          // in recents-mode, whether search or not, we try to sync up within recents-block (falling back to its top)
          case (     _, false ) => { getSyncElem (ElemTs.R, ElemTs.R) }
          // in grouped-mode search-state, we can only sync within the grouped-block (recents is dimmed out and non-navigable)
@@ -658,7 +663,7 @@ object ElemsDisplay {
       .orElse { groupedElemsMap .get(curElemId) .map (oe => (true, oe)) }
       // now lets try to find the next-entry option for various state/mode/nav-type/curElem combinations
       .flatMap { case (curInGrpd, oe) =>
-         (inSearchState, inGroupedMode, isGrpNext, curInGrpd, wrapBlocks) match {
+         (inSearchState, groupModeEnabled, isGrpNext, curInGrpd, wrapBlocks) match {
             // in recents-mode, always stay within recents (in both regular and search-state)
             case (     _, false,     _,     _,     _ ) => { pickNext (oe, ElemTs.R, ElemTs.R) }
             // in grouped-mode, if in search-state, always stay within grouped (recents is dimmed out, and non navigable)
@@ -699,7 +704,7 @@ object ElemsDisplay {
       val pickElem : IndexedSeq[String] => Option[String] = if (toTop) _.headOption else _.lastOption
       val curInGrpd = groupedElemsMap.contains(curElemId)
       // lets enumerate all ways we can end up in grouped block top/btm (which appears underneath recents block)
-      if (inGroupedMode &&                     // we must be in grouped mode
+      if (groupModeEnabled &&                     // we must be in grouped mode
             (inSearchState ||                  // then either we could be in search state (in grpd mode) ..
                (withinBlock && curInGrpd) ||   // or we're doing within-block nav and already in group mode ..
                (!withinBlock && !toTop)        // or we're doing cross-block nav and going to bottom
@@ -775,7 +780,7 @@ object SearchDisplay {
    }
    def resetSearchMatchFocus() : Unit = {
       import ElemsDisplay._;
-      val (_, idsVec, elemsMap) = getIdfnVecAndMap (if (inGroupedMode) ElemTs.G else ElemTs.R)
+      val (_, idsVec, elemsMap) = getIdfnVecAndMap (if (groupModeEnabled) ElemTs.G else ElemTs.R)
       idsVec.headOption .flatMap(elemsMap.get) .map(_.elem) .map(setCurElemHighlight) .getOrElse(clearCurElemHighlight())
    }
    def exitSearchState() = { //println("exit-search-state")
@@ -811,7 +816,7 @@ object SearchDisplay {
          }
          (searchedElemsMap, matchIdxs.keys.toVector)
       }
-      if (!inGroupedMode) {
+      if (!groupModeEnabled) {
          // lets do the simpler case of non-grouped mode
          val sElems = renderList .flatMap (e => getSearchMatchRes(e) .flatMap (res => getSearchElem (e, ElemTs.R, GrpTs.NG, res)))
          getSearchStateMapAndVec(sElems) match { case (m,v) => recentsElemsMap = m; recentsIdsVec = v }
@@ -943,7 +948,7 @@ object RibbonDisplay {
    private val debugLinks = span () .render
    def updateDebugLinks() : Unit = {
       clearElem(debugLinks)
-      if (inElectronDevMode) {
+      if (devModeEnabled) {
          val printExclLink =  a ( href:="#", "DebugPrint", onclick:={(e:MouseEvent) => SendMsgToBack.FE_Req_DebugPrint()} ).render
          debugLinks.appendChild ( printExclLink )
    } }
@@ -959,14 +964,15 @@ object RibbonDisplay {
          a (menuSpan, onclick:= {() => blipArmedIndicator(); action()} ).render
       }
       
-      val refresh    = menuItem ("Refresh"      ,   "Ctrl+R" ,   {() => SendMsgToBack.FE_Req_Refresh()      } )
-      val reload     = menuItem ("Reload"       ,   "F5"     ,   {() => handleReq_Reload()                  } )
-      val grp_tgl    = menuItem ("Group Mode"   ,   "Ctrl+G" ,   {() => handleReq_GroupModeToggle()         } )
-      val conf_edit  = menuItem ("Edit Config"  ,   ""       ,   {() => SendMsgToBack.FE_Req_EditConfig()   } )
-      val conf_reset = menuItem ("Reset Config" ,   ""       ,   {() => SendMsgToBack.FE_Req_ResetConfig()  } )
-      val quit       = menuItem ("Quit"         ,   "Alt+F4" ,   {() => SendMsgToBack.FE_Req_SwitcheQuit()  } )
+      val refresh    = menuItem ("Refresh"      ,  "Ctrl+R"     ,  {() => SendMsgToBack.FE_Req_Refresh()      } )
+      val reload     = menuItem ("Reload"       ,  "F5"         ,  {() => handleReq_Reload()                  } )
+      val grp_tgl    = menuItem ("Group Mode"   ,  "Ctrl+G"     ,  {() => handleReq_GroupModeToggle()         } )
+      val auto_hide  = menuItem ("Auto Hide"    ,  "Ctrl+Alt+A" ,  {() => handleReq_AutoHideToggle()          } )
+      val conf_edit  = menuItem ("Edit Config"  ,  ""           ,  {() => SendMsgToBack.FE_Req_EditConfig()   } )
+      val conf_reset = menuItem ("Reset Config" ,  ""           ,  {() => SendMsgToBack.FE_Req_ResetConfig()  } )
+      val quit       = menuItem ("Quit"         ,  "Alt+F4"     ,  {() => SendMsgToBack.FE_Req_SwitcheQuit()  } )
       
-      val dropdown = div (`class`:="dropdown", refresh, reload, grp_tgl, conf_edit, conf_reset, quit).render
+      val dropdown = div (`class`:="dropdown", refresh, reload, grp_tgl, auto_hide, conf_edit, conf_reset, quit).render
       val menu_link = span (`class`:="menulink", onclick := {()=> dropdown.classList.toggle("show")}, nbsp(4) ).render
       val menu_dropdown = div (`class`:="menubox", onclick := {(e:MouseEvent) => e.stopPropagation()}, menu_link, dropdown ).render
       // ^^ the stop propagation prevents the click from bubbling up to the document where we have set clicks to close the dropdown

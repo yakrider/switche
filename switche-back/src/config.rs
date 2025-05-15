@@ -1,13 +1,12 @@
-#![ allow (non_snake_case, non_upper_case_globals) ]
+#![allow (non_snake_case, non_upper_case_globals)]
 
 use std::{fs, io, time};
 use std::ops::Not;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
-use std::sync::{Arc, Mutex, RwLock};
+use std::sync::{Arc, Mutex, RwLock, LazyLock, OnceLock};
 use std::time::SystemTime;
 
-use once_cell::sync::{Lazy, OnceCell};
 use tauri::Manager;
 use toml_edit::DocumentMut;
 
@@ -27,7 +26,7 @@ use crate::switche::SwitcheState;
 
 
 
-# [ derive (Debug, Clone) ]
+#[derive (Debug, Clone)]
 /// Deferred Executor sets up a deferred action until a (pushable/resettable) deadline has passed
 pub struct DeferredExecutor {
     deadline : Arc <Mutex <SystemTime>>,
@@ -39,7 +38,7 @@ pub type Action = Arc < dyn Fn() + Send + Sync + 'static >;
 
 
 
-# [ derive (Debug) ]
+#[derive (Debug)]
 pub struct Config {
     pub toml     : RwLock <Option <DocumentMut>>,
     pub default  : DocumentMut,
@@ -76,7 +75,7 @@ fn is_writeable (path: &Path) -> bool {
 impl Config {
 
     pub fn instance () -> &'static Config {
-        static INSTANCE: OnceCell <Config> = OnceCell::new();
+        static INSTANCE: OnceLock <Config> = OnceLock::new();
         INSTANCE .get_or_init ( || {
             let conf = Config {
                 toml    : RwLock::new (None),
@@ -159,7 +158,7 @@ impl Config {
         } );
     }
 
-    #[ allow (clippy::result_unit_err) ]
+    #[allow (clippy::result_unit_err)]
     pub fn setup_log_subscriber (&self) -> Result <WorkerGuard, ()> {
         // todo .. ^^ prob use actual errors, though little utility here
 
@@ -222,7 +221,7 @@ impl Config {
         }
     }
     pub fn deferred_write_back_toml (&'static self) {
-        static dfr_ex: Lazy<DeferredExecutor> = Lazy::new (DeferredExecutor::default);
+        static dfr_ex: LazyLock <DeferredExecutor> = LazyLock::new (DeferredExecutor::default);
         let action = Arc::new (move || self.write_back_toml_if_changed());
         dfr_ex .setup_deferred_action (action, time::Duration::from_millis(300));
     }
@@ -235,14 +234,14 @@ impl Config {
             .and_then (|t| t.as_bool())
             .unwrap_or (self.default.get(flag_name).unwrap().as_bool().unwrap())
     }
-    # [ allow (dead_code) ]
+    #[allow (dead_code)]
     fn set_flag (&'static self, flag_name:&str, flag_val:bool) {
         if let Some(toml) = self.toml.write().unwrap().as_mut() {
             toml [flag_name] = toml_edit::value (flag_val);
             self.deferred_write_back_toml();
         }
     }
-    # [ allow (dead_code) ]
+    #[allow (dead_code)]
     fn toggle_flag (&'static self, flag_name:&str) -> bool {
         // WARNING: this fn is not synchronized, it is NOT suitable for unguarded high-freq or multi-threaded use
         let flag_val = self.check_flag(flag_name);
@@ -311,18 +310,6 @@ impl Config {
     // ^^ disabled since we only want to use the deferred update functionality for these
 
 
-    pub fn deferred_update_conf__auto_hide_toggle (&'static self) -> Option<bool> {
-        if let Some(toml) = self.toml.write().unwrap().as_mut() { // serves as re-entrancy guard too
-            //let new_state = self.toggle_flag("auto_hide_enabled");
-            // ^^ cant do this as rust read/write guards (even in the same thread) are not recursion capable and will panic
-            if let Some(old_state) = toml["auto_hide_enabled"].as_bool() {
-                toml["auto_hide_enabled"] = toml_edit::value (old_state.not());
-                self.deferred_write_back_toml();
-                return Some(old_state.not())
-        }  }
-        None
-    }
-
     pub fn get_n_grp_mode_top_recents (&'static self) -> u32 {
         let ngmtr = self.get_number("number_of_top_recents_in_grouped_mode");
         if ngmtr > 2 { ngmtr } else { 2 }
@@ -331,9 +318,17 @@ impl Config {
     pub fn get_n_grp_mode_last_recents (&'static self) -> u32 {
         self.get_number("number_of_last_recents_in_grouped_mode")
     }
-    pub fn deferred_update_conf__grp_mode (&'static self, grp_mode:bool) {
+    pub fn deferred_update_conf__grp_mode (&'static self, enabled:bool) {
         if let Some(toml) = self.toml.write().unwrap().as_mut() {   // serves as re-entrancy guard too
-            toml["group_mode_enabled"] = toml_edit::value (grp_mode);
+            toml["group_mode_enabled"] = toml_edit::value (enabled);
+            self.deferred_write_back_toml();
+        }
+    }
+
+
+    pub fn deferred_update_conf__auto_hide (&'static self, enabled:bool) {
+        if let Some(toml) = self.toml.write().unwrap().as_mut() {   // serves as re-entrancy guard too
+            toml["auto_hide_enabled"] = toml_edit::value (enabled);
             self.deferred_write_back_toml();
         }
     }
@@ -355,34 +350,33 @@ impl Config {
     pub fn update_conf__switche_window (&'static self, ss: &'static SwitcheState) {
         info! ("update_conf__switche_window");
         std::thread::spawn ( move || {
-            if let Some(ah) = ss.app_handle.read().unwrap().as_ref() {
-                if let Some(w) = ah.get_webview_window("main") {
-                    if let (Some(p), Some(s)) = (w.outer_position().ok(), w.outer_size().ok()) {
-                        // want to confirm its not minimized before we update its dimensions in configs
-                        // and despite tauri minimize check (below), we still sometimes get the minimized loc (-32000), so we'll filter those
-                        if (w.is_minimized().ok() == Some(true)) || (p.x as i64 == -32000 && p.y as i64 == -32000) {
-                            // and we're getting minimized despite setting 'minimizable' as false in tauri.conf.json .. so we'll at least restore it here
-                            w.unminimize().ok();
-                            // plus, minimize makes window tiny, and that seems to move off ribbon etc .. so we'll also reload the page
-                            ss.proc_menu_req__switche_reload();
-                            return
-                        }
-                        let mut toml_guard = self.toml.write().unwrap();
-                        if let Some(toml) = toml_guard.as_mut() {
-                            toml ["window_dimensions"] ["location"] ["x"]  = toml_edit::value (p.x as i64);
-                            toml ["window_dimensions"] ["location"] ["y"]  = toml_edit::value (p.y as i64);
-                            toml ["window_dimensions"] ["size"] ["width"]  = toml_edit::value (s.width  as i64);
-                            toml ["window_dimensions"] ["size"] ["height"] = toml_edit::value (s.height as i64);
-                            drop(toml_guard);
-                            self.write_back_toml_if_changed();
-                        } else {
-                            error!("update_conf__switche_window: failed to get window position, size, or toml doc");
-                        }
-            }  }  }
+            if let Some(w) = ss.get_app_handle() .get_webview_window("main") {
+                if let (Some(p), Some(s)) = (w.outer_position().ok(), w.outer_size().ok()) {
+                    // want to confirm its not minimized before we update its dimensions in configs
+                    // and despite tauri minimize check (below), we still sometimes get the minimized loc (-32000), so we'll filter those
+                    if (w.is_minimized().ok() == Some(true)) || (p.x as i64 == -32000 && p.y as i64 == -32000) {
+                        // and we're getting minimized despite setting 'minimizable' as false in tauri.conf.json .. so we'll at least restore it here
+                        w.unminimize().ok();
+                        // plus, minimize makes window tiny, and that seems to move off ribbon etc .. so we'll also reload the page
+                        ss.proc_menu_req__switche_reload();
+                        return
+                    }
+                    let mut toml_guard = self.toml.write().unwrap();
+                    if let Some(toml) = toml_guard.as_mut() {
+                        toml ["window_dimensions"] ["location"] ["x"]  = toml_edit::value (p.x as i64);
+                        toml ["window_dimensions"] ["location"] ["y"]  = toml_edit::value (p.y as i64);
+                        toml ["window_dimensions"] ["size"] ["width"]  = toml_edit::value (s.width  as i64);
+                        toml ["window_dimensions"] ["size"] ["height"] = toml_edit::value (s.height as i64);
+                        drop(toml_guard);
+                        self.write_back_toml_if_changed();
+                    } else {
+                        error!("update_conf__switche_window: failed to get window position, size, or toml doc");
+                    }
+            }  }
         } );
     }
     pub fn deferred_update_conf__switche_window (&'static self, ss: &'static SwitcheState) {
-        static dfr_ex: Lazy<DeferredExecutor> = Lazy::new (DeferredExecutor::default);
+        static dfr_ex: LazyLock <DeferredExecutor> = LazyLock::new (DeferredExecutor::default);
         if !self.check_flag__restore_window_dimensions() { return }
         let action = Arc::new ( move || self.update_conf__switche_window(ss) );
         dfr_ex .setup_deferred_action (action, time::Duration::from_millis(1000));
@@ -437,19 +431,16 @@ impl DeferredExecutor {
     pub fn new () -> Self {
         Self { deadline: Arc::new (Mutex::new (SystemTime::UNIX_EPOCH)) }
     }
-    pub fn reset (&self) -> Self {
+    pub fn reset (&self) {
         *self.deadline.lock().unwrap() = SystemTime::UNIX_EPOCH;
-        self.clone()
     }
-    pub fn set_deferral_dur (&self, dur:time::Duration) -> Self {
+    pub fn set_deferral_dur (&self, dur:time::Duration) {
         if let Some(t) = SystemTime::now().checked_add(dur) {
             *self.deadline.lock().unwrap() = t
         }
-        self.clone()
     }
-    pub fn add_deferral_dur (&self, dur:time::Duration) -> Self {
+    pub fn add_deferral_dur (&self, dur:time::Duration) {
         let _ = self.deadline.lock().unwrap().checked_add(dur);
-        self.clone()
     }
     pub fn is_reset (&self) -> bool {
         *self.deadline.lock().unwrap() == SystemTime::UNIX_EPOCH
@@ -476,8 +467,8 @@ impl DeferredExecutor {
     /// Resetting a pending deadline effectively cancels any pending actions
     pub fn setup_deferred_action (&self, action:Action, delay:time::Duration) {
         // we simply set up a deadline and a thread to wake up and check
+        self.set_deferral_dur(delay);
         let dfr_ex = self.clone();
-        dfr_ex.set_deferral_dur(delay);
         std::thread::spawn ( move || {
             std::thread::sleep (delay);
             dfr_ex.check_defered_action(action);

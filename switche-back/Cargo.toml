@@ -1,6 +1,10 @@
+
+# we'll use codegen-backend to enable cranelift for dev
+cargo-features = ["codegen-backend"]
+
 [package]
 name = "switche"
-version = "2.4.2"
+version = "2.4.3"
 # ^^ reminder to update this in tauri.conf.json as well
 description = "Switche - Searchable Task Switcher"
 authors = ["yakrider"]
@@ -38,7 +42,6 @@ tauri-plugin-global-shortcut = "2"
 
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1"
-once_cell = "1"
 grouping_by = "0.2"
 atomic_enum = "0.3"
 strum_macros = "0.24"
@@ -85,4 +88,27 @@ features = [
     "Win32_Storage_FileSystem",
     "Win32_Security",
 ]
+
+
+
+
+# we'll set general debug-info to lines-tables only to speed up compilation
+# can remove this if we really need to debug, but should seldom be the case
+[profile.dev]
+debug = "line-tables-only"
+codegen-backend = "cranelift"
+
+
+# for faster builds, we can put the following sections in either ~/.cargo/config.toml or <PROJ>/.cargo/config.toml
+#
+# the parallel compilation frontend requires nightly
+#[build]
+#rustflags = ["-Z", "threads=8"]
+#rustc-wrapper = "sccache"
+#
+# Note that in ~/.cargo.config.toml we already use rust-lld .. eg:
+#[target.x86_64-pc-windows-msvc]
+#linker = "rust-lld"
+#rustflags = ["-C", "link-arg=/threads:8"]
+
 

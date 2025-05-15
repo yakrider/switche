@@ -1,13 +1,12 @@
-#![ allow (non_camel_case_types, non_snake_case, non_upper_case_globals) ]
+#![allow (non_camel_case_types, non_snake_case, non_upper_case_globals)]
 
 use std::collections::{HashMap, HashSet};
 //use no_deadlocks::RwLock;
-use std::sync::RwLock;
+use std::sync::{RwLock, LazyLock, OnceLock};
 use std::sync::atomic::{AtomicIsize, Ordering};
 use std::thread::{sleep, spawn};
 use std::time::{Duration, SystemTime};
 
-use once_cell::sync::{Lazy, OnceCell};
 use serde::{Deserialize, Serialize};
 use tracing::{info, warn};
 
@@ -26,7 +25,7 @@ use crate::switche::{Flag, SwitcheState};
 
 
 
-#[derive (Debug, Default, Copy, Clone, Eq, PartialEq, Hash, Serialize, Deserialize)]
+#[derive (Default, Copy, Clone, Eq, PartialEq, Hash, Serialize, Deserialize)]
 pub struct Hwnd (pub isize);
 
 impl Hwnd {
@@ -37,10 +36,14 @@ impl Hwnd {
         HWND (self.0 as *mut _)
     }
 }
-
 impl From<HWND> for Hwnd {
     fn from (h:HWND) -> Self {
         Hwnd (h.0 as isize)
+    }
+}
+impl std::fmt::Debug for Hwnd {
+    fn fmt (&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Hwnd (0x{:x})", self.0)
     }
 }
 
@@ -48,18 +51,19 @@ impl From<HWND> for Hwnd {
 
 
 
-# [ derive (Debug, Default, Eq, PartialEq, Hash, Clone, Serialize, Deserialize) ]
+#[derive (Debug, Default, Eq, PartialEq, Hash, Clone, Serialize, Deserialize)]
 pub struct ExePathName {
     pub full_path : String,
     pub name      : String
 }
 
-# [ derive (Debug, Default, Eq, PartialEq, Hash, Clone, Serialize, Deserialize) ]
+#[derive (Debug, Default, Eq, PartialEq, Hash, Clone, Serialize, Deserialize)]
 pub struct WinDatEntry {
     pub hwnd              : Hwnd,
     pub win_text          : Option<String>,
     pub is_uwp_app        : Option<bool>,
     pub is_exe_queried    : bool,
+    pub is_elevated       : bool,
     pub exe_path_name     : Option<ExePathName>,
     pub uwp_icon_path     : Option<String>,
     pub should_exclude    : Option<bool>,
@@ -71,12 +75,12 @@ pub struct WinDatEntry {
 
 
 
-# [ atomic_enum::atomic_enum ]
-# [ derive (PartialEq) ]
+#[atomic_enum::atomic_enum]
+#[derive (PartialEq)]
 pub enum EnumWindowsReqType { Light, Full }
 // ^^ the atomic_enum crate will generate an AtomicEnumWindowsReqType for us
 
-# [ derive ( ) ]
+#[derive ()]
 pub struct EnumWindowsReqType_A (AtomicEnumWindowsReqType);
 
 impl EnumWindowsReqType_A {
@@ -102,7 +106,7 @@ impl Default for EnumWindowsReqType_A {
 
 
 
-# [derive ()]
+#[derive ()]
 pub struct WinDatsManager {
 
     // note: should always use hwnds_ordered as that only flips fully formed (unlike hwnds_acc which might be getting slowly rebuilt)
@@ -126,7 +130,7 @@ pub fn _stamp() -> u128 {
 impl WinDatsManager {
 
     pub fn instance () -> &'static WinDatsManager {
-        static INSTANCE: OnceCell <WinDatsManager> = OnceCell::new();
+        static INSTANCE: OnceLock <WinDatsManager> = OnceLock::new();
         INSTANCE .get_or_init ( || {
             WinDatsManager {
                 hwnd_map      : RwLock::new (HashMap::new()),
@@ -143,7 +147,7 @@ impl WinDatsManager {
     /*****  win-api windows-enumeration setup and processing  ******/
 
     pub(crate) fn trigger_enum_windows_query_pending (&'static self, req_type: EnumWindowsReqType) {
-        static trigger_pending : Lazy<Flag> = Lazy::new (|| {Flag::default()});
+        static trigger_pending : LazyLock <Flag> = LazyLock::new (|| {Flag::default()});
         // we'll first update the enum type whether we're ready to trigger or not
         if req_type == EnumWindowsReqType::Full { self.cur_win_enum_type .set (EnumWindowsReqType::Full); }
         // ^^ default is light, and if any pending call wants full, we set it to full
@@ -179,7 +183,7 @@ impl WinDatsManager {
     }
 
 
-    #[ allow (clippy::missing_safety_doc) ]
+    #[allow (clippy::missing_safety_doc)]
     pub unsafe extern "system" fn enum_windows_streamed_callback (hwnd:HWND, call_id:LPARAM) -> BOOL {
         let ss = SwitcheState::instance();
         let wdm = ss.win_dats_m;
@@ -238,10 +242,12 @@ impl WinDatsManager {
         if wde.win_text != cur_title { should_emit = true }
         wde.win_text = cur_title;
 
-        // but only query exe-path if we havent populated it before
+        // but only query exe-path etc if we havent populated it before
         if !wde.is_exe_queried {
             should_emit = true; wde.is_exe_queried = true;
-            wde.exe_path_name = get_hwnd_exe_path(wde.hwnd) .and_then (Self::parse_exe_path);
+            let pid = get_hwnd_pid (wde.hwnd);
+            wde.is_elevated = check_pid_elevated(pid) .unwrap_or_default();
+            wde.exe_path_name = get_pid_exe_path(pid) .and_then (Self::parse_exe_path);
             if wde.exe_path_name .iter() .any (|ep| ep.name.as_str() == "ApplicationFrameHost.exe") { //dbg!(hwnd);
                 wde.is_uwp_app = Some(true);
                 if let Some(pkg_path) = get_package_path_from_hwnd(hwnd).as_ref() { //dbg!(&pkg_path);
@@ -271,7 +277,7 @@ impl WinDatsManager {
 
 
     fn parse_exe_path (exe_path:String) -> Option<ExePathName> {
-        let name = exe_path .split('\\') .last() .unwrap_or_default() .to_string();
+        let name = exe_path .rsplit('\\') .next() .unwrap_or_default() .to_string();
         if name.is_empty() { None } else { Some (ExePathName { full_path: exe_path, name }) }
     }
 
@@ -361,7 +367,7 @@ impl WinDatsManager {
 
 
 
-    #[ allow (clippy::missing_safety_doc) ]
+    #[allow (clippy::missing_safety_doc)]
     pub unsafe extern "system" fn win_event_hook_cb (
         _id_hook: HWINEVENTHOOK, event: u32, hwnd: HWND,
         id_object: i32, id_child: i32, _id_thread: u32, _event_time: u32
@@ -394,7 +400,7 @@ impl WinDatsManager {
 
 
 
-    # [ allow (dead_code) ]
+    #[allow (dead_code)]
     fn check_owner_chain_in_render_list (&'static self, hwnd:Hwnd) -> bool {
         if self.check_hwnd_renderable_pre_passed(hwnd) { return true }
         let owner_hwnd = win_apis::get_window_owner(hwnd);
@@ -402,7 +408,7 @@ impl WinDatsManager {
         if owner_hwnd.is_null() || owner_hwnd == hwnd { return false }
         self.check_owner_chain_in_render_list (owner_hwnd)
     }
-    # [ allow (dead_code) ]
+    #[allow (dead_code)]
     fn check_parent_chain_in_render_list (&'static self, hwnd:Hwnd) -> bool {
         if self.check_hwnd_renderable_pre_passed(hwnd) { return true }
         let parent_hwnd = win_apis::get_window_parent(hwnd);

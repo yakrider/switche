@@ -3,12 +3,11 @@
 use std::collections::{HashMap, HashSet};
 use std::hash::Hash;
 use std::string::ToString;
-use std::sync::{RwLock};
+use std::sync::{RwLock, OnceLock};
 //use no_deadlocks::RwLock;
 use std::thread::{sleep, spawn};
 use std::time::{Duration};
 
-use once_cell::sync::OnceCell;
 use rand::Rng;
 use tracing::warn;
 
@@ -24,7 +23,7 @@ struct HwndExePathPair { hwnd:Hwnd, path:String, is_uwp:bool }
 struct IconCacheMapping { cache_idx:usize, is_stale:bool }
 
 
-# [ derive (Default) ]
+#[derive (Default)]
 pub struct IconsManager {
 
     // we'll store icons in a vec and just add remove mappings to its indices for associated hwnds
@@ -50,7 +49,7 @@ pub struct IconsManager {
 impl IconsManager {
 
     pub fn instance () -> &'static IconsManager {
-        static INSTANCE: OnceCell <IconsManager> = OnceCell::new();
+        static INSTANCE: OnceLock <IconsManager> = OnceLock::new();
         INSTANCE .get_or_init ( || {
             let icons_mgr = IconsManager::default();
             let empty_icon : String = {
@@ -168,7 +167,7 @@ impl IconsManager {
             // now we can send it for hwnd/path icon-idx mappings
             self.handle_icon_cache_mapping_update (cache_idx, is_from_hwnd, prior_cache_idx.is_none(), hpp);
         } else {
-            warn! ("WARNING: got empty icon-string callback for hwnd: {:?} {:?}", hpp.hwnd, &hpp.path.clone().split('\\').last());
+            warn! ("WARNING: got empty icon-string callback for hwnd: {:?} {:?}", hpp.hwnd, &hpp.path.clone().rsplit('\\').next());
             if is_from_hwnd { self.queue_exe_icon_query (hpp) }
         }
     }

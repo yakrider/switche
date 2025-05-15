@@ -1,11 +1,11 @@
-#![ allow (non_snake_case, clippy::missing_safety_doc) ]
+#![allow (non_snake_case, clippy::missing_safety_doc)]
 
+use std::sync::OnceLock;
 use std::sync::atomic::{AtomicIsize, AtomicU32, Ordering};
 use std::os::raw::c_int;
 use std::time;
 use std::thread::{sleep, spawn};
 
-use once_cell::sync::OnceCell;
 use tracing::{debug, info, warn, error};
 
 use windows::Win32::Foundation::{HINSTANCE, LPARAM, WPARAM, LRESULT, POINT, BOOL, GetLastError};
@@ -28,7 +28,7 @@ const KILL_MSG : u32 = WM_USER + 1;
 fn hi_word(l: u32) -> u16 { ((l >> 16) & 0xffff) as u16 }
 
 
-# [ derive (Debug) ]
+#[derive (Debug)]
 pub struct InputProcessor {
     kbd_hook     : AtomicIsize,
     mouse_hook   : AtomicIsize,
@@ -39,7 +39,7 @@ pub struct InputProcessor {
 impl InputProcessor {
 
     pub fn instance () -> &'static InputProcessor {
-        static INSTANCE: OnceCell <InputProcessor> = OnceCell::new();
+        static INSTANCE: OnceLock <InputProcessor> = OnceLock::new();
         INSTANCE .get_or_init ( || {
             InputProcessor {
                 kbd_hook     : AtomicIsize::default(),
@@ -382,7 +382,7 @@ fn send_mouse_rbtn_release() {
     send_mouse_input (MOUSEEVENTF_RIGHTUP, 0, 0, 0);
 }
 
-#[allow(dead_code)]
+#[allow (dead_code)]
 fn send_mouse_rbtn_release_at(x:i32, y:i32) {
     send_mouse_input (MOUSEEVENTF_RIGHTUP | MOUSEEVENTF_ABSOLUTE, 0, x, y);
 }

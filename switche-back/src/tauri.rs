@@ -1,4 +1,4 @@
-#![ allow (non_snake_case) ]
+#![allow (non_snake_case)]
 
 use std::{thread, time};
 use std::sync::Arc;
@@ -125,9 +125,7 @@ fn enforce_single_instance (app: &App<Wry>) {
 
 
 fn extract_self_hwnd (ss: &'static SwitcheState) -> Option<Hwnd> {
-    ss.app_handle.read().unwrap() .as_ref() .and_then (|ah| {
-        ah.webview_windows().values() .next() .and_then (|w| w.hwnd().ok())
-    } ) .map (|h| h.into())
+    ss.get_app_handle() .webview_windows().values().next() .and_then (|w| w.hwnd().ok()) .map (|h| h.into())
 }
 
 
@@ -141,9 +139,8 @@ pub fn auto_setup_self_window (ss: &'static SwitcheState) {
     let (y, height) = (0, wa.bottom - wa.top);
 
     // horizontally we'll span upto half the screen width, but no more than dpi scaled 860px
-    let max_width = ss.app_handle.read().unwrap().as_ref() .and_then (|ah|
-        ah .get_webview_window("main") .and_then (|w| w.scale_factor().ok())
-    ) .unwrap_or (1.0)  * 860.0;
+    let max_width = ss.get_app_handle() .get_webview_window("main")
+        .and_then (|w| w.scale_factor().ok()) .unwrap_or (1.0)  * 860.0;
     let width = std::cmp::min ( (wa.right - wa.left)/2, max_width as i32 );
 
     // for x, ideally want centerline at 1/3 of the window width (aiming for icons column), as long as it go beyond right edge
@@ -153,12 +150,8 @@ pub fn auto_setup_self_window (ss: &'static SwitcheState) {
     win_apis::win_move_to (ss.get_self_hwnd(), x, y, width, height);
 }
 
-pub fn sync_self_always_on_top (ss: &'static SwitcheState) {
-    ss.app_handle .read().unwrap() .iter() .for_each ( |ah| {
-        ah .webview_windows() .get("main") .map (|w| {
-            w.set_always_on_top (ss.conf.check_flag__auto_hide_enabled())
-        });
-    } )
+pub fn sync_self_always_on_top (ss: &'static SwitcheState, set_always_top: bool) {
+    ss.get_app_handle() .webview_windows() .get("main") .map (|w| w.set_always_on_top (set_always_top));
 }
 
 
@@ -175,7 +168,7 @@ pub fn setup_self_window (ss: &'static SwitcheState) {
         auto_setup_self_window (ss);
     }
     // finally, we'll also setup/sync the self-window always-on-top behavior
-    sync_self_always_on_top (ss);
+    sync_self_always_on_top (ss, ss.conf.check_flag__auto_hide_enabled());
 }
 
 

@@ -1,31 +1,40 @@
-#![ allow (non_upper_case_globals, non_snake_case) ]
+#![allow (non_upper_case_globals, non_snake_case)]
 
-use std::ffi::c_void;
+use std::ffi::{c_void, OsString};
 use std::mem::size_of;
-use std::sync::{Arc, Mutex, RwLock};
-use once_cell::sync::Lazy;
-use tracing::{info, error};
+use std::os::windows::prelude::OsStringExt;
+use std::sync::{LazyLock, Mutex, RwLock};
+use tracing::{error, info};
 
-use windows::core::{GUID, PCWSTR, PSTR, PWSTR};
-use windows::Win32::Foundation::{BOOL, CloseHandle, GetLastError, ERROR_INSUFFICIENT_BUFFER, HANDLE, HWND, LPARAM, RECT, WPARAM};
+use windows::core::{GUID, PCWSTR, PWSTR};
+use windows::Win32::Foundation::{CloseHandle, GetLastError, BOOL, ERROR_INSUFFICIENT_BUFFER, HANDLE, HWND, LPARAM, RECT, WPARAM};
 use windows::Win32::Graphics::Dwm::{DwmGetWindowAttribute, DWMWA_CLOAKED, DWMWA_EXTENDED_FRAME_BOUNDS};
-use windows::Win32::Security::{GetTokenInformation, TOKEN_ELEVATION, TOKEN_QUERY, TokenElevation};
+use windows::Win32::Security::{GetTokenInformation, TokenElevation, TOKEN_ELEVATION, TOKEN_QUERY};
 use windows::Win32::Storage::Packaging::Appx::{
     GetApplicationUserModelId, GetPackagePathByFullName, GetPackagesByPackageFamily, ParseApplicationUserModelId
 };
 use windows::Win32::System::Diagnostics::Debug::OutputDebugStringW;
-use windows::Win32::System::Threading::{
-    GetCurrentProcess, HIGH_PRIORITY_CLASS, OpenProcess, OpenProcessToken, PROCESS_NAME_WIN32,
-    PROCESS_QUERY_LIMITED_INFORMATION, QueryFullProcessImageNameA, SetPriorityClass
-};
+use windows::Win32::System::Threading::{GetCurrentProcess, OpenProcess, OpenProcessToken, QueryFullProcessImageNameW, SetPriorityClass, HIGH_PRIORITY_CLASS, PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION};
 use windows::Win32::System::WindowsProgramming::GetUserNameW;
+use windows::Win32::UI::HiDpi::{SetThreadDpiAwarenessContext, DPI_AWARENESS_CONTEXT_SYSTEM_AWARE};
 use windows::Win32::UI::Input::KeyboardAndMouse::{GetKeyState, VK_SHIFT};
-use windows::Win32::UI::Shell::PropertiesSystem::{IPropertyStore, PROPERTYKEY, SHGetPropertyStoreForWindow};
-use windows::Win32::UI::HiDpi::{DPI_AWARENESS_CONTEXT_SYSTEM_AWARE, SetThreadDpiAwarenessContext};
-use windows::Win32::UI::WindowsAndMessaging::{GetForegroundWindow, GetWindowPlacement, GetWindowTextW, IsWindowVisible, GetAncestor, GetWindowThreadProcessId, PostMessageA, SetForegroundWindow, ShowWindowAsync, GetWindowLongW, WINDOWPLACEMENT, EnumChildWindows, SystemParametersInfoW, WM_CLOSE, SW_HIDE, SW_MAXIMIZE, SW_MINIMIZE, SW_RESTORE, SW_SHOW, SW_SHOWMINIMIZED, WS_CHILD, GWL_STYLE, GA_ROOTOWNER, WS_EX_APPWINDOW, WS_EX_TOOLWINDOW, GWL_EXSTYLE, SPI_GETWORKAREA, SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS, MoveWindow, GA_PARENT, GetWindow, GW_OWNER, GetLastActivePopup, GetClassNameW, IsIconic, GA_ROOT};
+use windows::Win32::UI::Shell::PropertiesSystem::{IPropertyStore, SHGetPropertyStoreForWindow, PROPERTYKEY};
+use windows::Win32::UI::WindowsAndMessaging::*;
 
 
 use crate::switche::Hwnd;
+
+
+
+// RAII guard for the win32 handles
+struct HandleGuard (HANDLE);
+impl Drop for HandleGuard {
+    fn drop (&mut self) {
+        if !self.0.is_invalid() {
+            unsafe { let _ = CloseHandle(self.0); }
+        }
+    }
+}
 
 
 
@@ -128,6 +137,10 @@ pub fn window_minimize (hwnd:Hwnd) { unsafe {
 pub fn window_maximize (hwnd:Hwnd) { unsafe {
     let _ = ShowWindowAsync (hwnd.HWND(), SW_MAXIMIZE);
 } }
+pub fn win_send_to_back (hwnd:Hwnd) { unsafe {
+   let _ = SetWindowPos (hwnd.HWND(), HWND_BOTTOM, 0, 0, 0, 0, SWP_NOMOVE|SWP_NOSIZE|SWP_NOACTIVATE);
+} }
+
 
 pub fn window_close (hwnd:Hwnd) { unsafe {
     info!("winapi close {:?}",hwnd);
@@ -166,23 +179,22 @@ pub fn win_move_to (hwnd:Hwnd, x:i32, y:i32, width:i32, height:i32) { unsafe {
 
 
 
-pub fn get_hwnd_exe_path (hwnd:Hwnd) -> Option<String> { unsafe {
+pub fn get_hwnd_pid (hwnd:Hwnd) -> u32 { unsafe {
     let mut pid : u32 = 0;
     let _ = GetWindowThreadProcessId (hwnd.HWND(), Some(&mut pid));
-    get_pid_exe_path (pid)
+    pid
 } }
-fn get_pid_exe_path (pid:u32) -> Option<String> { unsafe {
+pub fn get_pid_exe_path (pid:u32) -> Option<String> { unsafe {
     const MAX_LEN : usize = 1024;
-    let handle = OpenProcess (PROCESS_QUERY_LIMITED_INFORMATION, BOOL::from(false), pid);
-    let mut lpstr = [0u8; MAX_LEN];
-    let mut lpdwsize = MAX_LEN as u32;
-    if handle.is_err() { return None }
-    let _ = QueryFullProcessImageNameA ( HANDLE (handle.as_ref().unwrap().0), PROCESS_NAME_WIN32, PSTR::from_raw(lpstr.as_mut_ptr()), &mut lpdwsize );
-    handle .iter() .for_each ( |h| { let _ = CloseHandle(*h); } );
-    PSTR::from_raw (lpstr.as_mut_ptr()) .to_string() .ok()
+    let h_proc = OpenProcess (PROCESS_QUERY_LIMITED_INFORMATION, false, pid) .ok()?;
+    let _ph_guard = HandleGuard (h_proc);
+    let mut buf = [0u16; MAX_LEN];
+    let mut buf_len = MAX_LEN as u32;
+    QueryFullProcessImageNameW (h_proc, PROCESS_NAME_WIN32, PWSTR(buf.as_mut_ptr()), &mut buf_len) .ok()?;
+    OsString::from_wide (&buf[..buf_len as usize]) .to_string_lossy() .rsplit ("\\") .next() .map (|s| s.to_string())
 } }
 
-pub fn get_uwp_hwnd_exe_path (hwnd:Hwnd) -> Option<String> { unsafe {
+pub fn _get_uwp_hwnd_exe_path (hwnd:Hwnd) -> Option<String> { unsafe {
     let mut frame_host_pid : u32 = 0;
     let _ = GetWindowThreadProcessId (hwnd.HWND(), Some(&mut frame_host_pid));
     let uwp_pid = get_child_windows (hwnd) .iter() .map (|cwh| {
@@ -193,10 +205,10 @@ pub fn get_uwp_hwnd_exe_path (hwnd:Hwnd) -> Option<String> { unsafe {
     uwp_pid .first() .and_then (|&pid| get_pid_exe_path(pid))
 } }
 
-pub fn get_aumid_from_hwnd (hwnd:Hwnd) -> Option<String> { unsafe {
+pub fn _get_aumid_from_hwnd (hwnd:Hwnd) -> Option<String> { unsafe {
     let mut pid : u32 = 0;
-    let _ = GetWindowThreadProcessId (hwnd.HWND(), Some(&mut pid));  dbg!(pid);
-    let handle = OpenProcess (PROCESS_QUERY_LIMITED_INFORMATION, BOOL::from(false), pid); dbg!(&handle);
+    let _ = GetWindowThreadProcessId (hwnd.HWND(), Some(&mut pid));
+    let handle = OpenProcess (PROCESS_QUERY_LIMITED_INFORMATION, false, pid);
     if handle.is_err() { return None }
     const AUMID_MAX_LEN : usize = 1024;
     let mut aum_id_buf = [0u16; AUMID_MAX_LEN];
@@ -260,22 +272,36 @@ pub fn get_package_path_from_hwnd (hwnd:Hwnd) -> Option<String> { unsafe {
 
 
 
-pub fn check_cur_proc_elevated () -> Option<bool> {
-    match check_proc_elevated ( unsafe { GetCurrentProcess()} ) {
+pub fn check_cur_proc_elevated () -> Option<bool> { unsafe {
+    check_proc_elevated (GetCurrentProcess())
+} }
+pub fn check_pid_elevated (pid:u32) -> Option<bool> { unsafe {
+    let h_proc = OpenProcess (PROCESS_QUERY_LIMITED_INFORMATION, false, pid) .ok()?;
+    let _ph_guard = HandleGuard (h_proc);
+    check_proc_elevated (h_proc)
+} }
+pub fn check_proc_elevated (h_proc:HANDLE) -> Option<bool> {
+    // we'll define a helper fn to handle errors easier
+    fn check (h_proc:HANDLE) -> windows::core::Result<bool> { unsafe {
+        let mut h_token = HANDLE::default();
+        OpenProcessToken (h_proc, TOKEN_QUERY, &mut h_token)?;
+        let _tok_guard = HandleGuard (h_token);
+        let mut token_info : TOKEN_ELEVATION = TOKEN_ELEVATION::default();
+        let mut token_info_len = size_of::<TOKEN_ELEVATION>() as u32;
+        GetTokenInformation (
+            h_token, TokenElevation, Some(&mut token_info as *mut _ as *mut _),
+            token_info_len, &mut token_info_len
+        )?;
+        Ok (token_info.TokenIsElevated != 0 )
+    } }
+    match check(h_proc) {
         Ok (res) => Some(res),
         Err (e) => {
             error!("Error checking process elevation : {:?}", e);
             None
-    }  }
+        }
+    }
 }
-pub fn check_proc_elevated (h_proc:HANDLE) -> windows::core::Result<bool> { unsafe {
-    let mut h_token = HANDLE::default();
-    OpenProcessToken (h_proc, TOKEN_QUERY, &mut h_token)?;
-    let mut token_info : TOKEN_ELEVATION = TOKEN_ELEVATION::default();
-    let mut token_info_len = size_of::<TOKEN_ELEVATION>() as u32;
-    GetTokenInformation (h_token, TokenElevation, Some(&mut token_info as *mut _ as *mut _), token_info_len, &mut token_info_len)?;
-    Ok (token_info.TokenIsElevated != 0 )
-} }
 
 
 pub fn get_cur_user_name () -> Option<String> {
@@ -286,24 +312,20 @@ pub fn get_cur_user_name () -> Option<String> {
             None
     }  }
 }
-pub fn _get_cur_user_name () -> Result<String, Box<dyn std::error::Error>> { unsafe {
+pub fn _get_cur_user_name () -> windows::core::Result<String> { unsafe {
     // we'll put some default size enough for most cases, but if name too long, we'll allocate and requery
-    let mut name_len = 512;
+    let mut name_len = 256;
     let mut buf = vec![0u16; name_len as usize];
-    if GetUserNameW  (PWSTR::from_raw(buf.as_mut_ptr()), &mut name_len) .is_ok() {
-        let name = PWSTR::from_raw (buf.as_mut_ptr()) .to_string()?;
+    if GetUserNameW  (PWSTR (buf.as_mut_ptr()), &mut name_len) .is_ok() {
+        let name = PWSTR (buf.as_mut_ptr()) .to_string()?;
         return Ok(name)
     }
     if GetLastError() != ERROR_INSUFFICIENT_BUFFER {
-        return Err (Box::new(windows::core::Error::from_win32()))
-    }
-    // buffer wasnt large enough, we'll resize and try again
-    if name_len > 8192 {
-        return Err ("User name too long".into())
+        return Err (windows::core::Error::from_win32())
     }
     buf.resize (name_len as usize, 0);
-    GetUserNameW  (PWSTR::from_raw(buf.as_mut_ptr()), &mut name_len)?;
-    let name = PWSTR::from_raw(buf.as_mut_ptr()).to_string()?;
+    GetUserNameW  (PWSTR (buf.as_mut_ptr()), &mut name_len)?;
+    let name = PWSTR (buf.as_mut_ptr()) .to_string()?;
     Ok (name)
 } }
 
@@ -328,8 +350,8 @@ pub fn check_shift_active () -> bool { unsafe {
 
 
 // we'll use a static rwlocked vec to store child-windows from callbacks, and a mutex to ensure only one child-windows call is active
-static child_windows_lock : Lazy <Arc <Mutex <()>>> = Lazy::new (|| Arc::new ( Mutex::new(())));
-static child_windows : Lazy <Arc <RwLock <Vec <Hwnd>>>> = Lazy::new (|| Arc::new ( RwLock::new (vec!()) ) );
+static child_windows_lock : LazyLock <Mutex <()>> = LazyLock::new (|| Mutex::new(()));
+static child_windows : LazyLock <RwLock <Vec <Hwnd>>> = LazyLock::new (|| RwLock::new (vec!()));
 
 pub fn get_child_windows (hwnd:Hwnd) -> Vec<Hwnd> { unsafe {
     let lock = child_windows_lock.lock().unwrap();
@@ -340,7 +362,7 @@ pub fn get_child_windows (hwnd:Hwnd) -> Vec<Hwnd> { unsafe {
     cws
 } }
 
-#[ allow (clippy::missing_safety_doc) ]
+#[allow (clippy::missing_safety_doc)]
 pub unsafe extern "system" fn enum_child_windows_cb (hwnd:HWND, _:LPARAM) -> BOOL {
     child_windows.write().unwrap().push(hwnd.into());
     BOOL (true as i32)

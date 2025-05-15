@@ -1,7 +1,6 @@
-#![ allow (non_snake_case) ]
+#![allow (non_snake_case)]
 
-use std::sync::{Arc, Mutex};
-use once_cell::sync::Lazy;
+use std::sync::{Mutex, OnceLock, LazyLock};
 
 use tauri::{ AppHandle, Wry, App };
 use tauri::menu::{CheckMenuItem, CheckMenuItemBuilder, MenuBuilder, MenuItemBuilder, PredefinedMenuItem};
@@ -12,54 +11,49 @@ use crate::switche::SwitcheState;
 
 
 
-#[derive (Default)]
 struct _TrayMenuState {
-    pub auto_start       : Option <CheckMenuItem<Wry>>,
-    pub auto_start_admin : Option <CheckMenuItem<Wry>>,
+    pub auto_start       : CheckMenuItem<Wry>,
+    pub auto_start_admin : CheckMenuItem<Wry>,
 }
-#[derive (Clone)]
-pub struct TrayMenuState ( Arc<Mutex<_TrayMenuState>> );
 
+pub struct TrayMenuState ( OnceLock <Mutex <_TrayMenuState>>);
 
 impl TrayMenuState {
 
-    pub fn instance () -> TrayMenuState {
-        static INSTANCE : Lazy<TrayMenuState> = Lazy::new (|| TrayMenuState ( Arc::new ( Mutex::new (
-            _TrayMenuState { auto_start: None, auto_start_admin: None }
-        ) ) ) );
-        INSTANCE.clone()
+    /// returns a potentially un-initialized instance of TrayMenuState
+    pub fn instance () -> &'static TrayMenuState {
+        static INSTANCE : LazyLock <TrayMenuState> = LazyLock::new (|| TrayMenuState (OnceLock::new()));
+        & INSTANCE
     }
 
-    pub fn store__auto_start (&self, cmi : CheckMenuItem<Wry>) {
-        self.0 .lock().unwrap() .auto_start = Some(cmi);
+    /// actual (one-time) intitialization of the state is done here
+    pub fn store (&self, auto_start: CheckMenuItem<Wry>, auto_start_admin: CheckMenuItem<Wry>) {
+        let _ = self.0 .set ( Mutex::new (
+            _TrayMenuState { auto_start, auto_start_admin }
+        ) );
     }
-    pub fn store__auto_start_admin (&self, cmi : CheckMenuItem<Wry>) {
-        self.0 .lock().unwrap() .auto_start_admin = Some(cmi);
+
+    /// access sugar
+    fn get (&self) -> &Mutex <_TrayMenuState> {
+        self.0 .get() .expect ("Attempt to access un-initialized TrayMenuState")
     }
 
     pub fn set_checked__auto_start (&self, checked:bool) {
-        if let Some(c) = self.0 .lock().unwrap() .auto_start .as_ref()  {
-            let _ = c.set_checked (checked);
-        }
+        let _ = self.get() .lock() .map (|tms| tms.auto_start .set_checked (checked));
     }
     pub fn set_checked__auto_start_admin (&self, checked:bool) {
-        if let Some(c) = self.0 .lock().unwrap() .auto_start_admin .as_ref()  {
-            let _ = c.set_checked (checked);
-        }
+        let _ = self.get() .lock() .map (|tms| tms.auto_start_admin .set_checked (checked));
     }
 
     pub fn set_enabled__auto_start (&self, enabled:bool) {
-        if let Some(c) = self.0 .lock().unwrap() .auto_start .as_ref()  {
-            let _ = c.set_enabled (enabled);
-        }
+        let _ = self.get() .lock() .map (|tms| tms.auto_start .set_enabled (enabled));
     }
     pub fn set_enabled__auto_start_admin (&self, enabled:bool) {
-        if let Some(c) = self.0 .lock().unwrap() .auto_start_admin .as_ref()  {
-            let _ = c.set_enabled (enabled);
-        }
+        let _ = self.get() .lock() .map (|tms| tms.auto_start_admin .set_enabled (enabled));
     }
 
 }
+
 
 
 const MENU_AUTO_START       : &str = "auto_start";
@@ -117,8 +111,7 @@ pub fn gen_tray (ss: &'static SwitcheState, ah:&App) -> tauri::Result<TrayIcon> 
     let menu_auto_start_admin = make_menu_check (MENU_AUTO_START_ADMIN) .expect("couldnt build tray-menu");
 
     // and store them for reference later
-    TrayMenuState::instance().store__auto_start (menu_auto_start.clone());
-    TrayMenuState::instance().store__auto_start_admin (menu_auto_start_admin.clone());
+    TrayMenuState::instance() .store (menu_auto_start.clone(), menu_auto_start_admin.clone());
 
     let menu = MenuBuilder::new(ah)
         // first we'll put the configs

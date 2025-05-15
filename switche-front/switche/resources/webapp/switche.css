@@ -10,27 +10,38 @@
 }
 
 :root {
-  --background-color: #202020;
+  --background-color: #161616;
   --ribbon-color: #bd9d2c;
   --ribbon-color-dim: #bd9d2ce0;
-  --curElem-color: #dbe4d7;
+
   --primary-color: #e0d180;
   --secondary-color: #a8c77d;
   --searched-color: #7aff00;
   --exe-color: #bbc18f;
+
+  --curElem-color: #e0f3d9;
+  --curElem-bkg-color: #49317c;
+
   --yspan-color: #5c9d4d;
-  --dim-color: #808080;
+  --yspan-cur-color: #92ca7b;
+  --yspan-elev-color: #b9737b;
+  --yspan-cur-elev-color: #d9a4cd;
+
   --menu-hover-color: #404040;
   --box-shadow-color: #61450fe3;
   --tooltip-color: #d0c0a0;
   --tooltip-bg-color: #404040;
+
   --alt-tab-color: var(--ribbon-color);
   --rbtn-whl-color: var(--ribbon-color);
   --elev-color: #00b000;
   --armed-color: #ff8080;
   --warn-color: #d050f0;
+  --dim-color: #808080;
+
   --help-color: #60d060;
   --help-text-color: #d0c0a0;
+
   --scrollbar-color: #540;
   --scroll-thumb-color: #970;
 }
@@ -97,7 +108,7 @@ body {
 .menuItem:hover { background-color: var(--menu-hover-color); }
 .menuHotkey {
    float: right;
-   font-size: smaller;
+   font-size: x-small;
    margin-left: auto;
    color: var(--ribbon-color-dim);
 }
@@ -260,7 +271,7 @@ body {
   font-size: 14px;
 }
 .elemBox.curElem {
-   background: #54489e;
+   background: var(--curElem-bkg-color);
    outline: none;
 }
 .spacingDiv { height: 10px; }
@@ -286,7 +297,9 @@ body {
    text-align: right;
    flex: none;
 }
-.elemBox.curElem .ySpan { color: var(--curElem-color); }
+.ySpan.elev { color: var(--yspan-elev-color); }
+.elemBox.curElem .ySpan { color: var(--yspan-cur-color); }
+.elemBox.curElem .ySpan.elev { color: var(--yspan-cur-elev-color); }
 
 .exeSpan {
   width: 120px;

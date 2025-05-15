@@ -1,6 +1,4 @@
-#![ allow (non_camel_case_types) ]
-#![ allow (non_snake_case) ]
-#![ allow (non_upper_case_globals) ]
+#![allow (non_camel_case_types, non_snake_case, non_upper_case_globals)]
 
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::RwLock;
@@ -16,13 +14,13 @@ use crate::config::Config;
 
 
 
-# [ derive (Debug, Eq, PartialEq, Hash, Default, Copy, Clone, Serialize, Deserialize) ]
+#[derive (Debug, Eq, PartialEq, Hash, Default, Copy, Clone, Serialize, Deserialize)]
 pub struct RenderListEntry {
     pub(crate) hwnd : Hwnd,
     pub(crate) y    : u32,
 }
 
-# [ derive (Debug, Eq, PartialEq, Hash, Default, Clone, Serialize, Deserialize) ]
+#[derive (Debug, Eq, PartialEq, Hash, Default, Clone, Serialize, Deserialize)]
 pub struct RenderList_Pl {
     pub(crate) rl  : Vec <RenderListEntry>,
     pub(crate) grl : Vec <Vec <RenderListEntry>>,
@@ -31,13 +29,13 @@ pub struct RenderList_Pl {
 
 
 
-# [ derive (Debug, Default, Copy, Clone) ]
+#[derive (Debug, Default, Copy, Clone)]
 pub struct GroupSortingEntry {
     seen_count: u32,
     mean_perc_idx: f32
 }
 
-# [ derive (Debug, Default) ]
+#[derive (Debug, Default)]
 pub struct RenderReadyListsManager {
 
     pub render_list      : RwLock <Vec <RenderListEntry>>,
@@ -59,7 +57,7 @@ pub struct RenderReadyListsManager {
 
 
 
-# [ derive (Debug, Default) ]
+#[derive (Debug, Default)]
 /// SnapListManager is used to grab a snapshot of the current rendering list hwnds and nav through them w/o bringing switche up
 pub struct SnapListManager {
     snap_list : RwLock <Vec <Hwnd>>,

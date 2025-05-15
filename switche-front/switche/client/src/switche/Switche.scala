@@ -23,17 +23,20 @@ type Hwnd = Int
 
 // define various payloads that can be recieved in events too
 case class RenderListEntry ( hwnd:Int, y:Int ) derives ReadWriter
-case class RenderList_P    ( rl: Seq[RenderListEntry], grl: Seq[Seq[RenderListEntry]] ) derives ReadWriter
+case class RenderList_P ( rl: Seq[RenderListEntry], grl: Seq[Seq[RenderListEntry]] ) derives ReadWriter
 
-case class ExePathName   (full_path:String, name:String ) derives ReadWriter
-case class WinDatEntry   (hwnd:Hwnd, win_text:Option[String], exe_path_name:Option[ExePathName], icon_cache_idx:Int )  // derives ReadWriter
-//case class WinDatEntry_P ( msg:String, wde:WinDatEntry_wNull )   derives ReadWriter
-case class WinDatEntry_wNull (hwnd:Hwnd, win_text:String, exe_path_name:ExePathName, icon_cache_idx:Int) derives ReadWriter {
-   def conv() = WinDatEntry (hwnd, Option(win_text), Option(exe_path_name), icon_cache_idx)
+case class ExePathName ( full_path:String, name:String ) derives ReadWriter
+case class WinDatEntry (
+   hwnd:Hwnd, win_text:Option[String], exe_path_name:Option[ExePathName], icon_cache_idx:Int, is_elevated:Boolean,
+)
+case class WinDatEntry_wNull (
+   hwnd:Hwnd, win_text:String, exe_path_name:ExePathName, icon_cache_idx:Int, is_elevated:Boolean
+) derives ReadWriter {
+   def conv() = WinDatEntry (hwnd, Option(win_text), Option(exe_path_name), icon_cache_idx, is_elevated)
 }
 
-case class IconEntry_P      ( ico_id:Int, ico_str:String )     derives ReadWriter
-case class BackendNotice_P  ( msg:String )                     derives ReadWriter
+case class IconEntry_P (ico_id:Int, ico_str:String) derives ReadWriter
+case class BackendNotice_P (msg:String) derives ReadWriter
 
 case class Configs (
     switche_version         : String  = "??",
@@ -110,7 +113,9 @@ object SendMsgToBack {
    def FE_Req_GrpModeEnabled  (enable:Boolean) = send ( front_end_req (
       if (enable) "fe_req_grp_mode_enable" else "fe_req_grp_mode_disable"
    ) )
-   def FE_Req_AutoHideToggle  () = send ( front_end_req ( "fe_req_auto_hide_toggle" ) )
+   def FE_Req_AutoHideEnabled  (enable:Boolean) = send ( front_end_req (
+      if (enable) "fe_req_auto_hide_enable" else "fe_req_auto_hide_disable"
+   ) )
    
    def FE_Req_EditConfig      () = send ( front_end_req ( "fe_req_edit_config"      ) )
    def FE_Req_ResetConfig     () = send ( front_end_req ( "fe_req_reset_config"     ) )
@@ -126,11 +131,12 @@ object Switche {
    
    val hwndMap = new mutable.HashMap[Hwnd,WinDatEntry] ()
    
-   var inElectronDevMode  = false
-   var inGroupedMode      = true
-   var isDismissed        = false
-   var isFgnd             = false
-   var scrollEnd_armed    = false
+   var devModeEnabled   = false
+   var groupModeEnabled = true
+   var autoHideEnabled  = true
+   var isDismissed      = false
+   var isFgnd           = false
+   var scrollEnd_armed  = false
 
    var renderList : Seq[RenderListEntry] = Seq()
    var groupedRenderList : Seq[Seq[RenderListEntry]] = Seq()
@@ -223,7 +229,7 @@ object Switche {
    }
    def handleBkndEvent_FgndLost() = {
       setNotFgnd(); scrollEnd_disarm()
-      if (configs.auto_hide_enabled) { setDismissed() }
+      if (autoHideEnabled) { setDismissed() }
       RenderSpacer.queueSpacedRender()
       SearchDisplay.exitSearchState()
    }
@@ -291,7 +297,6 @@ object Switche {
    
    def updateListener_Configs (e:BackendPacket) : Unit = {
       println (s"got configs: ${e.payload}");
-      val confs_old = configs;
       configs = upickle.default.read[Configs](e.payload)
       
       RibbonDisplay.setElevated (configs.is_elevated)
@@ -299,16 +304,11 @@ object Switche {
       RibbonDisplay.setRbtnWheelEnabled (configs.rbtn_whl_enabled)
       RibbonDisplay.setGrpOrderingAuto (configs.grp_ordering_is_auto)
       HelpText.setVersion (configs.switche_version)
-      
-      if (configs.group_mode_enabled != inGroupedMode) {
-         inGroupedMode = configs.group_mode_enabled
-         RenderSpacer.queueSpacedRender()
-      }
-      if (confs_old.auto_hide_enabled != configs.auto_hide_enabled) {
-         // ^^ this check prevents things like switche window hiding itself upon reload etc
-         if (configs.auto_hide_enabled && !isDismissed && !isFgnd) {
-            SwitchePageState.handleReq_SwitcheEscape()
-      }  }
+
+      groupModeEnabled = configs.group_mode_enabled
+      autoHideEnabled = configs.auto_hide_enabled
+
+      RenderSpacer.queueSpacedRender()
    }
   
    def setTauriEventListeners() : Unit = {
