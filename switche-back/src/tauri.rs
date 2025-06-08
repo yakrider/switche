@@ -7,9 +7,8 @@ use tracing::{error};
 use windows::Win32::Foundation::{GetLastError, ERROR_ALREADY_EXISTS};
 use windows::Win32::System::Threading::CreateMutexW;
 
-use crate::{win_apis, autostart};
+use crate::{win_apis, tray};
 use crate::switche::{Hwnd, SwitcheState};
-use crate::tray::*;
 
 use tauri::{ AppHandle, Wry, WindowEvent, RunEvent, Manager, App };
 use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
@@ -29,9 +28,8 @@ pub fn run_switche_tauri (ss: &'static SwitcheState) {
             // ^^ w/o this, our own LL input hooks will not receive events when tauri window is fgnd
             .setup ( {
                 move |app| {
-                    gen_tray (ss, app)?;
                     enforce_single_instance (app);
-                    autostart::update_tray_auto_start_admin_flags();
+                    tray::gen_tray (ss, app)?;
                     setup_global_shortcuts (ss, app.handle());
                     ss.setup_front_end_listener (app.handle());
                     Ok(())

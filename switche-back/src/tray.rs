@@ -1,58 +1,15 @@
 #![allow (non_snake_case)]
 
 use std::sync::{Mutex, OnceLock, LazyLock};
-
-use tauri::{ AppHandle, Wry, App };
+use std::thread;
+use tauri::{AppHandle, Wry, App };
 use tauri::menu::{CheckMenuItem, CheckMenuItemBuilder, MenuBuilder, MenuItemBuilder, PredefinedMenuItem};
 use tauri::tray::{ MouseButton, MouseButtonState, TrayIcon, TrayIconBuilder, TrayIconEvent };
 
-use crate::autostart;
+use crate::win_apis;
+use crate::autostart::*;
 use crate::switche::SwitcheState;
 
-
-
-struct _TrayMenuState {
-    pub auto_start       : CheckMenuItem<Wry>,
-    pub auto_start_admin : CheckMenuItem<Wry>,
-}
-
-pub struct TrayMenuState ( OnceLock <Mutex <_TrayMenuState>>);
-
-impl TrayMenuState {
-
-    /// returns a potentially un-initialized instance of TrayMenuState
-    pub fn instance () -> &'static TrayMenuState {
-        static INSTANCE : LazyLock <TrayMenuState> = LazyLock::new (|| TrayMenuState (OnceLock::new()));
-        & INSTANCE
-    }
-
-    /// actual (one-time) intitialization of the state is done here
-    pub fn store (&self, auto_start: CheckMenuItem<Wry>, auto_start_admin: CheckMenuItem<Wry>) {
-        let _ = self.0 .set ( Mutex::new (
-            _TrayMenuState { auto_start, auto_start_admin }
-        ) );
-    }
-
-    /// access sugar
-    fn get (&self) -> &Mutex <_TrayMenuState> {
-        self.0 .get() .expect ("Attempt to access un-initialized TrayMenuState")
-    }
-
-    pub fn set_checked__auto_start (&self, checked:bool) {
-        let _ = self.get() .lock() .map (|tms| tms.auto_start .set_checked (checked));
-    }
-    pub fn set_checked__auto_start_admin (&self, checked:bool) {
-        let _ = self.get() .lock() .map (|tms| tms.auto_start_admin .set_checked (checked));
-    }
-
-    pub fn set_enabled__auto_start (&self, enabled:bool) {
-        let _ = self.get() .lock() .map (|tms| tms.auto_start .set_enabled (enabled));
-    }
-    pub fn set_enabled__auto_start_admin (&self, enabled:bool) {
-        let _ = self.get() .lock() .map (|tms| tms.auto_start_admin .set_enabled (enabled));
-    }
-
-}
 
 
 
@@ -64,6 +21,7 @@ const MENU_RELOAD           : &str = "reload";
 const MENU_RESTART          : &str = "restart";
 const MENU_QUIT             : &str = "quit";
 // note: ^^ its easier to define these as consts instead of enums as that makes it easier to match against id-strings later
+
 
 fn menu_disp_str (id:&str) -> &str {
     match id {
@@ -77,10 +35,11 @@ fn menu_disp_str (id:&str) -> &str {
         _ => ""
     }
 }
+
 fn exec_menu_action (id:&str, ss: &'static SwitcheState, ah:&AppHandle<Wry>) {
     match id {
-        MENU_AUTO_START       => { autostart::proc_tray_event__toggle_switche_autostart (false) }
-        MENU_AUTO_START_ADMIN => { autostart::proc_tray_event__toggle_switche_autostart (true) }
+        MENU_AUTO_START       => { proc_req__toggle_switche_autostart (false) }
+        MENU_AUTO_START_ADMIN => { proc_req__toggle_switche_autostart (true) }
         MENU_EDIT_CONF        => { ss.conf.trigger_config_file_edit() }
         MENU_RESET_CONF       => { ss.conf.trigger_config_file_reset() }
         MENU_RELOAD           => { ss.proc_menu_req__switche_reload() }
@@ -89,6 +48,62 @@ fn exec_menu_action (id:&str, ss: &'static SwitcheState, ah:&AppHandle<Wry>) {
         _ => { }
     }
 }
+
+
+
+
+struct _TrayMenuState {
+    auto_start       : CheckMenuItem<Wry>,
+    auto_start_admin : CheckMenuItem<Wry>,
+}
+
+struct TrayMenuState ( OnceLock <Mutex <_TrayMenuState>>);
+
+impl TrayMenuState {
+
+    /// returns a potentially un-initialized instance of TrayMenuState
+    fn instance () -> &'static TrayMenuState {
+        static INSTANCE : LazyLock <TrayMenuState> = LazyLock::new (|| TrayMenuState (OnceLock::new()));
+        & INSTANCE
+    }
+
+    /// actual (one-time) intitialization of the state is done here
+    fn store (&self, auto_start: CheckMenuItem<Wry>, auto_start_admin: CheckMenuItem<Wry>) {
+        let _ = self.0 .set ( Mutex::new (
+            _TrayMenuState { auto_start, auto_start_admin }
+        ) );
+    }
+
+    fn update_auto_start_flags (&self) {
+        let is_elev = win_apis::check_cur_proc_elevated() .unwrap_or_default();
+        let el_en = check_status_auto_start_elev_task();
+        let nel_en = check_status_auto_start_task();
+
+        let Some(tms) = self.0 .get() else { return };
+        let Ok(tms) = tms.lock() else { return };
+
+        // we'll want to check both tasks if they are enabled .. (as even if no-elev, we want to know if elev has already been set)
+        let _ = tms.auto_start_admin .set_checked (el_en);
+
+        let _ = tms.auto_start .set_checked (nel_en);
+
+        // elev menu can be enabled whenever we're elevated
+        let _ = tms.auto_start_admin .set_enabled (is_elev);
+
+        // non-elev menu is enabled only when it can be acted on (either its already enabled, or elev-task is not enabled)
+        let _ = tms.auto_start .set_enabled (nel_en || !el_en);
+    }
+
+}
+
+
+pub fn update_auto_start_flags () {
+    // note that this is on a spawned thread because checking task-sched via the planif crate seems to change thread mode !!
+    thread::spawn (move || {
+        TrayMenuState::instance() .update_auto_start_flags();
+    } );
+}
+
 
 pub fn handle_trayicon_action (ss: &'static SwitcheState, event:TrayIconEvent) {
     // we want to make left-click activate switche, the rest we can ignore .. (and default right click will bring menu)
@@ -112,6 +127,7 @@ pub fn gen_tray (ss: &'static SwitcheState, ah:&App) -> tauri::Result<TrayIcon> 
 
     // and store them for reference later
     TrayMenuState::instance() .store (menu_auto_start.clone(), menu_auto_start_admin.clone());
+    update_auto_start_flags();
 
     let menu = MenuBuilder::new(ah)
         // first we'll put the configs

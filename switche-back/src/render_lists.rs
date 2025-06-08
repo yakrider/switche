@@ -108,7 +108,7 @@ impl RenderReadyListsManager {
         for &z_hwnd in z_order_hwnds.iter().rev() {
             if rl_hwnds.contains(&z_hwnd) {
                 if Some(z_hwnd) == rl0 {
-                    tracing::debug! ("@{:?} sent-to-back: {:?}", crate::win_dats::_stamp(), z_hwnd.0);
+                    tracing::debug! ("@{:?} sent-to-back: {:?}", crate::win_dats::_stamp(), z_hwnd);
                     mru_list.retain (|(h,_)| *h != z_hwnd);
                     mru_set.remove (&z_hwnd);
                 }
