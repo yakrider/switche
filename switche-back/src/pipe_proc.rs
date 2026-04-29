@@ -4,7 +4,7 @@ use std::thread;
 use serde::{Deserialize};
 
 use windows::core::PCWSTR;
-use windows::Win32::Foundation::{CloseHandle, INVALID_HANDLE_VALUE};
+use windows::Win32::Foundation::{GetLastError, ERROR_PIPE_CONNECTED, INVALID_HANDLE_VALUE};
 use windows::Win32::Storage::FileSystem::{PIPE_ACCESS_INBOUND, ReadFile};
 use windows::Win32::System::Pipes::{CreateNamedPipeW, ConnectNamedPipe, DisconnectNamedPipe, PIPE_TYPE_MESSAGE, PIPE_READMODE_MESSAGE, PIPE_WAIT, PIPE_REJECT_REMOTE_CLIENTS};
 
@@ -69,46 +69,44 @@ pub fn handle_pipe_cmd (cmd: PipeCommand) {
 
 pub fn start_pipe_processor() {
 
-    thread::spawn (move || {
+    thread::spawn (move || { unsafe {
 
         let pipe_name_w : Vec<u16> = PIPE_NAME.encode_utf16() .chain (std::iter::once(0)) .collect();
         let pipe_name_w = PCWSTR (pipe_name_w.as_ptr());
 
-        loop { unsafe {
+        // first we create our instance of named pipe
+        let pipe = CreateNamedPipeW (
+            pipe_name_w,
+            PIPE_ACCESS_INBOUND,
+            PIPE_TYPE_MESSAGE | PIPE_READMODE_MESSAGE | PIPE_WAIT | PIPE_REJECT_REMOTE_CLIENTS,
+            16,      // Max instances
+            0,       // Out buffer size
+            4096,    // In buffer size
+            0,       // Default timeout
+            None,
+        );
+        if pipe == INVALID_HANDLE_VALUE {
+            return;
+        }
 
-            // first we create our instance of named pipe
-            let pipe = CreateNamedPipeW (
-                pipe_name_w,
-                PIPE_ACCESS_INBOUND,
-                PIPE_TYPE_MESSAGE | PIPE_READMODE_MESSAGE | PIPE_WAIT | PIPE_REJECT_REMOTE_CLIENTS,
-                16,      // Max instances
-                0,       // Out buffer size
-                4096,    // In buffer size
-                0,       // Default timeout
-                None,
-            );
-            if pipe == INVALID_HANDLE_VALUE {
-                continue;
-            }
-            // then we'll wait for some client to actually connect to it
+        loop {
+            // we'll wait for some client to actually connect to it
             let res = ConnectNamedPipe (pipe, None);
-            if res.is_err() {
-                continue;
-            }
-            // and if so, we'll read and process it
-            // (we'll spawn out the actual cmd processing so we can immediately go back to waiting state again)
-            let mut buffer = [0u8; 4096];
-            let mut bytes_read = 0;
-            if ReadFile ( pipe, Some (&mut buffer), Some (&mut bytes_read), None ) .is_ok() {
-                if let Ok(cmd) = serde_json::from_slice::<PipeCommand> ( & buffer [..bytes_read as usize] ) {
-                    thread::spawn ( move || {
-                        tracing::info!("received pipe-cmd: {:?}", &cmd);
-                        handle_pipe_cmd (cmd)
-                    } );
+            if res.is_ok() || GetLastError() == ERROR_PIPE_CONNECTED {
+                // we'll spawn out the actual cmd processing so we can immediately go back to waiting state again
+                let mut buffer = [0u8; 4096];
+                let mut bytes_read = 0;
+                if ReadFile ( pipe, Some (&mut buffer), Some (&mut bytes_read), None ) .is_ok() {
+                    if let Ok(cmd) = serde_json::from_slice::<PipeCommand> ( & buffer [..bytes_read as usize] ) {
+                        thread::spawn ( move || {
+                            tracing::info!("received pipe-cmd: {:?}", &cmd);
+                            handle_pipe_cmd (cmd)
+                        } );
+                    }
                 }
             }
             let _ = DisconnectNamedPipe (pipe);
-            let _ = CloseHandle (pipe);
-        } }
-    } );
+        }
+
+    } } );
 }

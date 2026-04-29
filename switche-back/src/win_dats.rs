@@ -307,6 +307,7 @@ impl WinDatsManager {
         if let Some(hwnd) = fgnd_hwnd_opt { self.check_for_once_only_backed_off_icon_requeries (hwnd, ss) }
 
         ss.emit_render_lists_queued(false);    // we'll queue it as icon upates might tack on more in a bit
+        // ^^ note that this is the only place where we actually re-render the display list!
     }
 
 
@@ -315,7 +316,7 @@ impl WinDatsManager {
 
     /*****   win-api reports handling  ******/
 
-    pub fn setup_win_event_hooks (&self) {
+    pub fn setup_win_event_hooks (&'static self) {
         /* Reference:
             pub unsafe fn SetWinEventHook (
                 eventmin: u32, eventmax: u32, cb_dll: HINSTANCE, cb: WINEVENTPROC,
@@ -362,6 +363,23 @@ impl WinDatsManager {
             // .. basically while its waiting, the thread is awakened simply to call kbd hook (for an actual msg, itd awaken give the msg)
             let mut msg: MSG = MSG::default();
             while BOOL(0) != GetMessageW (&mut msg, Hwnd(0).HWND(), 0, 0) { };
+        } );
+
+
+        /*  - now in general, given all the handling for hooked events, we dont really need periodic background win-enum calls
+              .. and in general, we wouldnt want that anyway, as that tends to mask issues/bugs and make debugging more difficult
+            - however, for some edge-cases, it seemed most reasonable to just have background sweep/sync rather than rare custom handling
+            - for instance, for the case of bkg opened apps that give fgnd event but windows supresses coming to fgnd (!!), we've set up
+              .. special handling such that if MRU top doesnt show up in z-list top soon enough, we put z-list top back in MRU
+            - However, to ensure that some enum-call does get called to run that check, we'd have to setup kicking long-delayed triggers
+            - Instead, it makes sense to just have a bkg sweep that will ensure those rare-case sweeps trigger etc
+            - Especially, coz some light pending calls every sec should be enough, and those 'light' calls are indeed VERY light
+         */
+        spawn ( move || {
+            loop {
+                sleep (Duration::from_millis(1000));
+                self.trigger_enum_windows_query_pending (EnumWindowsReqType::Light);
+            }
         } );
     }
 

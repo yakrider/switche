@@ -53,6 +53,10 @@ pub fn check_window_minimized (hwnd:Hwnd) -> bool { unsafe {
     IsIconic (hwnd.HWND()) .as_bool()
 } }
 
+pub fn check_if_topmost (hwnd:Hwnd) -> bool { unsafe {
+    GetWindowLongW (hwnd.HWND(), GWL_EXSTYLE) & WS_EX_TOPMOST.0 as i32 != 0
+} }
+
 pub fn check_if_app_window (hwnd:Hwnd) -> bool { unsafe {
     GetWindowLongW (hwnd.HWND(), GWL_EXSTYLE) & WS_EX_APPWINDOW.0 as i32 != 0
 } }

@@ -3469,7 +3469,7 @@ dependencies = [
 
 [[package]]
 name = "switche"
-version = "2.4.3"
+version = "2.4.4"
 dependencies = [
  "atomic_enum",
  "base64 0.21.7",

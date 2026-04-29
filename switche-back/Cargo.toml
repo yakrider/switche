@@ -4,7 +4,7 @@ cargo-features = ["codegen-backend"]
 
 [package]
 name = "switche"
-version = "2.4.3"
+version = "2.4.4"
 # ^^ reminder to update this in tauri.conf.json as well
 description = "Switche - Searchable Task Switcher"
 authors = ["yakrider"]

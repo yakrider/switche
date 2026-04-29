@@ -199,6 +199,9 @@ object SwitcheFacePage {
          case (_, _, _, _, "Escape")     =>  //handleReq_SwitcheEscape()   // moved to keyup to avoid leakage of keyup after we use it hide app
          case (_, _, _, _, "F5")         => handleReq_Reload()
          
+         case (_, true,  _, _, "F3")     => focusElem_Next()
+         case (_, false, _, _, "F3")     => SearchDisplay.reActivateLastSearch()
+         
          // scroll/invoke hotkeys nav
          case (_, _, _, _, "F1")         => focusElem_Next()
          case (_, _, _, _, "F15")        => focusElem_Next()
@@ -248,7 +251,7 @@ object SwitcheFacePage {
                case "m"  => if (e.shiftKey) focusElem_Bottom() else focusBlockElem_Bottom()
                case "j"  => focusGroup_Prev()
                case "k"  => focusGroup_Next()
-               case "r"  => handleReq_Refresh()
+               case "r"  => scrollEnd_disarm()
                
                case " " | "s" | "l" | "S" | "L" =>
                   e.preventDefault(); scrollEnd_disarm();
@@ -496,18 +499,19 @@ object ElemsDisplay {
       val ySpanCls = if (wde.is_elevated) "ySpan elev" else "ySpan"
       val yInnerSpan = span (`class`:=ySpanCls, f"${y}%2d" ).render
       val titleInnerSpan = span ( wde.win_text.getOrElse("-- no title --") ).render
-      makeElemBox ( idStr, wde, y, elemT, grpT, exeInnerSpan, yInnerSpan, titleInnerSpan )
+      makeElemBox ( idStr, wde, y, elemT, grpT, exeInnerSpan, yInnerSpan, titleInnerSpan, false )
    }
    def makeElemBox (
       idStr:String, wde:WinDatEntry, y:Int, elemT:ElemT, grpT:GrpT,
-      exeInnerSpan:Span, yInnerSpan:Span, titleInnerSpan:Span
+      exeInnerSpan:Span, yInnerSpan:Span, titleInnerSpan:Span, searchCheckPassed:Boolean
    ) : Div = {
       val exeSpan = span (`class`:=s"exeSpan ${elemT.cls} ${grpT.cls}", exeInnerSpan)
       val ySpan = span (`class`:=s"ySpan ${elemT.cls}", yInnerSpan)
       val titleSpan = span (`class`:=s"titleSpan ${elemT.cls}", titleInnerSpan)
       val ico = Switche.getCachedIcon(wde.icon_cache_idx) .map (icoStr => img(`class`:="ico", src:=icoStr)) .getOrElse(span("ico"))
       val icoSpan = span (`class`:="exeIcoSpan", ico)
-      val elem = div (`class`:=s"elemBox ${grpT.cls}", id:=idStr, tabindex:=0, exeSpan, nbsp(2), ySpan, nbsp(2), icoSpan, nbsp(), titleSpan).render
+      val cls = s"elemBox ${grpT.cls} ${if (searchCheckPassed) "srchMatch" else ""}"
+      val elem = div (`class`:=cls, id:=idStr, tabindex:=0, exeSpan, nbsp(2), ySpan, nbsp(2), icoSpan, nbsp(), titleSpan).render
       //elem.onclick = {ev:MouseEvent => SwitcheState.handleReq_WindowActivation(e.hwnd)}
       // ^^ moved most handlers to single document-level events handler
       // .. but we left mouseenter etc here, as doing that globally is a little wasteful
@@ -613,12 +617,17 @@ object ElemsDisplay {
          val titleSpan = if (!inSearchState) {
             span ( dat.win_text.getOrElse("title.."):String ).render
          } else {
-            SearchHelper.checkSearchExeTitle (
+            val searchRes = SearchHelper.checkSearchExeTitle (
                dat.exe_path_name.map(_.name).getOrElse(""),
                dat.win_text.getOrElse(""),
                SearchDisplay.getSearchBoxText(),
                oe.y
-            ) .titleSpan
+            )
+            if (oe.elem.classList.contains("srchMatch") != searchRes.chkPassed) {
+               // if search-matches changed, we gotta bail and request a re-render to recalc nav lists etc
+               RenderSpacer.queueSpacedRender()
+            }
+            searchRes.titleSpan
          }
          clearedElem (oe.elem.getElementsByClassName("titleSpan").item(0)) .appendChild (titleSpan)
       }
@@ -634,7 +643,7 @@ object ElemsDisplay {
       // note that doing id-conversion checks helps sync up even in cases when we're toggling between recents and grouped modes!
       def getSyncElem (curBlock:ElemT, wrapBlock:ElemT) = {
          val ((curIdm,_,curMap),(_,wrapVec,wrapMap)) = getIdfnVecAndMap(curBlock) -> getIdfnVecAndMap(wrapBlock)
-         idToHwnd(curElemId) .map(curIdm) .flatMap(curMap.get) .orElse ( wrapVec.headOption.flatMap(wrapMap.get) )
+         idToHwnd(curElemId) .map(curIdm) .flatMap(curMap.get) .filter(_.y>=0) .orElse ( wrapVec.headOption.flatMap(wrapMap.get) )
       }
       (inSearchState, groupModeEnabled) match {
          // in recents-mode, whether search or not, we try to sync up within recents-block (falling back to its top)
@@ -727,15 +736,28 @@ object ElemsDisplay {
 
 
 object SearchDisplay {
+   import SwitcheFaceConfig._
    import SwitchePageState._
    import Switche._
    
+   var cachedSearchBoxTxt = ""; var priorCachedSearchBoxTxt = "";
+   var searchMatchCount = 0
    
-   val searchBox      = input (
+   val searchBox = input (
       `type`:="text", autocomplete:="off", id:="searchBox", placeholder:=""
    ).render
+   val searchMatchDiv = div (`class`:=s"matchCount").render
+   val searchDiv = div (`class`:="searchDiv", searchBox, searchMatchDiv).render
    
-   var cachedSearchBoxTxt = ""
+   def setSearchMatchCount (updatedCount:Int) = {
+      if (searchMatchCount <= 0 && updatedCount > 0) {
+         searchMatchDiv.classList.add("show")
+      } else if (updatedCount <= 0) {
+         searchMatchDiv.classList.remove("show")
+      }
+      searchMatchCount = updatedCount
+      clearedElem(searchMatchDiv).appendChild (span(searchMatchCount).render)
+   }
    
    val searchBoxCtrlKeys = Set ("ArrowLeft","ArrowRight","Delete","Backspace", "a", "x", "c", "v", "z", "y")
    val searchBoxExclKeys = Set ("Meta","Alt","Control","Shift", "AudioVolumeUp","AudioVolumeDown")
@@ -745,8 +767,16 @@ object SearchDisplay {
       searchBox.value.trim
    }
    def activateSearchBox () = {
-      searchBox.disabled = false;
+      inSearchState = true
+      searchBox.disabled = false
       searchBox.focus()
+   }
+   def reActivateLastSearch () = {
+      activateSearchBox()
+      searchBox.value = priorCachedSearchBoxTxt
+      cachedSearchBoxTxt = priorCachedSearchBoxTxt
+      RenderSpacer.immdtRender()
+      resetSearchMatchFocus()
    }
    def blurSearchBox() = {
       //searchBox.blur()
@@ -763,11 +793,12 @@ object SearchDisplay {
       // (which selectively allows char updates etc to filter down to searchBox)
       RibbonDisplay.closeDropdowns()
       val curSearchBoxTxt = searchBox.value.trim
-      if (curSearchBoxTxt.isEmpty || e.key == "Escape") {
-         cachedSearchBoxTxt = ""
-         exitSearchState()
+      if (e.key == "Escape") {
+         cachedSearchBoxTxt = "";  exitSearchState()
+      } else if (curSearchBoxTxt.isEmpty && e.key != "F3") {
+         cachedSearchBoxTxt = ""; priorCachedSearchBoxTxt = ""; exitSearchState()
       } else if (curSearchBoxTxt != cachedSearchBoxTxt) {
-         cachedSearchBoxTxt = curSearchBoxTxt
+         cachedSearchBoxTxt = curSearchBoxTxt; priorCachedSearchBoxTxt = curSearchBoxTxt
          RenderSpacer.immdtRender()     // using immdt-render as we want to reset-search-match-focus after it's done
          resetSearchMatchFocus()
       }
@@ -775,7 +806,7 @@ object SearchDisplay {
    // this is called whenever we want to setup selective propagation to searchbox
    def checkSearchBox_StopProp(e:KeyboardEvent, doPassthrough:Boolean): Boolean = {
       val doStopProp = searchBoxExclKeys.contains(e.key) || (!doPassthrough && !inSearchState)
-      if (!searchBoxExclKeys.contains(e.key)) { inSearchState = true; activateSearchBox() }
+      if (!searchBoxExclKeys.contains(e.key)) { activateSearchBox() }
       doStopProp
    }
    def resetSearchMatchFocus() : Unit = {
@@ -786,6 +817,7 @@ object SearchDisplay {
    def exitSearchState() = { //println("exit-search-state")
       inSearchState = false
       searchBox.value = ""
+      setSearchMatchCount(0)
       blurSearchBox()
       RenderSpacer.queueSpacedRender()
    }
@@ -798,7 +830,7 @@ object SearchDisplay {
       def getSearchElem (rle:RenderListEntry, elemT:ElemT, grpT:GrpT, r:CheckSearchExeTitleRes) = {
          hwndMap .get(rle.hwnd) .map { wde =>
             val id = if (elemT == ElemTs.G) groupedId(wde.hwnd) else recentsId(wde.hwnd)
-            val elem = ElemsDisplay.makeElemBox (id, wde, rle.y, elemT, grpT, r.exeSpan, r.ySpan, r.titleSpan)
+            val elem = ElemsDisplay.makeElemBox (id, wde, rle.y, elemT, grpT, r.exeSpan, r.ySpan, r.titleSpan, r.chkPassed)
             SearchedElem (id, elem, r.chkPassed)
       } }
       def getSearchMatchRes (rle:RenderListEntry) = {
@@ -820,6 +852,7 @@ object SearchDisplay {
          // lets do the simpler case of non-grouped mode
          val sElems = renderList .flatMap (e => getSearchMatchRes(e) .flatMap (res => getSearchElem (e, ElemTs.R, GrpTs.NG, res)))
          getSearchStateMapAndVec(sElems) match { case (m,v) => recentsElemsMap = m; recentsIdsVec = v }
+         setSearchMatchCount (recentsIdsVec.size)
       } else {
          // in grouped mode, we'll do navs in grouped block, but do simpler eqv match highlighting in dimmed top-recents where available
          // the searchElemsMap idxs need to have not the zipWithIndex, but sequential idxs of only matching elems ..
@@ -828,6 +861,7 @@ object SearchDisplay {
             ll .tail    .flatMap { case (e,r) => getSearchElem (e, ElemTs.G, GrpTs.GT, r) }
          ) } .flatten
          getSearchStateMapAndVec(sElems) match { case (m,v) => groupedElemsMap = m; groupedIdsVec = v }
+         setSearchMatchCount (groupedIdsVec.size)
 
          // now lets build the recents w similar search-match highlighting as well .. (we wont need nav idxs for it)
          val elemsMap = mutable.LinkedHashMap[String,OrderedElemsEntry]()
@@ -991,7 +1025,7 @@ object RibbonDisplay {
       id:="top-ribbon", MenuDropdown.menu_dropdown,
       altTabIndicator.indicator, rbtnWhlIndicator.indicator, autoOrderIndicator.indicator,
       elevIndicator.indicator, armedIndicator.indicator, dragIndicator.indicator, countsIndicator.indicator,
-      debugLinks, SearchDisplay.searchBox, warnIndicator.indicator, helpIndicator.indicator
+      debugLinks, SearchDisplay.searchDiv, warnIndicator.indicator, helpIndicator.indicator
    ).render
    
 }

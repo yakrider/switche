@@ -16,8 +16,11 @@
 
   --primary-color: #e0d180;
   --secondary-color: #a8c77d;
-  --searched-color: #7aff00;
   --exe-color: #bbc18f;
+
+  --searched-color: #7aff00;
+  --searchMatch-edge-color: color-mix(in srgb, var(--searched-color), transparent 30%);
+  --searchMatch-count-color: var(--searchMatch-edge-color);
 
   --curElem-color: #e0f3d9;
   --curElem-bkg-color: #49317c;
@@ -230,6 +233,10 @@ body {
 
 
 
+.searchDiv {
+  flex-grow: 1;
+  display: flex;
+}
 #searchBox {
   background: var(--background-color);
   color: var(--searched-color);
@@ -239,9 +246,17 @@ body {
   padding-left: 20px;
   flex-grow: 1;
 }
-
 .searchTxt { color: var(--searched-color); }
 /*.elemBox.curElem .searchTxt { color: #9fef02; }*/
+.matchCount {
+    font-size: smaller;
+    padding-right: 4px;
+    color: var(--searchMatch-count-color);
+    flex-shrink: 0;
+    align-self: flex-end;
+    display: none;
+}
+.matchCount.show { display: inline-block; }
 
 
 
@@ -325,4 +340,8 @@ body {
 .ico {
    height: 16px;
    filter: brightness(90%) saturate(100%);
+}
+
+.elemBox.srchMatch .exeIcoSpan {
+    box-shadow: inset -2px 0 0 0 var(--searchMatch-edge-color);
 }

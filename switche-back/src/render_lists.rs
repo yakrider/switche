@@ -85,26 +85,52 @@ impl RenderReadyListsManager {
     }
 
     pub fn mru_list__post_win_enum_kick (&self, ss: &SwitcheState) {
-        // first we'll clean up any hwnds no longer reported ..
+        // we want to clean up any hwnds no longer reported ..
         // however, for new windows (e.g. win-explorer), it can take a while after the fgnd report for the hwnd to show up in win-enums
         // so we'll need to allow a long enough grace before removing MRU recorded hwnds that dont show up in win-enum z-list
 
         let Ok(mut mru_list) = self.mru_hwnd_list.write() else { return };
         let Ok(mut mru_set) = self.mru_hwnd_set.write() else { return };
+        const MRU_GRACE_MS : u64 = 500;
 
         let z_order_hwnds = ss.win_dats_m.hwnds_ordered.read().unwrap();
         let z_order_set: HashSet<Hwnd> = z_order_hwnds.iter().copied().collect();
+
         mru_list .retain (|(h,t)| {
-            let zap_it = !z_order_set.contains(h) && t.elapsed() > Duration::from_millis(500);
+            let zap_it = !z_order_set.contains(h) && t.elapsed() > Duration::from_millis (MRU_GRACE_MS);
             if zap_it { mru_set.remove(h); }
             !zap_it
         });
 
-        // then we'll also try and catch any sent-to-back hwnd and mirror that in mru-list ..
-        // we'll scan from the z-list bottom for the first hwnd that was already in our rendered list
-        // and if that hwnd was also the MRU-list top, must have been a send-to-back operation, so we'll kick it off our MRU list !!
+        // also, if after that grace period, if MRU top is still not z-list top, we'll re-register that as MRU (excl for always-on-top etc)
+        // - this is helpful for cases like a magnet link opening triggering an app in the back which can give fgnd event w/o coming to fgnd (!!)
+        // .. which then would put the parent app into MRU, while somehow having like OS suppresses the app coming to fgnd..
+        // .. so then we have app still behind browser, but our MRU lists have that as top .. so thenafter breaking expected alt-tab behavior
+
         let rl_hwnds = self.render_hwnds.read().unwrap();
         let rl0 = self.render_list .read().unwrap() .first() .map (|rle| rle.hwnd);
+
+        if let Some ((mru_top, t)) = mru_list.front() { 'block: {
+            use crate::win_apis::*;
+            if t.elapsed() < Duration::from_millis (MRU_GRACE_MS) { break 'block (); }
+            if check_if_topmost (*mru_top) { break 'block (); }
+            if check_if_topmost (get_fgnd_window()) { break 'block (); }
+            for &z_hwnd in z_order_hwnds.iter() {
+                if ! rl_hwnds.contains (&z_hwnd) { continue; }
+                if check_if_topmost (z_hwnd) { continue; }
+                if z_hwnd == *mru_top { break; }
+                // if we're here, we found a non-always-top, rl-present, non-mru-top hwnd (!) .. so we'll make it mru-top
+                tracing::debug! ("@{:?} restored z-top to MRU: {:?}", crate::win_dats::_stamp(), z_hwnd);
+                mru_list .retain (|(h,_)| *h != z_hwnd);
+                mru_list .push_front ((z_hwnd, Instant::now()));
+                mru_set .insert (z_hwnd);
+                break;
+            }
+        } }
+
+        // we also want to try and catch any sent-to-back hwnd and mirror that in mru-list ..
+        // we'll scan from the z-list bottom for the first hwnd that was already in our rendered list
+        // and if that hwnd was also the MRU-list top, must have been a send-to-back operation, so we'll kick it off our MRU list !!
         for &z_hwnd in z_order_hwnds.iter().rev() {
             if rl_hwnds.contains(&z_hwnd) {
                 if Some(z_hwnd) == rl0 {
