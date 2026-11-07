@@ -299,7 +299,7 @@ pub(crate) mod icon_extraction {
     use std::ops::Not;
     use std::path::Path;
 
-    use image::{ImageOutputFormat, RgbaImage};
+    use image::{ImageFormat, RgbaImage};
     use base64::Engine;
     use base64::engine::general_purpose::STANDARD;
 
@@ -343,7 +343,7 @@ pub(crate) mod icon_extraction {
     unsafe fn png_file_to_base64_str (png_path:&Path) -> Option<String> {
         image::open (png_path) .map (|img| {
             let mut buf = Cursor::new(vec![0u8]);
-            img .write_to (&mut buf, ImageOutputFormat::Png) .expect("png write error");
+            img .write_to (&mut buf, ImageFormat::Png) .expect("png write error");
             Some ( format! ("data:image/png;base64,{}",  STANDARD.encode(buf.into_inner()) ) )
         } ) .ok() .flatten()
     }
@@ -405,7 +405,7 @@ pub(crate) mod icon_extraction {
 
         // and finally, we can convert that to base64 string and return that
         let mut buf = Cursor::new(vec![0u8]);
-        img .write_to (&mut buf, ImageOutputFormat::Png) .expect("hicon to png error");
+        img .write_to (&mut buf, ImageFormat::Png) .expect("hicon to png error");
         Some ( format! ("data:image/png;base64,{}",  STANDARD.encode(buf.into_inner()) ) )
     }
 

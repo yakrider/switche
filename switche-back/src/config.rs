@@ -7,7 +7,6 @@ use std::str::FromStr;
 use std::sync::{Arc, Mutex, RwLock, LazyLock, OnceLock};
 use std::time::SystemTime;
 
-use tauri::Manager;
 use toml_edit::DocumentMut;
 
 use tracing::{info, error, warn, Level};
@@ -21,6 +20,7 @@ use tracing_subscriber::reload::Handle;
 use tracing_subscriber::prelude::*;
 
 use crate::switche::SwitcheState;
+use crate::win_apis;
 
 
 
@@ -192,6 +192,7 @@ impl Config {
 
             let console_subscriber = tracing_subscriber::fmt::Layer::new()
                 .with_ansi(true) .with_timer(timer.clone()) //.with_filter(filter_handle)
+                .with_file(true).with_line_number(true)
                 .with_writer ( io::stderr.with_min_level(Level::WARN) .or_else(io::stdout) );
 
             tracing_subscriber::registry() .with (file_subscriber) .with (console_subscriber) .init();
@@ -350,29 +351,30 @@ impl Config {
     pub fn update_conf__switche_window (&'static self, ss: &'static SwitcheState) {
         info! ("update_conf__switche_window");
         std::thread::spawn ( move || {
-            if let Some(w) = ss.get_app_handle() .get_webview_window("main") {
-                if let (Some(p), Some(s)) = (w.outer_position().ok(), w.outer_size().ok()) {
-                    // want to confirm its not minimized before we update its dimensions in configs
-                    // and despite tauri minimize check (below), we still sometimes get the minimized loc (-32000), so we'll filter those
-                    if (w.is_minimized().ok() == Some(true)) || (p.x as i64 == -32000 && p.y as i64 == -32000) {
-                        // and we're getting minimized despite setting 'minimizable' as false in tauri.conf.json .. so we'll at least restore it here
-                        w.unminimize().ok();
-                        // plus, minimize makes window tiny, and that seems to move off ribbon etc .. so we'll also reload the page
-                        ss.proc_menu_req__switche_reload();
-                        return
-                    }
-                    let mut toml_guard = self.toml.write().unwrap();
-                    if let Some(toml) = toml_guard.as_mut() {
-                        toml ["window_dimensions"] ["location"] ["x"]  = toml_edit::value (p.x as i64);
-                        toml ["window_dimensions"] ["location"] ["y"]  = toml_edit::value (p.y as i64);
-                        toml ["window_dimensions"] ["size"] ["width"]  = toml_edit::value (s.width  as i64);
-                        toml ["window_dimensions"] ["size"] ["height"] = toml_edit::value (s.height as i64);
-                        drop(toml_guard);
-                        self.write_back_toml_if_changed();
-                    } else {
-                        error!("update_conf__switche_window: failed to get window position, size, or toml doc");
-                    }
-            }  }
+            let hwnd = ss.get_self_hwnd();
+            if hwnd.is_null() { return }
+            // we'll filter out the minimized loc (-32000), as well as any actually minimized state
+            if win_apis::check_window_minimized (hwnd) {
+                win_apis::window_activate (hwnd);
+                ss.proc_menu_req__switche_reload();
+                return
+            }
+            let rect = win_apis::win_get_window_rect (hwnd);
+            let (x, y) = (rect.left, rect.top);
+            let (w, h) = (rect.right - rect.left, rect.bottom - rect.top);
+            if x == -32000 && y == -32000 { return }
+            if w <= 0 || h <= 0 { return }
+            let mut toml_guard = self.toml.write().unwrap();
+            if let Some(toml) = toml_guard.as_mut() {
+                toml ["window_dimensions"] ["location"] ["x"]  = toml_edit::value (x as i64);
+                toml ["window_dimensions"] ["location"] ["y"]  = toml_edit::value (y as i64);
+                toml ["window_dimensions"] ["size"] ["width"]  = toml_edit::value (w as i64);
+                toml ["window_dimensions"] ["size"] ["height"] = toml_edit::value (h as i64);
+                drop(toml_guard);
+                self.write_back_toml_if_changed();
+            } else {
+                error!("update_conf__switche_window: failed to get window position, size, or toml doc");
+            }
         } );
     }
     pub fn deferred_update_conf__switche_window (&'static self, ss: &'static SwitcheState) {

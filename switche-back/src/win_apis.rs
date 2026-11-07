@@ -16,7 +16,7 @@ use windows::Win32::Storage::Packaging::Appx::{
 use windows::Win32::System::Diagnostics::Debug::OutputDebugStringW;
 use windows::Win32::System::Threading::{GetCurrentProcess, OpenProcess, OpenProcessToken, QueryFullProcessImageNameW, SetPriorityClass, HIGH_PRIORITY_CLASS, PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION};
 use windows::Win32::System::WindowsProgramming::GetUserNameW;
-use windows::Win32::UI::HiDpi::{SetThreadDpiAwarenessContext, DPI_AWARENESS_CONTEXT_SYSTEM_AWARE};
+use windows::Win32::UI::HiDpi::{GetDpiForWindow, SetThreadDpiAwarenessContext, DPI_AWARENESS_CONTEXT_SYSTEM_AWARE};
 use windows::Win32::UI::Input::KeyboardAndMouse::{GetKeyState, VK_SHIFT};
 use windows::Win32::UI::Shell::PropertiesSystem::{IPropertyStore, SHGetPropertyStoreForWindow, PROPERTYKEY};
 use windows::Win32::UI::WindowsAndMessaging::*;
@@ -179,6 +179,31 @@ pub fn win_get_window_frame (hwnd:Hwnd) -> RECT { unsafe {
 pub fn win_move_to (hwnd:Hwnd, x:i32, y:i32, width:i32, height:i32) { unsafe {
     let _ = MoveWindow (hwnd.HWND(), x, y, width, height, true);
     // ^^ the bool param at end flags whether to repaint or not
+} }
+
+
+pub fn win_get_window_rect (hwnd:Hwnd) -> RECT { unsafe {
+    let mut rect = RECT::default();
+    let _ = GetWindowRect (hwnd.HWND(), &mut rect);
+    rect
+} }
+
+pub fn win_get_dpi_scale (hwnd:Hwnd) -> f32 { unsafe {
+    let dpi = GetDpiForWindow (hwnd.HWND());
+    if dpi == 0 { 1.0 } else { dpi as f32 / 96.0 }
+} }
+
+/// hides this window from the taskbar and from the OS alt-tab list
+pub fn win_set_toolwindow_style (hwnd:Hwnd) { unsafe {
+    let ex_style = GetWindowLongPtrW (hwnd.HWND(), GWL_EXSTYLE);
+    let new_ex_style = (ex_style | WS_EX_TOOLWINDOW.0 as isize) & !(WS_EX_APPWINDOW.0 as isize);
+    let _ = SetWindowLongPtrW (hwnd.HWND(), GWL_EXSTYLE, new_ex_style);
+} }
+
+/// toggles the HWND_TOPMOST/NOTOPMOST state without moving/activating the window
+pub fn win_set_topmost (hwnd:Hwnd, topmost:bool) { unsafe {
+    let insert_after = if topmost { HWND_TOPMOST } else { HWND_NOTOPMOST };
+    let _ = SetWindowPos (hwnd.HWND(), insert_after, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
 } }
 
 

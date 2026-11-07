@@ -10,7 +10,7 @@ use planif::schedule::TaskScheduler;
 use planif::schedule_builder::{Action, ScheduleBuilder};
 use planif::settings::{Duration, LogonType, PrincipalSettings, RunLevel, Settings};
 
-use crate::{win_apis, tray, config};
+use crate::{win_apis, config};
 
 
 fn autostart_task_name () -> Option<String> {
@@ -149,7 +149,7 @@ pub fn proc_req__toggle_switche_autostart (toggle_elev:bool) {
             // we'll only enable the non-elev task if the elev task is not enabled
             let _ = setup_task__switche_autostart(false);
         }
-        tray::update_auto_start_flags ();
+        // tray menu flags will be refreshed once the tray is (re)built
     } );
 }
 
