@@ -6,6 +6,8 @@ pub mod render_lists;
 pub mod app;
 pub mod app_window;
 pub mod hotkeys;
+pub mod tray;
+pub mod search;
 pub mod ui;
 pub mod icons;
 pub mod win_apis;

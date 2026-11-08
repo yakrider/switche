@@ -166,7 +166,7 @@ impl WinDatsManager {
     }
 
     pub(crate) fn trigger_enum_windows_query_immdt (&'static self, qt: EnumWindowsReqType) {
-        info!("***** starting new enum-windows query! **** (query type: {:?})",qt);
+        //info!("***** starting new enum-windows query! **** (query type: {:?})",qt);
         self.cur_win_enum_type.set(qt);    // we might be getting called directly, so gotta cache it up for that
         let call_id_old = self.cur_call_id.fetch_add (1, Ordering::Relaxed);
         *self.hwnds_acc.write().unwrap() = Vec::new();
@@ -221,6 +221,8 @@ impl WinDatsManager {
         use win_apis::*;
 
         if ss.check_self_hwnd (hwnd) { return false }
+        // exclude any of our own process's other windows too (e.g. the debug console, tray/hotkey helpers)
+        if win_apis::get_hwnd_pid (hwnd) == win_apis::get_cur_pid() { return false }
 
         if !check_window_visible  (hwnd)  { return false }
         if  check_window_cloaked  (hwnd)  { return false }

@@ -22,7 +22,7 @@ group_mode_enabled = true
 number_of_top_recents_in_grouped_mode = 9
 
 # Number of z-order last windows to display in recents-list when grouped mode is enabled .. default is 0
-number_of_last_recents_in_grouped_mode = 0
+number_of_last_recents_in_grouped_mode = 4
 
 # Enable switche to replace windows task-switcher upon alt-tab press .. default is true
 # Note this this will install a lower-level keyboard hook to intercept alt-tab presses
@@ -103,9 +103,9 @@ exe_manual_ordering_seq = [
 
 
 # Hotkeys to invoke switche, specified as a string array .. default is ["F1", "Ctrl+Alt+F15"]
-# Hotkey specification strings map directly to tauri hotkey specs .. they are summarized below :
-#   Alt, Shift, Ctrl, Cmd, CmdOrCtrl, CmdOrAlt, A-Z, 0-9, F1-F24,
-#   ArrowUp, ArrowDown, ArrowLeft, ArrowRight, Home, End, PageUp, PageDown,
+# Hotkey specification strings use modifier names (Alt, Shift, Ctrl, Cmd, CmdOrCtrl) and one
+# key name, combined with '+' (e.g. "Ctrl+Shift+A") .. the available key names are summarized below :
+#   A-Z, 0-9, F1-F24, Up/Down/Left/Right, Home, End, PageUp/PageDown,
 #   Space, Enter, Backspace, Delete, Insert, Tab, Escape
 # Combinations can be created as e.g. : "Ctrl+Shift+A"
 # Note: Updates to this config are ONLY picked up upon restarting (not just reloading) the application

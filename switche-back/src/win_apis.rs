@@ -7,17 +7,17 @@ use std::sync::{LazyLock, Mutex, RwLock};
 use tracing::{error, info};
 
 use windows::core::{GUID, PCWSTR, PWSTR};
-use windows::Win32::Foundation::{CloseHandle, GetLastError, BOOL, ERROR_INSUFFICIENT_BUFFER, HANDLE, HWND, LPARAM, RECT, WPARAM};
+use windows::Win32::Foundation::{CloseHandle, GetLastError, BOOL, ERROR_INSUFFICIENT_BUFFER, HANDLE, HWND, LPARAM, POINT, RECT, WPARAM};
 use windows::Win32::Graphics::Dwm::{DwmGetWindowAttribute, DWMWA_CLOAKED, DWMWA_EXTENDED_FRAME_BOUNDS};
 use windows::Win32::Security::{GetTokenInformation, TokenElevation, TOKEN_ELEVATION, TOKEN_QUERY};
 use windows::Win32::Storage::Packaging::Appx::{
     GetApplicationUserModelId, GetPackagePathByFullName, GetPackagesByPackageFamily, ParseApplicationUserModelId
 };
 use windows::Win32::System::Diagnostics::Debug::OutputDebugStringW;
-use windows::Win32::System::Threading::{GetCurrentProcess, OpenProcess, OpenProcessToken, QueryFullProcessImageNameW, SetPriorityClass, HIGH_PRIORITY_CLASS, PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION};
+use windows::Win32::System::Threading::{GetCurrentProcess, GetCurrentProcessId, OpenProcess, OpenProcessToken, QueryFullProcessImageNameW, SetPriorityClass, HIGH_PRIORITY_CLASS, PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION};
 use windows::Win32::System::WindowsProgramming::GetUserNameW;
 use windows::Win32::UI::HiDpi::{GetDpiForWindow, SetThreadDpiAwarenessContext, DPI_AWARENESS_CONTEXT_SYSTEM_AWARE};
-use windows::Win32::UI::Input::KeyboardAndMouse::{GetKeyState, VK_SHIFT};
+use windows::Win32::UI::Input::KeyboardAndMouse::{GetAsyncKeyState, GetKeyState, VK_LBUTTON, VK_SHIFT};
 use windows::Win32::UI::Shell::PropertiesSystem::{IPropertyStore, SHGetPropertyStoreForWindow, PROPERTYKEY};
 use windows::Win32::UI::WindowsAndMessaging::*;
 
@@ -188,6 +188,15 @@ pub fn win_get_window_rect (hwnd:Hwnd) -> RECT { unsafe {
     rect
 } }
 
+pub fn win_get_cursor_pos () -> Option <(i32, i32)> { unsafe {
+    let mut p = POINT::default();
+    if GetCursorPos (&mut p).is_ok() { Some ((p.x, p.y)) } else { None }
+} }
+
+pub fn win_left_button_down () -> bool { unsafe {
+    GetAsyncKeyState (VK_LBUTTON.0 as i32) < 0
+} }
+
 pub fn win_get_dpi_scale (hwnd:Hwnd) -> f32 { unsafe {
     let dpi = GetDpiForWindow (hwnd.HWND());
     if dpi == 0 { 1.0 } else { dpi as f32 / 96.0 }
@@ -198,6 +207,12 @@ pub fn win_set_toolwindow_style (hwnd:Hwnd) { unsafe {
     let ex_style = GetWindowLongPtrW (hwnd.HWND(), GWL_EXSTYLE);
     let new_ex_style = (ex_style | WS_EX_TOOLWINDOW.0 as isize) & !(WS_EX_APPWINDOW.0 as isize);
     let _ = SetWindowLongPtrW (hwnd.HWND(), GWL_EXSTYLE, new_ex_style);
+} }
+
+/// removes the maximize-box style, so double-clicking a caption-drag region won't maximize
+pub fn win_set_not_maximizable (hwnd:Hwnd) { unsafe {
+    let style = GetWindowLongPtrW (hwnd.HWND(), GWL_STYLE);
+    let _ = SetWindowLongPtrW (hwnd.HWND(), GWL_STYLE, style & !(WS_MAXIMIZEBOX.0 as isize));
 } }
 
 /// toggles the HWND_TOPMOST/NOTOPMOST state without moving/activating the window
@@ -213,6 +228,8 @@ pub fn get_hwnd_pid (hwnd:Hwnd) -> u32 { unsafe {
     let _ = GetWindowThreadProcessId (hwnd.HWND(), Some(&mut pid));
     pid
 } }
+
+pub fn get_cur_pid () -> u32 { unsafe { GetCurrentProcessId() } }
 pub fn get_pid_exe_path (pid:u32) -> Option<String> { unsafe {
     const MAX_LEN : usize = 1024;
     let h_proc = OpenProcess (PROCESS_QUERY_LIMITED_INFORMATION, false, pid) .ok()?;

@@ -1,8 +1,9 @@
 #![allow (non_snake_case)]
 
+use std::sync::OnceLock;
 use std::thread;
 
-use windows::Win32::Foundation::{GetLastError, ERROR_ALREADY_EXISTS};
+use windows::Win32::Foundation::{CloseHandle, GetLastError, SetLastError, ERROR_ALREADY_EXISTS, ERROR_SUCCESS, HANDLE};
 use windows::Win32::System::Threading::CreateMutexW;
 use windows::Win32::UI::WindowsAndMessaging::{MessageBoxW, MB_ICONERROR, MB_OK, MB_SETFOREGROUND};
 
@@ -10,17 +11,35 @@ use crate::switche::SwitcheState;
 use crate::win_apis;
 
 
+// handle to the global single-instance mutex, kept for the process lifetime
+// .. (and closed explicitly when restarting, so the new instance can start right away)
+static INSTANCE_MUTEX : OnceLock <isize> = OnceLock::new();
+
+
 pub fn check_another_instance_running () -> bool { unsafe {
     let switche_mutex = windows::core::w!("Global\\Switche_SingleInstance_Mutex");
-    // the os-global-mutex can fail to create, or it can return prior-created mutex and have last-error say ERROR_ALREADY_EXISTS
-    if CreateMutexW (None, true, switche_mutex) .is_err() {
-        return true;
+    SetLastError (ERROR_SUCCESS);
+    match CreateMutexW (None, true, switche_mutex) {
+        Ok (handle) => {
+            // the os-global-mutex can return a prior-created mutex and have last-error say ERROR_ALREADY_EXISTS
+            if GetLastError() == ERROR_ALREADY_EXISTS {
+                let _ = CloseHandle (handle);
+                true
+            } else {
+                let _ = INSTANCE_MUTEX.set (handle.0 as isize);
+                false
+            }
+        }
+        Err (_) => true,
     }
-    if GetLastError() == ERROR_ALREADY_EXISTS {
-        return true;
-    }
-    false
 } }
+
+/// closes our single-instance mutex handle, so a restarted instance doesn't see us as still running
+pub fn release_single_instance_mutex () {
+    if let Some (&h) = INSTANCE_MUTEX.get() {
+        unsafe { let _ = CloseHandle (HANDLE (h as *mut _)); }
+    }
+}
 
 pub fn display_mult_instance_error () {
     thread::spawn ( move || unsafe {
@@ -69,6 +88,8 @@ pub fn setup_window_styles (ss: &'static SwitcheState) {
     if hwnd.is_null() { return }
     // keep ourselves out of the taskbar and out of the OS alt-tab list
     win_apis::win_set_toolwindow_style (hwnd);
+    // the drag indicator is a caption-drag region; don't let a double click maximize
+    win_apis::win_set_not_maximizable (hwnd);
 }
 
 pub fn setup_self_window (ss: &'static SwitcheState) {
@@ -89,7 +110,40 @@ pub fn setup_self_window (ss: &'static SwitcheState) {
 }
 
 
+/// starts a native window-move loop (driven by the physical mouse button state)
+/// .. gpui's start_window_move() is a no-op on windows, and the HTCAPTION hit-test
+/// .. route makes double-click auto-size impossible, so we do the move ourselves
+pub fn start_window_drag (ss: &'static SwitcheState) {
+    let hwnd = ss.get_self_hwnd();
+    if hwnd.is_null() { return }
+    let Some ((cursor_x0, cursor_y0)) = win_apis::win_get_cursor_pos() else { return };
+    let rect = win_apis::win_get_window_rect (hwnd);
+    let (w, h) = (rect.right - rect.left, rect.bottom - rect.top);
+    if w <= 0 || h <= 0 { return }
+
+    thread::spawn ( move || {
+        loop {
+            if !win_apis::win_left_button_down() { break }
+            if let Some ((cursor_x, cursor_y)) = win_apis::win_get_cursor_pos() {
+                let x = rect.left + (cursor_x - cursor_x0);
+                let y = rect.top  + (cursor_y - cursor_y0);
+                win_apis::win_move_to (hwnd, x, y, w, h);
+            }
+            thread::sleep (std::time::Duration::from_millis (4));
+        }
+        persist_self_window_dimensions_now (ss);
+    } );
+}
+
+
 /// persists the current window location/size to configs (if enabled there)
 pub fn persist_self_window_dimensions (ss: &'static SwitcheState) {
     ss.conf.deferred_update_conf__switche_window (ss);
+}
+
+/// synchronous variant, for when the process is about to exit
+pub fn persist_self_window_dimensions_now (ss: &'static SwitcheState) {
+    if ss.conf.check_flag__restore_window_dimensions() {
+        ss.conf.update_conf__switche_window_now (ss);
+    }
 }

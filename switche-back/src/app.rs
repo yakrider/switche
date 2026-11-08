@@ -1,7 +1,5 @@
 #![allow (non_snake_case)]
 
-use std::env;
-
 use gpui::prelude::*;
 use gpui::{
     px, size, Bounds, Point, WindowBackgroundAppearance, WindowBounds, WindowKind, WindowOptions,
@@ -16,9 +14,8 @@ use crate::{app_window, hotkeys, win_apis};
 
 pub fn run_switche_gpui (ss: &'static SwitcheState) {
 
-    // dev convenience: lets a locally built instance run while the installed one is up
-    let skip_single_instance = env::var ("SWITCHE_SKIP_SINGLE_INSTANCE").is_ok();
-    if !skip_single_instance && app_window::check_another_instance_running() {
+    // dev builds skip the check, so a locally built instance can run alongside the installed one
+    if !cfg!(debug_assertions) && app_window::check_another_instance_running() {
         app_window::display_mult_instance_error();
         return
     }
@@ -70,7 +67,8 @@ pub fn run_switche_gpui (ss: &'static SwitcheState) {
         // .. Moving/resizing the native window from within the callback fires GPUI's
         // .. window callbacks while the app borrow is still held, which logs
         // .. "RefCell already borrowed" and drops those bounds updates.
-        let show_on_start = env::var ("SWITCHE_SHOW_ON_START").is_ok();
+        // dev builds come up with the window shown (the installed/release app starts in the tray)
+        let show_on_start = cfg!(debug_assertions);
         cx.spawn (async move |cx:&mut gpui::AsyncApp| {
 
             // style/position before anything can show the window
@@ -90,9 +88,12 @@ pub fn run_switche_gpui (ss: &'static SwitcheState) {
                 ss.handle_ui_request (UiRequest::Refresh);
             }
 
-            // start draining engine events now that the window and app borrow are settled
+            // tray + event pump, now that the window and app borrow are settled
             if let Some (app) = app_entity.borrow().as_ref().cloned() {
-                let _ = app.update (cx, |app, cx| app.start_event_pump (cx, rx));
+                let _ = app.update (cx, |app, cx| {
+                    app.setup_tray (cx);
+                    app.start_event_pump (cx, rx);
+                });
             }
         }) .detach();
     });

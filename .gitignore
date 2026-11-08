@@ -1,62 +1,15 @@
-
-
-./**/project/project/
-./**/project/target/
-
-
-# tauri
-/**/gen/schemas/
-
-# node 
-node_modules/
-
-# mill specific
-out/
-
-# cargo specific
+# Rust build output
 /target/
+/switche-back/target/
 
-# sbt specific
-.cache/
-.history/
-.history
-.lib/
-dist/*
-target/
-lib_managed/
-src_managed/
-project/boot/
-project/plugins/project/
+# installer output
+/dist/
 
-
-# Eclipse/Scala-IDE specific
-.scala_dependencies
-.worksheet
-.cache*
-#.settings
-#.project
-.classpath
-*/bin
-*.prefs
-
-
-# IntelliJ IDEA
-.idea
-.bsp
+# IDE
+.idea/
+.vscode/
 *.iml
-out/
 
-# other IDEs etc
-.metals
-.vscode
-
-
-# Package Files #
-*.jar
-*.war
-*.ear
-*.cache-main
-
-# GitBook
-doc/_book
-/_book
+# OS noise
+Thumbs.db
+Desktop.ini

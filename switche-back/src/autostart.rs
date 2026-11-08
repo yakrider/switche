@@ -149,7 +149,8 @@ pub fn proc_req__toggle_switche_autostart (toggle_elev:bool) {
             // we'll only enable the non-elev task if the elev task is not enabled
             let _ = setup_task__switche_autostart(false);
         }
-        // tray menu flags will be refreshed once the tray is (re)built
+        // ask the ui to re-read the task states and update the tray check items
+        crate::switche::request_autostart_flags_refresh();
     } );
 }
 

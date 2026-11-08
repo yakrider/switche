@@ -348,34 +348,35 @@ impl Config {
         } }
         None
     }
-    pub fn update_conf__switche_window (&'static self, ss: &'static SwitcheState) {
+    pub fn update_conf__switche_window_now (&'static self, ss: &'static SwitcheState) {
         info! ("update_conf__switche_window");
-        std::thread::spawn ( move || {
-            let hwnd = ss.get_self_hwnd();
-            if hwnd.is_null() { return }
-            // we'll filter out the minimized loc (-32000), as well as any actually minimized state
-            if win_apis::check_window_minimized (hwnd) {
-                win_apis::window_activate (hwnd);
-                ss.proc_menu_req__switche_reload();
-                return
-            }
-            let rect = win_apis::win_get_window_rect (hwnd);
-            let (x, y) = (rect.left, rect.top);
-            let (w, h) = (rect.right - rect.left, rect.bottom - rect.top);
-            if x == -32000 && y == -32000 { return }
-            if w <= 0 || h <= 0 { return }
-            let mut toml_guard = self.toml.write().unwrap();
-            if let Some(toml) = toml_guard.as_mut() {
-                toml ["window_dimensions"] ["location"] ["x"]  = toml_edit::value (x as i64);
-                toml ["window_dimensions"] ["location"] ["y"]  = toml_edit::value (y as i64);
-                toml ["window_dimensions"] ["size"] ["width"]  = toml_edit::value (w as i64);
-                toml ["window_dimensions"] ["size"] ["height"] = toml_edit::value (h as i64);
-                drop(toml_guard);
-                self.write_back_toml_if_changed();
-            } else {
-                error!("update_conf__switche_window: failed to get window position, size, or toml doc");
-            }
-        } );
+        let hwnd = ss.get_self_hwnd();
+        if hwnd.is_null() { return }
+        // we'll filter out the minimized loc (-32000), as well as any actually minimized state
+        if win_apis::check_window_minimized (hwnd) {
+            win_apis::window_activate (hwnd);
+            ss.proc_menu_req__switche_reload();
+            return
+        }
+        let rect = win_apis::win_get_window_rect (hwnd);
+        let (x, y) = (rect.left, rect.top);
+        let (w, h) = (rect.right - rect.left, rect.bottom - rect.top);
+        if x == -32000 && y == -32000 { return }
+        if w <= 0 || h <= 0 { return }
+        let mut toml_guard = self.toml.write().unwrap();
+        if let Some(toml) = toml_guard.as_mut() {
+            toml ["window_dimensions"] ["location"] ["x"]  = toml_edit::value (x as i64);
+            toml ["window_dimensions"] ["location"] ["y"]  = toml_edit::value (y as i64);
+            toml ["window_dimensions"] ["size"] ["width"]  = toml_edit::value (w as i64);
+            toml ["window_dimensions"] ["size"] ["height"] = toml_edit::value (h as i64);
+            drop(toml_guard);
+            self.write_back_toml_if_changed();
+        } else {
+            error!("update_conf__switche_window: failed to get window position, size, or toml doc");
+        }
+    }
+    pub fn update_conf__switche_window (&'static self, ss: &'static SwitcheState) {
+        std::thread::spawn ( move || self.update_conf__switche_window_now (ss) );
     }
     pub fn deferred_update_conf__switche_window (&'static self, ss: &'static SwitcheState) {
         static dfr_ex: LazyLock <DeferredExecutor> = LazyLock::new (DeferredExecutor::default);

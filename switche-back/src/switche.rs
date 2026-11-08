@@ -114,6 +114,8 @@ pub enum UiEvent {
     RenderLists (RenderList_Pl),
     IconEntry (IconEntry_Pl),
     Configs (Configs_Pl),
+    RefreshAutostartFlags,
+    Redraw,
     Quit,
 }
 
@@ -131,6 +133,7 @@ pub enum UiRequest {
     SwitcheEscape,
     SwitcheQuit,
     SelfAutoResize,
+    WindowDragStart,
 
     GrpModeEnable,
     GrpModeDisable,
@@ -157,6 +160,16 @@ fn send_ui_event (ev: UiEvent) {
         // the channel is unbounded, so this never blocks
         let _ = tx.send_blocking (ev);
     }
+}
+
+/// asks the ui to re-read the autostart task states and update the tray menu
+pub fn request_autostart_flags_refresh () {
+    send_ui_event (UiEvent::RefreshAutostartFlags);
+}
+
+/// asks the ui to repaint (e.g. after a win32-side move/resize)
+pub fn request_ui_redraw () {
+    send_ui_event (UiEvent::Redraw);
 }
 
 
@@ -388,20 +401,6 @@ impl SwitcheState {
 
     fn self_window_activate (&'static self) {
         self.is_dismissed.clear();
-        /*
-        self.app_handle .read().unwrap() .iter() .for_each (|ah| {
-            ah .webview_windows() .get("main") .iter() .for_each (|w| {
-                let (_, _) = ( w.show(), w.set_focus() );
-                //let (_, _, _) = ( w.show(), w.set_focus(), w.set_always_on_top(true) );
-                // ^^ disabling setting always-on-top since it doesnt play too well when auto-hide is disabled ..
-                // (instead, we will always set always-on-top when auto-hide is enabled)
-            } );
-        } );
-        // ^^ had to revert back to using our own self-hide upon Tauri-2.0 migration ..
-        //      looks like whatever theyre' doing now, causes a hook fgnd report for switche hwnd right-after self-hide
-        //      needless to say, that screws up our logic, and so we'd rather just do the hiding ourselves
-        // - and looks like when doing our own hide, tauri cant unhide it either .. so we do the unhide oursevles too
-        */
         let self_hwnd = self.get_self_hwnd();
         spawn ( move || {
             win_apis::window_activate (self_hwnd);
@@ -410,12 +409,6 @@ impl SwitcheState {
 
     fn self_window_hide (&'static self) {
         self.is_dismissed.set();
-        /*
-        self.app_handle .read().unwrap() .iter() .for_each ( |ah| {
-            ah .webview_windows() .get("main") .map (|w| w.hide() );
-        } );
-        // refer to notes above .. had to revert back to using our own hide again post tauri-2.0 migration
-        */
         let self_hwnd = self.get_self_hwnd();
         spawn ( move || {
             win_apis::window_hide (self_hwnd);
@@ -453,12 +446,18 @@ impl SwitcheState {
     }
 
     fn handle_req__switche_quit (&'static self) {
-        crate::app_window::persist_self_window_dimensions (self);
+        crate::app_window::persist_self_window_dimensions_now (self);
         send_ui_event (UiEvent::Quit);
     }
 
     fn handle_req__self_auto_resize (&'static self) {
-        crate::app_window::auto_setup_self_window (self);
+        // move the window off the gpui event/update borrow, else gpui's own
+        // .. on_resize/on_moved callbacks fail with a RefCell double borrow and
+        // .. we end up painting at the old size
+        spawn ( move || {
+            crate::app_window::auto_setup_self_window (self);
+            crate::switche::request_ui_redraw();
+        } );
     }
 
     fn handle_req__update_group_mode (&'static self, enabled:bool) {
@@ -466,7 +465,7 @@ impl SwitcheState {
     }
 
     fn handle_req__update_auto_hide (&'static self, enabled:bool) {
-        crate::app_window::sync_self_always_on_top (self, enabled);
+        spawn ( move || crate::app_window::sync_self_always_on_top (self, enabled) );
         self.conf.deferred_update_conf__auto_hide (enabled);
     }
 
@@ -480,9 +479,14 @@ impl SwitcheState {
 
     pub(crate) fn handle_req__data_load (&'static self) {
         // ^ this triggers on reload .. we'll use that to refresh our hooks, configs etc too
+        // if we're currently in use, flush the live window dims before re-reading configs,
+        // .. so a manual resize/move isn't lost by the reload
+        if self.is_fgnd.is_set() {
+            crate::app_window::persist_self_window_dimensions_now (self);
+        }
         self.conf.load();
         self.conf.reload_log_level();
-        crate::app_window::setup_self_window(self);
+        spawn ( move || crate::app_window::setup_self_window (self) );
         self.render_lists_m .reload_exes_excl_set (self.conf.get_exe_exclusions_list());
         self.render_lists_m .reload_ordering_ref_map (self.conf.get_exe_manual_ordering_seq());
         self.i_proc.re_set_hooks();
@@ -522,6 +526,7 @@ impl SwitcheState {
             UiRequest::SwitcheEscape   => self.handle_req__switche_escape(),
             UiRequest::SwitcheQuit     => self.handle_req__switche_quit(),
             UiRequest::SelfAutoResize  => self.handle_req__self_auto_resize(),
+            UiRequest::WindowDragStart => crate::app_window::start_window_drag (self),
 
             UiRequest::GrpModeEnable   => self.handle_req__update_group_mode (true),
             UiRequest::GrpModeDisable  => self.handle_req__update_group_mode (false),
@@ -543,7 +548,7 @@ impl SwitcheState {
 
 
 
-    /*****  tauri registered hotkeys and app event handling   ******/
+    /*****  registered hotkeys and app event handling   ******/
 
     pub fn proc_app_window_event__focus (&'static self) {
         //if self.is_dismissed.is_set() || self.is_fgnd.is_clear() { self.handle_event__switche_fgnd() }

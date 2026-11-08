@@ -11,6 +11,11 @@ license = "MIT"
 repository = ""
 edition = "2021"
 
+# keep the historical capitalized exe name (external hotkey managers key off it)
+[[bin]]
+name = "Switche"
+path = "src/main.rs"
+
 
 [dependencies]
 gpui = "=0.2.2"
@@ -42,6 +47,12 @@ planif = { git = "https://github.com/yakrider/planif.git", branch = "yakrider" }
 
 
 
+
+[target.'cfg(windows)'.dependencies]
+tray-icon = { version = "0.20", features = ["common-controls-v6"] }
+
+[target.'cfg(windows)'.build-dependencies]
+embed-resource = "3.0"
 
 [target.'cfg(windows)'.dependencies.windows]
 version = "0.58"
