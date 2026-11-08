@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use gpui::prelude::*;
 use gpui::{div, px, rgb, rgba, AnyElement, ClickEvent, Context, CursorStyle, FontWeight, MouseButton, MouseDownEvent, SharedString, StyledText, Window};
 
@@ -9,6 +11,29 @@ use super::*;
 
 
 impl SwitcheApp {
+    /// briefly flashes the release-armed indicator .. the old frontend did this for refreshes
+    /// .. and menu actions, as lightweight feedback that the action was taken
+    pub(super) fn blip_armed_indicator (&mut self, cx:&mut Context<Self>) {
+        self.armed_blip_gen = self.armed_blip_gen.wrapping_add (1);
+        let gen = self.armed_blip_gen;
+        self.armed_blip = true;
+        cx.notify();
+        let (tx, rx) = async_channel::bounded (1);
+        std::thread::spawn ( move || {
+            std::thread::sleep (Duration::from_millis (200));
+            let _ = tx.send_blocking (());
+        } );
+        cx.spawn (async move |this, cx| {
+            let _ = rx.recv().await;
+            let _ = this.update (cx, |this, cx| {
+                if this.armed_blip_gen == gen {
+                    this.armed_blip = false;
+                    cx.notify();
+                }
+            });
+        }) .detach();
+    }
+
     fn render_menu_link (&self, cx:&mut Context<Self>) -> AnyElement {
         div()
             .w(px(36.)).h(px(RIBBON_H))
@@ -305,7 +330,7 @@ impl SwitcheApp {
             .child (self.indicator ("M", self.configs.rbtn_whl_enabled, C_RBTN_WHL, TooltipKind::RbtnWheel, cx))
             .child (self.indicator ("⇅", self.configs.grp_ordering_is_auto, C_RIBBON, TooltipKind::AutoOrder, cx))
             .child (self.indicator ("⚿", self.configs.is_elevated, C_ELEV, TooltipKind::Elev, cx))
-            .child (self.indicator ("R", self.scroll_armed, C_ARMED, TooltipKind::Armed, cx))
+            .child (self.indicator ("R", self.scroll_armed || self.armed_blip, C_ARMED, TooltipKind::Armed, cx))
             .child (self.render_drag_indicator (cx))
             .child (
                 div().w(px(40.)).flex_none().text_center().text_color(rgb(C_RIBBON))
@@ -319,7 +344,7 @@ impl SwitcheApp {
             )
             .child (self.render_search (window))
             .child (self.indicator ("!", false, C_WARN, TooltipKind::Warn, cx))
-            .child (self.indicator ("?", false, C_HELP, TooltipKind::Help, cx));
+            .child (self.indicator ("?", true, C_HELP, TooltipKind::Help, cx));
 
         ribbon.into_any_element()
     }

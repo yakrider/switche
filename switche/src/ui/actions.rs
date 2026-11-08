@@ -8,9 +8,8 @@ use super::*;
 
 impl SwitcheApp {
     pub(super) fn handle_invoke (&mut self) {
-        if self.is_dismissed || !self.is_fgnd {
-            self.is_dismissed = false;
-            self.is_fgnd = true;
+        if self.is_dismissed || !self.is_fgnd || self.fresh_show {
+            self.fresh_show = false; self.is_dismissed = false; self.is_fgnd = true;
             self.reset_focus();
         } else {
             self.focus_next();
@@ -21,9 +20,8 @@ impl SwitcheApp {
     // ---------------- actions ----------------
 
     pub(super) fn do_escape (&mut self) {
-        self.scroll_armed = false;
-        self.is_dismissed = true;
-        self.menu_open = false;
+        self.is_dismissed = true; self.fresh_show = false;
+        self.scroll_armed = false; self.menu_open = false;
         self.exit_search (false);
         ss().handle_ui_request (UiRequest::SwitcheEscape);
     }
@@ -32,9 +30,8 @@ impl SwitcheApp {
         cx.quit();
     }
     pub(super) fn activate_cur (&mut self) {
-        self.scroll_armed = false;
-        self.is_dismissed = true;
-        self.menu_open = false;
+        self.is_dismissed = true; self.fresh_show = false;
+        self.scroll_armed = false; self.menu_open = false;
         if let Some (id) = self.cur_elem {
             ss().handle_ui_request (UiRequest::WindowActivate (id.hwnd));
         }
@@ -48,17 +45,21 @@ impl SwitcheApp {
     pub(super) fn peek_cur (&mut self) {
         if let Some (id) = self.cur_elem { ss().handle_ui_request (UiRequest::WindowPeek (id.hwnd)) }
     }
-    pub(super) fn handle_refresh (&mut self) {
+    pub(super) fn handle_refresh (&mut self, cx:&mut Context<Self>) {
+        self.blip_armed_indicator (cx);
         ss().handle_ui_request (UiRequest::Refresh);
     }
     pub(super) fn handle_reload (&mut self, cx:&mut Context<Self>) {
-        self.in_search = false;
+        self.blip_armed_indicator (cx);
+        self.in_search = false; self.fresh_show = false;
+        self.scroll_armed = false; self.menu_open = false;
         self.search_text.clear();
         self.prior_search_text.clear();
         self.match_count = 0;
-        self.menu_open = false;
         self.cur_elem = None;
         self.scroll_offset = 0.0;
+        self.hover_anchor = None;
+        self.hovered_row = None;
         ss().handle_ui_request (UiRequest::DataLoad);
         cx.notify();
     }
@@ -74,8 +75,10 @@ impl SwitcheApp {
     }
     pub(super) fn do_menu_action (&mut self, action:MenuAction, cx:&mut Context<Self>) {
         self.menu_open = false;
+        // menu actions blink the armed indicator as feedback (as in the old frontend)
+        self.blip_armed_indicator (cx);
         match action {
-            MenuAction::Refresh       => self.handle_refresh(),
+            MenuAction::Refresh       => self.handle_refresh (cx),
             MenuAction::Reload        => self.handle_reload (cx),
             MenuAction::GroupToggle   => self.toggle_group_mode(),
             MenuAction::AutoHideToggle=> self.toggle_auto_hide(),

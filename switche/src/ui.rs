@@ -15,8 +15,8 @@ use std::time::{Duration, Instant};
 use gpui::prelude::*;
 use gpui::{
     div, px, rgb, AnyElement, AsyncApp, Context,
-    FocusHandle, KeyDownEvent, MouseButton, MouseDownEvent, Render,
-    RenderImage, ScrollDelta, ScrollWheelEvent, TextRun, Window,
+    FocusHandle, KeyDownEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Render,
+    RenderImage, ScrollDelta, ScrollHandle, ScrollWheelEvent, TextRun, Window,
 };
 
 
@@ -80,6 +80,9 @@ enum TooltipKind { AltTab, RbtnWheel, AutoOrder, Elev, Armed, Drag, Counts, Warn
 
 
 const MIN_SCROLL_SPACING : Duration = Duration::from_millis (15);
+// suppress hover-driven selection for a short while after invocations, keys, wheel and clicks
+// .. so the programmatically/keyboard-selected row isn't stolen by a stationary pointer
+const HOVER_LOCK : Duration = Duration::from_millis (200);
 
 
 
@@ -162,7 +165,9 @@ pub struct SwitcheApp {
     auto_hide    : bool,
     is_dismissed : bool,
     is_fgnd      : bool,
+    fresh_show   : bool,
     scroll_armed : bool,
+    menu_open    : bool,
 
     in_search          : bool,
     search_text        : String,
@@ -172,7 +177,6 @@ pub struct SwitcheApp {
     prior_search_text  : String,
     match_count        : usize,
 
-    menu_open    : bool,
     cur_elem     : Option <ElemId>,
     tray         : Option <crate::tray::TrayState>,
 
@@ -190,13 +194,21 @@ pub struct SwitcheApp {
 
     display        : Vec <DispItem>,
     display_height : f32,
+    layout_dirty   : bool,
     scroll_offset  : f32,
     last_viewport_h: f32,
     last_action_stamp : Instant,
     last_nav_stamp    : Instant,
+    hover_lock_stamp  : Instant,
+    hover_anchor      : Option <ElemId>,
+    hovered_row       : Option <ElemId>,
+    armed_blip        : bool,
+    armed_blip_gen    : u64,
     nav_repeat_ms     : u64,
 
     help_text_w : Option <f32>,
+    help_scroll : ScrollHandle,
+    help_drag : Option <(f32, f32)>,   // (cursor y, scroll offset) while dragging the help thumb
     bounds_subscription : Option <gpui::Subscription>,
 }
 
@@ -208,8 +220,8 @@ impl SwitcheApp {
 
         let focus_handle = cx.focus_handle();
         let now = Instant::now();
-        // release renders comfortably at 30ms .. debug is too slow for that and just looks glitchy
-        let nav_repeat_ms = if cfg!(debug_assertions) { 60 } else { 30 };
+        // release renders comfortably at 15ms .. debug gets glitchy when up/dn keys held
+        let nav_repeat_ms = if cfg!(debug_assertions) { 60 } else { 15 };
         tracing::info! ("nav-repeat-interval: {}ms", nav_repeat_ms);
 
         let mut app = SwitcheApp {
@@ -225,7 +237,9 @@ impl SwitcheApp {
             auto_hide    : true,
             is_dismissed : false,
             is_fgnd      : false,
+            fresh_show   : false,
             scroll_armed : false,
+            menu_open    : false,
 
             in_search         : false,
             search_text       : String::new(),
@@ -235,7 +249,6 @@ impl SwitcheApp {
             prior_search_text : String::new(),
             match_count       : 0,
 
-            menu_open : false,
             cur_elem  : None,
             tray      : None,
 
@@ -253,13 +266,21 @@ impl SwitcheApp {
 
             display         : Vec::new(),
             display_height  : 0.0,
+            layout_dirty    : false,
             scroll_offset   : 0.0,
             last_viewport_h : 0.0,
             last_action_stamp : now,
             last_nav_stamp    : now - Duration::from_secs (1),
+            hover_lock_stamp  : now - Duration::from_secs (1),
+            hover_anchor      : None,
+            hovered_row       : None,
+            armed_blip        : false,
+            armed_blip_gen    : 0,
             nav_repeat_ms,
 
             help_text_w : None,
+            help_scroll : ScrollHandle::new(),
+            help_drag : None,
             bounds_subscription : None,
         };
 
@@ -331,18 +352,23 @@ impl SwitcheApp {
             }
             UiEvent::Notice (n) => self.handle_notice (n, cx),
             UiEvent::RenderLists (pl) => {
+                if pl.rl == self.render_list && pl.grl == self.grouped_render_list { return }
+                // ^^ if the render lists are the same, skip the heavy work
                 tracing::debug! ("ui: render list ({} rows / {} groups)", pl.rl.len(), pl.grl.len());
                 self.render_list = pl.rl;
                 self.grouped_render_list = pl.grl;
-                self.rebuild_render_state();
-                self.resync_focus_after_rebuild();
+                self.layout_dirty = true;
                 cx.notify();
             }
             UiEvent::WinDatEntry (pl) => {
                 tracing::trace! ("ui: win-dat-entry {:?}", pl.hwnd);
+                let is_new = !self.hwnd_map.contains_key (&pl.hwnd);
                 self.hwnd_map.insert (pl.hwnd, pl);
-                self.rebuild_render_state();
-                self.resync_focus_after_rebuild();
+                if is_new || self.in_search {
+                    // title/exe/icon/elevation are all read live from hwnd_map during render,
+                    // .. so we need a rebuild only if in search mode, or its a new entry
+                    self.layout_dirty = true;
+                }
                 cx.notify();
             }
             UiEvent::IconEntry (ie) => {
@@ -356,16 +382,28 @@ impl SwitcheApp {
                 self.configs = conf;
                 self.group_mode = self.configs.group_mode_enabled;
                 self.auto_hide  = self.configs.auto_hide_enabled;
-                self.rebuild_render_state();
-                self.resync_focus_after_rebuild();
+                self.layout_dirty = true;
                 cx.notify();
             }
         }
     }
 
 
+    /// applies any coalesced layout rebuild before navigation needs the row maps.
+    /// .. this matters because the window is hidden between invocations, and no render
+    /// .. (and therefore no deferred rebuild) may happen while it is hidden
+    pub(super) fn flush_layout (&mut self) {
+        if self.layout_dirty {
+            self.rebuild_render_state();
+            self.resync_focus_after_rebuild();
+        }
+    }
+
+
     fn handle_notice (&mut self, n:Backend_Notice, cx:&mut Context<Self>) {
         use Backend_Notice::*;
+        self.flush_layout();
+        self.lock_hover();
         match n {
             backend_req__app_invoke => {
                 self.handle_invoke();
@@ -378,8 +416,8 @@ impl SwitcheApp {
             backend_req__scroll_up => {
                 if !self.verify_spacing() { return }
                 self.scroll_armed = true;
-                if self.is_dismissed || !self.is_fgnd {
-                    self.is_dismissed = false; self.is_fgnd = true;
+                if self.is_dismissed || !self.is_fgnd || self.fresh_show {
+                    self.fresh_show = false; self.is_dismissed = false; self.is_fgnd = true;
                     self.reset_focus();
                     self.focus_prev();
                 } else {
@@ -393,22 +431,27 @@ impl SwitcheApp {
                 if !self.is_dismissed && self.is_fgnd && self.scroll_armed { self.scroll_armed = false }
             }
             backend_req__switche_escape => {
-                self.scroll_armed = false;
-                self.is_dismissed = true;
-                self.menu_open = false;
+                self.is_dismissed = true; self.fresh_show = false;
+                self.scroll_armed = false; self.menu_open = false;
+                self.hover_anchor = None;
+                self.hovered_row = None;
                 self.exit_search (false);
             }
             backend_req__switche_reload => {
                 self.handle_reload (cx);
             }
             switche_event__in_fgnd => {
-                self.is_fgnd = true;
-                self.is_dismissed = false;
+                // note if this is a fresh show (the app_invoke notice may arrive after
+                // .. this one, and it needs to know to reset rather than advance)
+                if self.is_dismissed || !self.is_fgnd { self.fresh_show = true }
+                self.is_fgnd = true; self.is_dismissed = false;
             }
             switche_event__fgnd_lost => {
-                self.is_fgnd = false;
-                self.scroll_armed = false;
+                self.is_fgnd = false; self.fresh_show = false;
                 if self.auto_hide { self.is_dismissed = true }
+                self.scroll_armed = false;
+                self.hover_anchor = None;
+                self.hovered_row = None;
                 self.exit_search (false);
             }
         }
@@ -464,6 +507,7 @@ impl SwitcheApp {
     }
 
     fn rebuild_render_state (&mut self) {
+        self.layout_dirty = false;
         self.recents_map.clear();
         self.grouped_map.clear();
         self.recents_ids.clear();
@@ -513,11 +557,14 @@ impl SwitcheApp {
 
     fn build_normal_rows (&mut self, recents_rows:&mut Vec <Row>, grouped_rows:&mut Vec <Row>) {
         let capped = self.get_capped_recents();
-        for (i, (rle, grp)) in capped.iter().enumerate() {
+        for (rle, grp) in capped.iter() {
             if !self.hwnd_map.contains_key (&rle.hwnd) { continue }
             let id = ElemId { hwnd: rle.hwnd, block: Block::R };
             let elem_t = if self.group_mode { ElemT::GR } else { ElemT::R };
-            self.recents_map.insert (id, OrderedElem { nav_idx: i, render_y: rle.y, yg: -1 });
+            // nav index must match the compacted ids vec (capped entries whose hwnd we
+            // .. dont have yet are skipped, so the unfiltered capped index would misalign)
+            let nav_idx = self.recents_ids.len();
+            self.recents_map.insert (id, OrderedElem { nav_idx, render_y: rle.y, yg: -1 });
             self.recents_ids.push (id);
             recents_rows.push (Row { id, render_y: rle.y, grp: *grp, elem_t, dimmed: false, matched: false });
         }
@@ -590,12 +637,14 @@ impl SwitcheApp {
 
     fn handle_wheel (&mut self, ev:&ScrollWheelEvent, cx:&mut Context<Self>) {
         if self.menu_open || self.help_visible() { return }
+        self.flush_layout();
         let (dy, dx) = match ev.delta {
             ScrollDelta::Pixels (p) => (f32::from(p.y), f32::from(p.x)),
             ScrollDelta::Lines  (p) => (p.y, p.x),
         };
         if dy == 0.0 && dx == 0.0 { return }
         if !self.verify_spacing() { return }
+        self.lock_hover();
 
         let up = if ev.modifiers.shift && dx != 0.0 { dx > 0.0 } else { dy > 0.0 };
         // note: gpui reports wheel-up as positive y, while the old web deltaY was positive for wheel-down
@@ -637,6 +686,9 @@ impl Render for SwitcheApp {
 
         let win_h = f32::from(window.bounds().size.height);
         self.last_viewport_h = (win_h - 2.0 * (ROOT_PAD + BORDER) - RIBBON_H).max (0.0);
+
+        // any events since the last frame collapse into a single rebuild here
+        self.flush_layout();
         self.recompute_display_height();
 
         let mut items : Vec <AnyElement> = Vec::with_capacity (self.display.len());
@@ -684,7 +736,26 @@ impl Render for SwitcheApp {
             .font_family("Segoe UI").text_size(px(TEXT_SZ))
             .track_focus(&self.focus_handle)
             .capture_key_down (cx.listener (|this, ev:&KeyDownEvent, window, cx| this.handle_key_down (ev, window, cx)))
+            // drag tracking for the help panel's scrollbar thumb
+            .on_mouse_move (cx.listener (|this, ev:&MouseMoveEvent, _window, cx| {
+                if this.help_drag.is_some() {
+                    if ev.pressed_button == Some (MouseButton::Left) {
+                        this.help_drag_move (f32::from (ev.position.y));
+                    } else {
+                        // missed the mouse-up (e.g. released outside the window)
+                        this.help_drag = None;
+                    }
+                    cx.notify();
+                }
+            }))
+            .on_mouse_up (MouseButton::Left, cx.listener (|this, _ev:&MouseUpEvent, _window, cx| {
+                if this.help_drag.take().is_some() { cx.notify(); }
+            }))
             .on_mouse_down (MouseButton::Left, cx.listener (|this, _ev:&MouseDownEvent, _window, cx| {
+                this.lock_hover();
+                // clicking anywhere disarms the release-activation state (old frontend behavior)
+                let was_armed = this.scroll_armed;
+                this.scroll_armed = false;
                 if this.menu_open || this.help_open {
                     this.menu_open = false;
                     this.help_open = false;
@@ -693,6 +764,8 @@ impl Render for SwitcheApp {
                     this.help_hide_gen = this.help_hide_gen.wrapping_add (1);
                     this.tooltip = None;
                     cx.notify()
+                } else if was_armed {
+                    cx.notify();
                 }
             }))
             .child (self.render_ribbon (cx, &*window))

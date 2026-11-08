@@ -11,6 +11,9 @@ impl SwitcheApp {
         let alt   = ks.modifiers.alt;
         let shift = ks.modifiers.shift;
 
+        self.flush_layout();
+        self.lock_hover();
+
         if matches! (key, "shift" | "control" | "alt" | "platform" | "function" | "capslock" | "numlock") { return }
 
         let left_right_is_nav = (key == "left" || key == "right") && (!self.in_search || self.scroll_armed || alt);
@@ -99,7 +102,7 @@ impl SwitcheApp {
             }
             _ if alt || self.scroll_armed => handled = false,
 
-            "r" | "f" if ctrl => self.handle_refresh(),
+            "r" | "f" if ctrl => self.handle_refresh (cx),
             "g" if ctrl => self.toggle_group_mode(),
             "w" if ctrl => self.close_cur(),
             "p" if ctrl => self.peek_cur(),

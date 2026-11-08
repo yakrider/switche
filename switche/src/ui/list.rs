@@ -1,7 +1,7 @@
 use std::ops::Range;
 
 use gpui::prelude::*;
-use gpui::{div, px, rgb, rgba, AnyElement, Context, CursorStyle, FontWeight, ImageSource, MouseButton, MouseDownEvent, SharedString, StyledText, Window};
+use gpui::{div, px, rgb, rgba, AnyElement, Context, CursorStyle, FontWeight, ImageSource, MouseButton, MouseDownEvent, MouseMoveEvent, SharedString, StyledText, Window};
 
 use crate::search::{check_search_exe_title, highlight_ranges, split_highlighted};
 
@@ -28,7 +28,11 @@ impl SwitcheApp {
         };
 
         let id = row.id;
-        let selected = self.cur_elem == Some (id);
+        // we'll maintain matching highlights in the dimmed recents block during search for better usability
+        let selected = self.cur_elem == Some (id)
+            || (self.in_search && self.group_mode
+                && row.elem_t == ElemT::GR
+                && self.cur_elem.is_some_and (|c| c.hwnd == id.hwnd));
 
         let check = if self.in_search {
             Some (check_search_exe_title (wde, &self.search_text, row.render_y))
@@ -97,10 +101,13 @@ impl SwitcheApp {
             }))
             .id (SharedString::from (format!("row-{}-{:?}", id.hwnd.0, id.block)))
             .on_hover (cx.listener (move |this, hovered:&bool, _window, cx| {
-                if *hovered && !this.menu_open && !this.help_visible() && this.cur_elem != Some (id) {
-                    this.set_cur (Some (id));
-                    cx.notify();
-                }
+                if this.menu_open || this.help_visible() { return }
+                if *hovered { this.hover_row_entered (id, cx) }
+                else { this.hover_row_left (id) }
+            }))
+            .on_mouse_move (cx.listener (move |this, _ev:&MouseMoveEvent, _window, cx| {
+                if this.menu_open || this.help_visible() { return }
+                this.hover_row_entered (id, cx);
             }))
             .child (
                 div().w(px(EXE_W)).flex_none().flex().flex_row().justify_end()
@@ -119,7 +126,7 @@ impl SwitcheApp {
                 div().flex_1().min_w(px(0.)).overflow_hidden().whitespace_nowrap()
                     .child(title_el)
             )
-            .when (row.dimmed, |d| d.opacity(0.8))
+            .when (row.dimmed, |d| d.opacity(0.75))
             .into_any_element()
     }
 }

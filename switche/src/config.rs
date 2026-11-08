@@ -443,25 +443,30 @@ impl DeferredExecutor {
         }
     }
     pub fn add_deferral_dur (&self, dur:time::Duration) {
-        let _ = self.deadline.lock().unwrap().checked_add(dur);
+        let mut deadline = self.deadline.lock().unwrap();
+        if let Some(t) = deadline.checked_add(dur) {
+            *deadline = t
+        }
     }
     pub fn is_reset (&self) -> bool {
         *self.deadline.lock().unwrap() == SystemTime::UNIX_EPOCH
     }
     pub fn is_due (&self) -> bool {
-        !self.is_reset() && *self.deadline.lock().unwrap() < SystemTime::now()
+        let deadline = *self.deadline.lock().unwrap();
+        deadline != SystemTime::UNIX_EPOCH && deadline < SystemTime::now()
     }
 
     fn check_defered_action (&self, action:Action) {
-        // if nobody already completed the action (and reset the time), and its time, we'll trigger it
-        // (else, someone else moved the deadline and is waiting for it, so we can exit)
-        if self.is_due() {
+        // we'll check-and-reset atomically, (same logic as using reset/is_reset/is_due above, but under same lock)
+        {
             let mut deadline = self.deadline.lock().unwrap();
-            action();
+            if *deadline == SystemTime::UNIX_EPOCH || *deadline >= SystemTime::now() {
+                // ^^ deadline was reset, or pushed forward (so its not due yet)
+                return
+            }
             *deadline = SystemTime::UNIX_EPOCH;
-        } else {
-            //debug! ("deadline reset or pushed forward, nothing to do")
         }
+        action();
     }
 
     /// Sets up a deferred action which will only trigger after a deferrable deadline has passed.<br>

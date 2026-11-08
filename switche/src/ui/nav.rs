@@ -14,6 +14,45 @@ impl SwitcheApp {
         true
     }
 
+    /// starts (or extends) the hover dead-time after invocations, key presses, wheel and clicks.
+    /// .. without it, the pointer sitting somewhere in the list steals the highlight from the
+    /// .. row that was just selected programmatically / by keyboard
+    pub(super) fn lock_hover (&mut self) {
+        self.hover_lock_stamp = Instant::now();
+        // remember the row the pointer is over, so jiggles within that same row stay ignored
+        // .. even after the dead-time expires (until the pointer leaves that row)
+        if self.hover_anchor.is_none() {
+            self.hover_anchor = self.hovered_row;
+        }
+    }
+
+    pub(super) fn hover_locked (&self) -> bool {
+        self.hover_lock_stamp.elapsed() < HOVER_LOCK
+    }
+
+    /// called on row hover-start and row mouse-move
+    pub(super) fn hover_row_entered (&mut self, id:ElemId, cx:&mut Context<Self>) {
+        self.hovered_row = Some (id);
+        if self.hover_locked() {
+            // anchoring to whatever row is currently under the pointer also covers the rows
+            // .. that scroll under a stationary pointer while the wheel/key dead-time is active
+            self.hover_anchor = Some (id);
+            return
+        }
+        if self.hover_anchor == Some (id) { return }
+        self.hover_anchor = None;
+        if self.cur_elem != Some (id) {
+            self.set_cur (Some (id));
+            cx.notify();
+        }
+    }
+
+    /// called on row hover-end
+    pub(super) fn hover_row_left (&mut self, id:ElemId) {
+        if self.hovered_row == Some (id) { self.hovered_row = None }
+        if self.hover_anchor == Some (id) { self.hover_anchor = None }
+    }
+
 
 
 

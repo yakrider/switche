@@ -1,7 +1,7 @@
 use std::time::Duration;
 
 use gpui::prelude::*;
-use gpui::{div, px, rgb, AnyElement, Context, FontWeight, MouseButton, MouseDownEvent, SharedString, Window};
+use gpui::{div, point, px, rgb, AnyElement, Context, CursorStyle, FontWeight, MouseButton, MouseDownEvent, SharedString, Window};
 
 use super::*;
 
@@ -153,6 +153,19 @@ impl SwitcheApp {
         (text_w + 32.0).min (max_w).max (max_w.min (480.0))
     }
 
+    /// moves the help text while its scrollbar thumb is being dragged
+    pub(super) fn help_drag_move (&mut self, cursor_y:f32) {
+        let Some ((y0, off0)) = self.help_drag else { return };
+        let view_h = f32::from (self.help_scroll.bounds().size.height);
+        let max = f32::from (self.help_scroll.max_offset().height);
+        let thumb_h = (view_h * view_h / (view_h + max)).clamp (12.0, view_h);
+        let track_h = view_h - thumb_h;
+        if max <= 0.5 || track_h <= 0.0 { return }
+        let off = self.help_scroll.offset();
+        let new_y = (off0 - (cursor_y - y0) / track_h * max).clamp (-max, 0.0);
+        self.help_scroll.set_offset (point (off.x, px (new_y)));
+    }
+
     pub(super) fn render_help_panel (&mut self, window:&Window, cx:&mut Context<Self>) -> AnyElement {
         let top = ROOT_PAD + RIBBON_H;
         let panel_h = (f32::from (window.bounds().size.height) - top - 12.0).max(0.0);
@@ -161,6 +174,7 @@ impl SwitcheApp {
 
         let mut content = div().id (SharedString::from ("help-scroll")).size_full()
             .overflow_y_scroll().scrollbar_width(px(4.))
+            .track_scroll (&self.help_scroll)
             .p(px(8.)).pr(px(10.)).flex().flex_col().gap(px(4.))
             .text_size(px(12.)).text_color(rgb(C_TOOLTIP));
 
@@ -174,9 +188,18 @@ impl SwitcheApp {
             });
         }
 
-        div()
+        // gpui reserves space for a scrollbar but doesn't draw one, so we draw a thumb
+        // .. and make it draggable by feeding the drag delta back into the scroll handle
+        let max_scroll = f32::from (self.help_scroll.max_offset().height);
+        let thumb = (max_scroll > 0.5).then (|| {
+            let thumb_h = (panel_h * panel_h / (panel_h + max_scroll)).clamp (12.0, panel_h);
+            let frac = (-f32::from (self.help_scroll.offset().y) / max_scroll).clamp (0.0, 1.0);
+            (frac * (panel_h - thumb_h), thumb_h)
+        });
+
+        let mut panel = div()
             .absolute().top(px(top)).right(px(0.))
-            .w(px(panel_w)).h(px(panel_h))
+            .w(px(panel_w)).h(px(panel_h)).overflow_hidden()
             .bg(rgb(C_TOOLTIP_BG)).shadow_lg()
             .id (SharedString::from ("help-panel"))
             .on_hover (cx.listener (|this, hovered:&bool, _window, cx| {
@@ -190,7 +213,23 @@ impl SwitcheApp {
                 cx.notify()
             }))
             .on_mouse_down (MouseButton::Left, |_ev:&MouseDownEvent, _window, cx| { cx.stop_propagation() })
-            .child (content)
-            .into_any_element()
+            .child (content);
+        if let Some ((thumb_top, thumb_h)) = thumb {
+            panel = panel.child (
+                // 8px grab zone at the right edge, with the 4px bar painted inside it
+                div().absolute().right(px(0.)).top(px(thumb_top)).w(px(8.)).h(px(thumb_h))
+                    .flex().justify_end()
+                    .cursor(CursorStyle::ResizeUpDown)
+                    .on_mouse_down (MouseButton::Left, cx.listener (|this, ev:&MouseDownEvent, _window, cx| {
+                        cx.stop_propagation();
+                        this.help_drag = Some ((f32::from (ev.position.y), f32::from (this.help_scroll.offset().y)));
+                        cx.notify()
+                    }))
+                    .child (
+                        div().w(px(4.)).h_full().bg(rgb(C_SCROLL_THUMB)).rounded_sm()
+                    )
+            );
+        }
+        panel.into_any_element()
     }
 }
