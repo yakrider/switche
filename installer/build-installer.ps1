@@ -10,14 +10,14 @@ if (-not $env:GPUI_FXC_PATH) {
 }
 
 Write-Host 'Building release binary ...'
-cargo build --release --manifest-path switche-back\Cargo.toml
+cargo build --release --manifest-path switche\Cargo.toml
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
-$cargoToml = Get-Content switche-back\Cargo.toml
+$cargoToml = Get-Content switche\Cargo.toml
 $version = ([regex]::Match(($cargoToml -join "`n"), '(?m)^version\s*=\s*"([^"]+)"')).Groups[1].Value
-if (-not $version) { throw 'could not read version from switche-back\Cargo.toml' }
+if (-not $version) { throw 'could not read version from switche\Cargo.toml' }
 
-$exe = Join-Path (Get-Location) 'switche-back\target\release\Switche.exe'
+$exe = Join-Path (Get-Location) 'switche\target\release\Switche.exe'
 if (-not (Test-Path $exe)) { throw "release binary not found at $exe" }
 $sizeKb = [int]((Get-Item $exe).Length / 1KB)
 
@@ -37,7 +37,7 @@ Write-Host "Packaging $version ..."
     "/DAPP_VERSION=$version" `
     "/DAPP_SIZE_KB=$sizeKb" `
     "/DSRC_EXE=$exe" `
-    "/DICON=$PSScriptRoot\..\switche-back\switche.ico" `
+    "/DICON=$PSScriptRoot\..\switche\switche.ico" `
     "/DOUTFILE=$outFile" `
     "$PSScriptRoot\switche.nsi"
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

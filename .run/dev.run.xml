@@ -2,7 +2,7 @@
   <configuration default="false" name="dev" type="CargoCommandRunConfiguration" factoryName="Cargo Command" focusToolWindowBeforeRun="true">
     <option name="buildProfileId" value="dev" />
     <option name="command" value="run" />
-    <option name="workingDirectory" value="file://$PROJECT_DIR$/switche-back" />
+    <option name="workingDirectory" value="file://$PROJECT_DIR$/switche" />
     <envs />
     <option name="emulateTerminal" value="true" />
     <option name="channel" value="DEFAULT" />

@@ -1,6 +1,6 @@
 # Rust build output
 /target/
-/switche-back/target/
+/switche/target/
 
 # installer output
 /dist/

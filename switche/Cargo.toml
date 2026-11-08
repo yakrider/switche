@@ -3,7 +3,7 @@ cargo-features = ["codegen-backend"]
 
 [package]
 name = "switche"
-version = "4.0.0"
+version = "4.0.1"
 description = "Switche - Searchable Task Switcher"
 authors = ["yakrider"]
 keywords = ["switcher", "alt-tab", "task-switcher", "window-switcher" ]

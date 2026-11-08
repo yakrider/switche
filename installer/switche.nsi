@@ -13,7 +13,7 @@ Unicode true
 !include "LogicLib.nsh"
 
 !ifndef APP_VERSION
-  !error "APP_VERSION must be defined (e.g. /DAPP_VERSION=4.0.0)"
+  !error "APP_VERSION must be defined (e.g. /DAPP_VERSION=4.0.1)"
 !endif
 !ifndef APP_SIZE_KB
   !define APP_SIZE_KB 0

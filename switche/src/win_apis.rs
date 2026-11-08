@@ -202,6 +202,11 @@ pub fn win_get_dpi_scale (hwnd:Hwnd) -> f32 { unsafe {
     if dpi == 0 { 1.0 } else { dpi as f32 / 96.0 }
 } }
 
+/// the pixel size the shell's notification area (tray) uses at the current system dpi
+pub fn win_get_small_icon_size () -> u32 { unsafe {
+    GetSystemMetrics (SM_CXSMICON) .max (16) as u32
+} }
+
 /// hides this window from the taskbar and from the OS alt-tab list
 pub fn win_set_toolwindow_style (hwnd:Hwnd) { unsafe {
     let ex_style = GetWindowLongPtrW (hwnd.HWND(), GWL_EXSTYLE);
