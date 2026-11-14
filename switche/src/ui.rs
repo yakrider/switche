@@ -9,14 +9,13 @@ mod actions;
 mod search_edit;
 
 use std::collections::HashMap;
-use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use gpui::prelude::*;
 use gpui::{
     div, px, rgb, AnyElement, AsyncApp, Context,
     FocusHandle, KeyDownEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Render,
-    RenderImage, ScrollDelta, ScrollHandle, ScrollWheelEvent, TextRun, Window,
+    ScrollDelta, ScrollHandle, ScrollWheelEvent, TextRun, Window,
 };
 
 
@@ -135,28 +134,10 @@ impl DispItem {
 
 fn ss () -> &'static SwitcheState { SwitcheState::instance() }
 
-fn decode_icon (ico_str:&str) -> Option <Arc <RenderImage>> {
-    let b64 = ico_str.strip_prefix ("data:image/png;base64,")?;
-    use base64::Engine;
-    let bytes = base64::engine::general_purpose::STANDARD.decode (b64) .ok()?;
-    let mut data = image::load_from_memory (&bytes) .ok()? .to_rgba8();
-    for pixel in data.chunks_exact_mut (4) {
-        // the old ui dimmed icons to match the text: filter: brightness(90%) saturate(100%)
-        for c in 0..3 { pixel[c] = (pixel[c] as f32 * 0.9) as u8 }
-        // gpui's image buffers are BGRA (same conversion it does for its own png loading)
-        pixel.swap (0, 2);
-    }
-    let frame = image::Frame::new (data);
-    Some (Arc::new (RenderImage::new (smallvec::smallvec![frame])))
-}
-
-
-
 pub struct SwitcheApp {
     pub focus_handle : FocusHandle,
 
     hwnd_map             : HashMap <Hwnd, WinDatEntry_Pl>,
-    icons                : HashMap <u32, Arc <RenderImage>>,
     render_list          : Vec <RenderListEntry>,
     grouped_render_list  : Vec <Vec <RenderListEntry>>,
     configs              : Configs_Pl,
@@ -228,7 +209,6 @@ impl SwitcheApp {
             focus_handle,
 
             hwnd_map             : HashMap::new(),
-            icons                : HashMap::new(),
             render_list          : Vec::new(),
             grouped_render_list  : Vec::new(),
             configs              : Configs_Pl::default(),
@@ -370,13 +350,6 @@ impl SwitcheApp {
                     self.layout_dirty = true;
                 }
                 cx.notify();
-            }
-            UiEvent::IconEntry (ie) => {
-                if let Some (img) = decode_icon (&ie.ico_str) {
-                    tracing::trace! ("ui: icon {}", ie.ico_id);
-                    self.icons.insert (ie.ico_id as u32, img);
-                    cx.notify();
-                }
             }
             UiEvent::Configs (conf) => {
                 self.configs = conf;

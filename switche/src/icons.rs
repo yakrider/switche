@@ -1,18 +1,21 @@
 
 
+use std::collections::hash_map::DefaultHasher;
 use std::collections::{HashMap, HashSet};
-use std::hash::Hash;
+use std::hash::{Hash, Hasher};
 use std::string::ToString;
-use std::sync::{RwLock, OnceLock};
+use std::sync::{Arc, RwLock, OnceLock};
 //use no_deadlocks::RwLock;
 use std::thread::{sleep, spawn};
 use std::time::{Duration};
 
+use gpui::RenderImage;
+use image::{Frame, RgbaImage};
 use rand::Rng;
 use tracing::warn;
 
 
-use crate::switche::{Hwnd, SwitcheState, WinDatEntry, IconEntry_Pl};
+use crate::switche::{Hwnd, SwitcheState, WinDatEntry};
 
 
 
@@ -27,9 +30,9 @@ struct IconCacheMapping { cache_idx:usize, is_stale:bool }
 pub struct IconsManager {
 
     // we'll store icons in a vec and just add remove mappings to its indices for associated hwnds
-    icons_cache        : RwLock <Vec <String>>,
-    // we'll use hashes of icons as map-key for reverse lookup
-    icons_idx_map      : RwLock <HashMap <String, usize>>,
+    icons_cache        : RwLock <Vec <Arc <RenderImage>>>,
+    // we'll use content-hashes of the icon pixels as map-key for reverse lookup
+    icons_idx_map      : RwLock <HashMap <u64, usize>>,
 
     // for hwnds, key needs to incl the exe-path as a hpp pair
     icons_hpp_map      : RwLock <HashMap <HwndExePathPair, IconCacheMapping>>,
@@ -50,15 +53,7 @@ impl IconsManager {
 
     pub fn instance () -> &'static IconsManager {
         static INSTANCE: OnceLock <IconsManager> = OnceLock::new();
-        INSTANCE .get_or_init ( || {
-            let icons_mgr = IconsManager::default();
-            let empty_icon : String = {
-                "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAAAklEQVR4AewaftIAAAAPSURBVGMYBaNgFIwCKAAABBAAAY7F3VUAAAAASUVORK5CYII="
-            } .to_string();
-            icons_mgr.icons_idx_map .write().unwrap() .insert (empty_icon.clone(), 0);
-            icons_mgr.icons_cache .write().unwrap() .push (empty_icon);
-            icons_mgr
-        } )
+        INSTANCE .get_or_init ( || IconsManager::default() )
     }
 
     fn make_hwnd_path_pair (wde:&WinDatEntry) -> Option<HwndExePathPair> {
@@ -72,8 +67,16 @@ impl IconsManager {
     pub fn get_cached_icon_idx (&'static self, wde:&WinDatEntry) -> Option<usize> {
         // note that to allow marking stale, we always return from hwnd map, even for those where the cache idx is from exe-icon cache
         Self::make_hwnd_path_pair (wde) .and_then ( |hpp| {
-            self.icons_hpp_map.read().unwrap() .get(&hpp) .map (|icm| icm.cache_idx) .filter (|idx| *idx != 0)
+            self.icons_hpp_map.read().unwrap() .get(&hpp) .map (|icm| icm.cache_idx)
         } )
+    }
+
+    /// returns the shared, immutable render image for a window's icon (if one has been extracted yet)
+    pub fn get_cached_icon_image (&'static self, wde:&WinDatEntry) -> Option <Arc <RenderImage>> {
+        let idx = Self::make_hwnd_path_pair (wde) .and_then ( |hpp| {
+            self.icons_hpp_map.read().unwrap() .get(&hpp) .map (|icm| icm.cache_idx)
+        })?;
+        self.icons_cache.read().unwrap() .get (idx) .cloned()
     }
 
     pub fn remove_cached_icon_mapping (&'static self, wde:&WinDatEntry) {
@@ -108,8 +111,8 @@ impl IconsManager {
         // ^^ UWP apps sometimes seem to hang at hwnd icon query winapi calls, but we shouldnt get here anyway as they have separate handling now
         let hppc = hpp.clone();
         spawn ( move || unsafe {
-            if let Some(ico_str) = icon_extraction::extract_hwnd_icon (hppc.hwnd.HWND()) {
-                self.icon_string_callback (&hppc, ico_str, true);
+            if let Some(img) = icon_extraction::extract_hwnd_icon (hppc.hwnd.HWND()) {
+                self.icon_data_callback (&hppc, img, true);
             } else {
                 self.queue_exe_icon_query (&hppc);
             }
@@ -124,15 +127,15 @@ impl IconsManager {
             let was_past_queried = self.queried_exe_cache.read().unwrap().contains(&hppc.path);
             if !was_past_queried {
                 self.queried_exe_cache .write().unwrap() .insert (hppc.path.clone());
-                let ico_str = if hppc.is_uwp {
+                let img = if hppc.is_uwp {
                     // note that for uwm, the hpp has already been populated with icon path (instead of exe path)
                     icon_extraction::extract_png_icon (hppc.path.as_str())
                 } else {
                     icon_extraction::extract_exe_path_icon (&hppc.path)
                 };
-                let ico_str = ico_str .or_else (|| icon_extraction::get_default_icon());
+                let img = img .or_else (|| icon_extraction::get_default_icon());
                 // note ^^ this is the win default 'exe' icon, not our empty icon
-                ico_str .into_iter() .for_each (|s| self.icon_string_callback (&hppc, s, false));
+                img .into_iter() .for_each (|i| self.icon_data_callback (&hppc, i, false));
             } else {
                 // if multiple hwnds for same app get queued, because of random delay and cache checking the second one might end up here
                 // so hopefully we have a cached icon and we can populate its icm with it
@@ -145,31 +148,33 @@ impl IconsManager {
         } } );
     }
 
-    fn icon_string_callback (&'static self, hpp:&HwndExePathPair, icon_str:String, is_from_hwnd:bool) {
-        if !icon_str.is_empty() {
-            let ss = SwitcheState::instance();
-            // we'll acquire write locks on cache and idx so there's no race w multiple cbs hitting here
+    fn icon_data_callback (&'static self, hpp:&HwndExePathPair, img:RgbaImage, is_from_hwnd:bool) {
+        if img.width() == 0 || img.height() == 0 {
+            warn! ("WARNING: got empty icon-image callback for hwnd: {:?} {:?}", hpp.hwnd, &hpp.path.rsplit('\\').next());
+            if is_from_hwnd { self.queue_exe_icon_query (hpp) }
+            return
+        }
+        // apply the old-ui presentation (dim + gpui's BGRA layout) before caching
+        let img = finalize_icon (img);
+        let icon_hash = hash_icon (&img);
+
+        // icons are content-addressed, so identical pixels always resolve to the same
+        // .. immutable cache entry (and therefore the same shared RenderImage)
+        let prior_cache_idx = self.icons_idx_map.read().unwrap() .get (&icon_hash) .copied();
+        let cache_idx = prior_cache_idx .unwrap_or_else ( || {
             let mut icm = self.icons_cache.write().unwrap();
             let mut iidm = self.icons_idx_map.write().unwrap();
-            let prior_cache_idx = iidm.get(&icon_str).copied();
-            let cache_idx = prior_cache_idx .unwrap_or_else ( || {
-                let new_cache_idx = icm.len();
-                iidm.insert(icon_str.clone(), new_cache_idx);
-                icm.push(icon_str.clone());
-                new_cache_idx
-            } );
-            // lets release the guards before we call anywhere outside to emit updates
-            drop(icm); drop(iidm);
-            if prior_cache_idx.is_none() {
-                ss .emit_icon_entry ( &IconEntry_Pl { ico_id: cache_idx, ico_str: icon_str } );
-            }
-            //debug!("ico-cb (exe?:{:?}) (idx:{:?}) : {:?}", !is_from_hwnd, cache_idx, hpp.path.clone().split(r"\").last());
-            // now we can send it for hwnd/path icon-idx mappings
-            self.handle_icon_cache_mapping_update (cache_idx, is_from_hwnd, prior_cache_idx.is_none(), hpp);
-        } else {
-            warn! ("WARNING: got empty icon-string callback for hwnd: {:?} {:?}", hpp.hwnd, &hpp.path.clone().rsplit('\\').next());
-            if is_from_hwnd { self.queue_exe_icon_query (hpp) }
-        }
+            // re-check under the write lock in case another callback just inserted it
+            if let Some (idx) = iidm.get(&icon_hash).copied() { return idx }
+            let new_cache_idx = icm.len();
+            iidm.insert (icon_hash, new_cache_idx);
+            let frames : smallvec::SmallVec<[Frame; 1]> = smallvec::smallvec![Frame::new (img)];
+            icm.push (Arc::new (RenderImage::new (frames)));
+            new_cache_idx
+        } );
+        //debug!("ico-cb (exe?:{:?}) (idx:{:?}) : {:?}", !is_from_hwnd, cache_idx, hpp.path.clone().split(r"\").last());
+        // now we can send it for hwnd/path icon-idx mappings
+        self.handle_icon_cache_mapping_update (cache_idx, is_from_hwnd, prior_cache_idx.is_none(), hpp);
     }
     fn handle_icon_cache_mapping_update (&'static self, cache_idx:usize, is_from_hwnd:bool, is_new_icon:bool, hpp:&HwndExePathPair) {
         let ss = SwitcheState::instance();
@@ -198,22 +203,11 @@ impl IconsManager {
     // */
 
 
-    pub fn emit_all_icon_entries (&'static self) {
-        let ss = SwitcheState::instance();
-        self.icons_cache .read().unwrap() .iter() .enumerate() .for_each (|(iid, ico)| {
-            ss .emit_icon_entry ( &IconEntry_Pl { ico_id: iid, ico_str: ico.clone() } );
-        } );
-        // this should only happen on reload etc, fine time to dump out icons and mappings for examination too
-        //self.icons_hpp_map .read().unwrap() .iter().for_each(|(hpp,icm)| debug!("{:?}, {:?}", icm, hpp));
-        //self.icons_exe_map  .read().unwrap() .iter().for_each(|(exe,idx)| debug!("{:?}, {:?}", idx, exe));
-    }
-
-
     pub fn process_found_hwnd_exe_path (&'static self, wde:&WinDatEntry) {
         if wde.should_exclude == Some(true) { return }
         if let Some(hpp) = Self::make_hwnd_path_pair(wde) {
             let was_past_queried = self.queried_hpp_cache.read().unwrap().get(&wde.hwnd).filter(|h| *h == &hpp).is_some();
-            let do_refresh = Some(true) != self.icons_hpp_map.read().unwrap().get(&hpp).map(|icm| !icm.is_stale && icm.cache_idx > 0);
+            let do_refresh = Some(true) != self.icons_hpp_map.read().unwrap().get(&hpp).map(|icm| !icm.is_stale);
             if !was_past_queried || do_refresh {
                 self.queried_hpp_cache .write().unwrap() .insert(wde.hwnd, hpp.clone());
                 if wde.is_uwp_app != Some(true) {
@@ -225,6 +219,27 @@ impl IconsManager {
     }
 
 
+}
+
+
+/// Applies the old-ui's icon presentation (brightness 90%) and converts to gpui's BGRA layout.
+fn finalize_icon (mut img:RgbaImage) -> RgbaImage {
+    for p in img.pixels_mut() {
+        p.0[0] = (p.0[0] as f32 * 0.9) as u8;
+        p.0[1] = (p.0[1] as f32 * 0.9) as u8;
+        p.0[2] = (p.0[2] as f32 * 0.9) as u8;
+        p.0.swap (0, 2);
+    }
+    img
+}
+
+/// Content-hash of an icon's pixels (used to dedup identical icons across windows/exes).
+fn hash_icon (img:&RgbaImage) -> u64 {
+    let mut h = DefaultHasher::new();
+    img.width() .hash (&mut h);
+    img.height().hash (&mut h);
+    img.as_raw().hash (&mut h);
+    h.finish()
 }
 
 
@@ -294,14 +309,11 @@ pub(crate) mod uwp_processing {
 
 
 pub(crate) mod icon_extraction {
-    use std::io::{Cursor};
     use std::mem;
     use std::ops::Not;
     use std::path::Path;
 
-    use image::{ImageFormat, RgbaImage};
-    use base64::Engine;
-    use base64::engine::general_purpose::STANDARD;
+    use image::RgbaImage;
 
     use windows::Win32::Foundation::{HINSTANCE, HWND, LPARAM, WPARAM};
     use windows::Win32::Graphics::Gdi::{BITMAP, DeleteObject, GetBitmapBits, GetObjectW, HGDIOBJ};
@@ -311,16 +323,16 @@ pub(crate) mod icon_extraction {
         ICONINFO, IDI_APPLICATION, LoadIconW, SendMessageA, WM_GETICON
     };
 
-    pub unsafe fn extract_exe_path_icon (exe_path:&String) -> Option<String> {
+    pub unsafe fn extract_exe_path_icon (exe_path:&String) -> Option<RgbaImage> {
         //debug!("exe-ico-ext-- {:?}", exe_path.split(r"\").last());
         let mut path_arr = [0u8; 128];
         path_arr[.. exe_path.len()] .copy_from_slice (exe_path.as_bytes());
         let mut icon_idx = 0u16;
         let hicon = ExtractAssociatedIconA (HINSTANCE::default(), &mut path_arr, &mut icon_idx);
-        hicon_to_base64_str(hicon)
+        hicon_to_rgba(hicon)
     }
 
-    pub unsafe fn extract_hwnd_icon (hwnd:HWND) -> Option<String> {
+    pub unsafe fn extract_hwnd_icon (hwnd:HWND) -> Option<RgbaImage> {
         let mut hicon = HICON::default();
         // first we'll ask the window directly for the latest icon it has
         if hicon.is_invalid() { hicon = HICON ( SendMessageA ( hwnd, WM_GETICON, WPARAM (ICON_BIG    as usize), LPARAM(0) ) .0 as *mut _ ) }
@@ -330,26 +342,19 @@ pub(crate) mod icon_extraction {
         if hicon.is_invalid() { hicon = HICON ( GetClassLongPtrW ( hwnd, GCL_HICON ) as *mut _   ) }
         if hicon.is_invalid() { hicon = HICON ( GetClassLongPtrW ( hwnd, GCL_HICONSM ) as *mut _  ) }
 
-        hicon_to_base64_str(hicon)
+        hicon_to_rgba(hicon)
     }
-    pub unsafe fn get_default_icon () -> Option<String> {
+    pub unsafe fn get_default_icon () -> Option<RgbaImage> {
         // IDI_APPLICATION pulls the default system 'application' icon as fallback
         let hicon = LoadIconW (HINSTANCE::default(), IDI_APPLICATION) .unwrap_or_default();
-        hicon_to_base64_str(hicon)
+        hicon_to_rgba(hicon)
     }
-    pub unsafe fn extract_png_icon (png_path:&str) -> Option<String> {
-        png_file_to_base64_str (Path::new(png_path))
-    }
-    unsafe fn png_file_to_base64_str (png_path:&Path) -> Option<String> {
-        image::open (png_path) .map (|img| {
-            let mut buf = Cursor::new(vec![0u8]);
-            img .write_to (&mut buf, ImageFormat::Png) .expect("png write error");
-            Some ( format! ("data:image/png;base64,{}",  STANDARD.encode(buf.into_inner()) ) )
-        } ) .ok() .flatten()
+    pub unsafe fn extract_png_icon (png_path:&str) -> Option<RgbaImage> {
+        image::open (Path::new(png_path)) .ok() .map (|img| img.to_rgba8())
     }
 
 
-    unsafe fn hicon_to_base64_str (hicon: HICON) -> Option<String> {
+    unsafe fn hicon_to_rgba (hicon: HICON) -> Option<RgbaImage> {
 
         if hicon.is_invalid() { return None }
 
@@ -401,12 +406,7 @@ pub(crate) mod icon_extraction {
                 *a = if mask_byte & mask_bit != 0 { *a } else { 0xFF };
             }
         }
-        let img = RgbaImage::from_vec (bmp.bmWidth as u32, bmp.bmHeight as u32, buf).unwrap();
-
-        // and finally, we can convert that to base64 string and return that
-        let mut buf = Cursor::new(vec![0u8]);
-        img .write_to (&mut buf, ImageFormat::Png) .expect("hicon to png error");
-        Some ( format! ("data:image/png;base64,{}",  STANDARD.encode(buf.into_inner()) ) )
+        RgbaImage::from_vec (bmp.bmWidth as u32, bmp.bmHeight as u32, buf)
     }
 
 

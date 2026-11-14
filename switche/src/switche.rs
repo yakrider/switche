@@ -7,8 +7,7 @@ use std::sync::atomic::{AtomicBool, AtomicIsize, Ordering};
 use std::thread::{sleep, spawn};
 use std::time::Duration;
 
-use serde::{Deserialize, Serialize};
-use strum_macros::{AsRefStr};
+use gpui::RenderImage;
 use tracing::info;
 
 use crate::{win_apis, pipe_proc};
@@ -28,8 +27,7 @@ pub use crate::win_dats::{Hwnd, ExePathName, WinDatEntry};
 
 
 #[allow (non_camel_case_types)]
-#[derive (Debug, Eq, PartialEq, Hash, Copy, Clone, AsRefStr, Serialize, Deserialize)]
-#[serde (rename_all = "snake_case")]
+#[derive (Debug, Eq, PartialEq, Hash, Copy, Clone)]
 pub enum Backend_Notice {
     backend_req__app_invoke,
     backend_req__scroll_down,
@@ -53,30 +51,20 @@ pub enum Backend_Notice {
 
 
 /// The WinDatEntry_Pl is the subset of WinDatEntry that we send to the front-end
-#[derive (Debug, Clone, Serialize, Deserialize)]
+#[derive (Debug, Clone)]
 pub struct WinDatEntry_Pl {
     pub hwnd           : Hwnd,
     pub win_text       : Option<String>,
     pub exe_path_name  : Option<ExePathName>,
-    pub icon_cache_idx : u32,
+    pub icon           : Option <Arc <RenderImage>>,
     pub is_elevated    : bool,
 }
 
 
 
 
-/// The IconEntry_Pl is the icon-specific payload we send out to the front-end
-#[derive (Debug, Default, Eq, PartialEq, Hash, Clone, Serialize, Deserialize)]
-pub struct IconEntry_Pl {
-    pub ico_id  : usize,
-    pub ico_str : String,
-}
-
-
-
-
 /// Configs-payload contains the subset of configs that we send out to the front-end
-#[derive (Debug, Eq, PartialEq, Hash, Default, Clone, Serialize, Deserialize)]
+#[derive (Debug, Eq, PartialEq, Hash, Default, Clone)]
 pub struct Configs_Pl {
     pub switche_version         : &'static str,
     pub is_elevated             : bool,
@@ -112,7 +100,6 @@ pub enum UiEvent {
     Notice (Backend_Notice),
     WinDatEntry (WinDatEntry_Pl),
     RenderLists (RenderList_Pl),
-    IconEntry (IconEntry_Pl),
     Configs (Configs_Pl),
     RefreshAutostartFlags,
     Redraw,
@@ -492,7 +479,6 @@ impl SwitcheState {
         self.i_proc.re_set_hooks();
         // first we'll send what data we have
         self.emit_configs();
-        self.icons_m.emit_all_icon_entries();
         self.render_lists_m.render_list.read().unwrap() .iter() .for_each ( |rle| {
             self.win_dats_m.hwnd_map.read().unwrap() .get (&rle.hwnd) .iter() .for_each ( |wde| {
                 self.emit_win_dat_entry (wde)
@@ -659,14 +645,10 @@ impl SwitcheState {
             hwnd: wde.hwnd,
             win_text: wde.win_text.clone(),
             exe_path_name: wde.exe_path_name.clone(),
-            icon_cache_idx: self.icons_m.get_cached_icon_idx(wde).unwrap_or(0) as u32,
+            icon: self.icons_m.get_cached_icon_image(wde),
             is_elevated: wde.is_elevated,
         };
         send_ui_event (UiEvent::WinDatEntry (pl));
-    }
-
-    pub fn emit_icon_entry (&'static self, ie:&IconEntry_Pl) {
-        send_ui_event (UiEvent::IconEntry (ie.clone()));
     }
 
     pub fn emit_configs (&'static self) {

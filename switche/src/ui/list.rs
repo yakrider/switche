@@ -70,7 +70,7 @@ impl SwitcheApp {
             div().flex_none().text_size(px(SMALL_SZ)).font_weight(FontWeight::BOLD).text_color(rgb(y_color)).child(y_str).into_any_element()
         };
 
-        let ico_el = match self.icons.get (&wde.icon_cache_idx) {
+        let ico_el = match wde.icon.as_ref() {
             Some (img) => gpui::img (ImageSource::Render (img.clone())) .h(px(16.)) .into_any_element(),
             None => div().h(px(16.)).into_any_element(),
         };

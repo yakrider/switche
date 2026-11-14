@@ -5,7 +5,6 @@ use std::sync::RwLock;
 use std::sync::atomic::{AtomicIsize, Ordering};
 use std::time::{Duration, Instant};
 use grouping_by::GroupingBy;
-use serde::{Deserialize, Serialize};
 
 use crate::switche::{Hwnd, ExePathName, WinDatEntry, SwitcheState};
 use crate::config::Config;
@@ -14,13 +13,13 @@ use crate::config::Config;
 
 
 
-#[derive (Debug, Eq, PartialEq, Hash, Default, Copy, Clone, Serialize, Deserialize)]
+#[derive (Debug, Eq, PartialEq, Hash, Default, Copy, Clone)]
 pub struct RenderListEntry {
     pub(crate) hwnd : Hwnd,
     pub(crate) y    : u32,
 }
 
-#[derive (Debug, Eq, PartialEq, Hash, Default, Clone, Serialize, Deserialize)]
+#[derive (Debug, Eq, PartialEq, Hash, Default, Clone)]
 pub struct RenderList_Pl {
     pub(crate) rl  : Vec <RenderListEntry>,
     pub(crate) grl : Vec <Vec <RenderListEntry>>,

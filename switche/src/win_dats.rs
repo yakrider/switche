@@ -7,7 +7,6 @@ use std::sync::atomic::{AtomicIsize, Ordering};
 use std::thread::{sleep, spawn};
 use std::time::{Duration, SystemTime};
 
-use serde::{Deserialize, Serialize};
 use tracing::{info, warn};
 
 use windows::Win32::Foundation::{BOOL, HINSTANCE, HWND, LPARAM};
@@ -25,7 +24,7 @@ use crate::switche::{Flag, SwitcheState};
 
 
 
-#[derive (Default, Copy, Clone, Eq, PartialEq, Hash, Serialize, Deserialize)]
+#[derive (Default, Copy, Clone, Eq, PartialEq, Hash)]
 pub struct Hwnd (pub isize);
 
 impl Hwnd {
@@ -51,13 +50,13 @@ impl std::fmt::Debug for Hwnd {
 
 
 
-#[derive (Debug, Default, Eq, PartialEq, Hash, Clone, Serialize, Deserialize)]
+#[derive (Debug, Default, Eq, PartialEq, Hash, Clone)]
 pub struct ExePathName {
     pub full_path : String,
     pub name      : String
 }
 
-#[derive (Debug, Default, Eq, PartialEq, Hash, Clone, Serialize, Deserialize)]
+#[derive (Debug, Default, Eq, PartialEq, Hash, Clone)]
 pub struct WinDatEntry {
     pub hwnd              : Hwnd,
     pub win_text          : Option<String>,
