@@ -79,13 +79,13 @@ pub fn run_switche_gpui (ss: &'static SwitcheState) {
             hotkeys::setup_global_shortcuts (ss);
 
             // initial data-load: reloads configs, hooks, lists, icons etc
-            ss.handle_ui_request (UiRequest::DataLoad);
+            ss.handle_request (UiRequest::Reload);
 
             // handy for manual runs while developing
             if show_on_start {
                 win_apis::window_activate (ss.get_self_hwnd());
                 // the startup fgnd event triggers a light enum query, so force a full one for dev runs
-                ss.handle_ui_request (UiRequest::Refresh);
+                ss.handle_request (UiRequest::Refresh);
             }
 
             // tray + event pump, now that the window and app borrow are settled

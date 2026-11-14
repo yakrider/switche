@@ -99,7 +99,7 @@ pub fn start_pipe_processor() {
                 if ReadFile ( pipe, Some (&mut buffer), Some (&mut bytes_read), None ) .is_ok() {
                     if let Ok(cmd) = serde_json::from_slice::<PipeCommand> ( & buffer [..bytes_read as usize] ) {
                         thread::spawn ( move || {
-                            tracing::info!("received pipe-cmd: {:?}", &cmd);
+                            tracing::info!("received pipe-cmd: [{:?}]", &cmd);
                             handle_pipe_cmd (cmd)
                         } );
                     }

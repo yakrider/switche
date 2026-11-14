@@ -2,7 +2,7 @@
 
 use std::collections::{HashMap, HashSet};
 //use no_deadlocks::RwLock;
-use std::sync::{RwLock, LazyLock, OnceLock};
+use std::sync::{Arc, RwLock, LazyLock, OnceLock};
 use std::sync::atomic::{AtomicIsize, Ordering};
 use std::thread::{sleep, spawn};
 use std::time::{Duration, SystemTime};
@@ -50,16 +50,16 @@ impl std::fmt::Debug for Hwnd {
 
 
 
-#[derive (Debug, Default, Eq, PartialEq, Hash, Clone)]
+#[derive (Debug, Eq, PartialEq, Hash, Clone)]
 pub struct ExePathName {
-    pub full_path : String,
-    pub name      : String
+    pub full_path : Arc <str>,
+    pub name      : Arc <str>
 }
 
-#[derive (Debug, Default, Eq, PartialEq, Hash, Clone)]
+#[derive (Debug, Default, Clone)]
 pub struct WinDatEntry {
     pub hwnd              : Hwnd,
-    pub win_text          : Option<String>,
+    pub win_text          : Option <Arc <str>>,
     pub is_uwp_app        : Option<bool>,
     pub is_exe_queried    : bool,
     pub is_elevated       : bool,
@@ -240,8 +240,10 @@ impl WinDatsManager {
 
         // we'll refresh the title every time this runs
         let cur_title = Some (get_window_text(wde.hwnd)) .filter (|s| !s.is_empty());
-        if wde.win_text != cur_title { should_emit = true }
-        wde.win_text = cur_title;
+        if wde.win_text.as_deref() != cur_title.as_deref() {
+            should_emit = true;
+            wde.win_text = cur_title.map (Arc::from);
+        }
 
         // but only query exe-path etc if we havent populated it before
         if !wde.is_exe_queried {
@@ -249,7 +251,7 @@ impl WinDatsManager {
             let pid = get_hwnd_pid (wde.hwnd);
             wde.is_elevated = check_pid_elevated(pid) .unwrap_or_default();
             wde.exe_path_name = get_pid_exe_path(pid) .and_then (Self::parse_exe_path);
-            if wde.exe_path_name .iter() .any (|ep| ep.name.as_str() == "ApplicationFrameHost.exe") { //dbg!(hwnd);
+            if wde.exe_path_name .iter() .any (|ep| ep.name.as_ref() == "ApplicationFrameHost.exe") { //dbg!(hwnd);
                 wde.is_uwp_app = Some(true);
                 if let Some(pkg_path) = get_package_path_from_hwnd(hwnd).as_ref() { //dbg!(&pkg_path);
                     if let Some(mfp) = icons::uwp_processing::get_uwp_manifest_parse(pkg_path) {
@@ -270,7 +272,7 @@ impl WinDatsManager {
         if let Some(wde) = self.hwnd_map.read().unwrap().get(&hwnd) {
             if wde.should_exclude == Some(false) {
                 ss.icons_m .process_found_hwnd_exe_path (wde);
-                if should_emit { ss.emit_win_dat_entry (wde) }
+                if should_emit { ss.emit_model_queued() }
                 return true
         } }
         false
@@ -278,8 +280,8 @@ impl WinDatsManager {
 
 
     fn parse_exe_path (exe_path:String) -> Option<ExePathName> {
-        let name = exe_path .rsplit('\\') .next() .unwrap_or_default() .to_string();
-        if name.is_empty() { None } else { Some (ExePathName { full_path: exe_path, name }) }
+        let name : Arc <str> = Arc::from (exe_path .rsplit('\\') .next() .unwrap_or_default());
+        if name.is_empty() { None } else { Some (ExePathName { full_path: Arc::from (exe_path), name }) }
     }
 
 
@@ -307,7 +309,7 @@ impl WinDatsManager {
         let fgnd_hwnd_opt = ss.render_lists_m.render_list.read() .ok() .and_then (|rl| rl.first().map(|rle| rle.hwnd));
         if let Some(hwnd) = fgnd_hwnd_opt { self.check_for_once_only_backed_off_icon_requeries (hwnd, ss) }
 
-        ss.emit_render_lists_queued(false);    // we'll queue it as icon upates might tack on more in a bit
+        ss.emit_model_queued();    // we'll queue it as icon upates might tack on more in a bit
         // ^^ note that this is the only place where we actually re-render the display list!
     }
 
@@ -470,7 +472,7 @@ impl WinDatsManager {
         if wdeOpt .filter (|wde| wde.should_exclude == Some(false)) .is_none() { return }
 
         // somethings like IDE seem to give many window-level title-changes just from typing, w/o title change .. we'll filter those
-        if wdeOpt .filter (|wde| wde.win_text.as_ref() == Some(& win_apis::get_window_text(hwnd))) .is_some() { return }
+        if wdeOpt .filter (|wde| wde.win_text.as_deref() == Some (win_apis::get_window_text(hwnd).as_str())) .is_some() { return }
 
         // so it looks legit .. we'll fully update this hwnd, and queue up an ordering-only enum-query ..
         // .. but first, we'll mark icon stale so the icon gets refreshed (off-thread) upon reprocessing
@@ -479,13 +481,13 @@ impl WinDatsManager {
         drop(hmap);   // release lock before lengthier calls
 
         if self.process_discovered_hwnd (hwnd, ss) {    // this processing will update hwnd data, and refresh stale-marked icon
-            ss.emit_render_lists_queued (true);
+            ss.emit_model_queued();
         }
     }
 
 
     pub fn proc_win_report__fgnd_hwnd (&'static self, hwnd:Hwnd, ss: &'static SwitcheState) {
-        info! ("@{:?} fgnd: {:?}", _stamp(), hwnd);
+        tracing::debug! ("@{:?} fgnd: {:?}", _stamp(), hwnd);
 
         // first, we'll update self-fgnd state if either this is self hwnd, or if its a valid renderable hwnd coming to fgnd
         if ss.check_self_hwnd(hwnd) {

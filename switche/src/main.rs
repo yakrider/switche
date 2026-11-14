@@ -12,7 +12,7 @@ fn main() {
     // we want the non-blocking log-appender guard to be here in main, to ensure any pending logs get flushed upon crash etc
     let _guard = ss.conf.setup_log_subscriber();
 
-    tracing::info! ("Starting Switche ...");
+    tracing::info! (" ------------ [ Starting Switche ] ------------ ");
 
     switche::app::run_switche_gpui (ss);
 

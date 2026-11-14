@@ -22,7 +22,7 @@ use crate::switche::{Hwnd, SwitcheState, WinDatEntry};
 #[derive (Debug, Default, Eq, PartialEq, Hash, Clone)]
 struct HwndExePathPair { hwnd:Hwnd, path:String, is_uwp:bool }
 
-#[derive (Debug, Default, Eq, PartialEq, Hash, Copy, Clone)]
+#[derive (Debug, Default, Copy, Clone)]
 struct IconCacheMapping { cache_idx:usize, is_stale:bool }
 
 
@@ -58,8 +58,8 @@ impl IconsManager {
 
     fn make_hwnd_path_pair (wde:&WinDatEntry) -> Option<HwndExePathPair> {
         let ico_path = {
-            if wde.is_uwp_app != Some(true) { wde.exe_path_name.as_ref() .map (|p| &p.full_path) }
-            else { wde.uwp_icon_path.as_ref() }
+            if wde.is_uwp_app != Some(true) { wde.exe_path_name.as_ref() .map (|p| p.full_path.as_ref()) }
+            else { wde.uwp_icon_path.as_deref() }
         };
         ico_path .map (|p| HwndExePathPair { hwnd:wde.hwnd, path:p.to_string(), is_uwp: wde.is_uwp_app == Some(true) } )
     }
@@ -188,9 +188,8 @@ impl IconsManager {
             Some(cache_idx) != exe_prior || Some(cache_idx) != hwnd_prior.map (|icm| icm.cache_idx)
         };
         if is_new_icon || is_mapping_update {
-            // send out updates for the specific wde, then queue up to send a renderlist
-            ss.win_dats_m.hwnd_map .read().unwrap() .get(&hpp.hwnd) .iter().for_each (|wde| ss.emit_win_dat_entry (wde));
-            ss.emit_render_lists_queued(false);
+            // the icon is part of the row view, so queue a fresh model push
+            ss.emit_model_queued();
         }
     }
     /* debug printout helper fns:

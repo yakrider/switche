@@ -23,44 +23,47 @@ impl SwitcheApp {
     }
 
     pub(super) fn render_row (&self, row:&Row, window:&Window, cx:&mut Context<Self>) -> AnyElement {
-        let Some (wde) = self.hwnd_map.get (&row.id.hwnd) else {
-            return div().h(px(ROW_H)).into_any_element()
-        };
+        let view = &row.view;
 
         let id = row.id;
         // we'll maintain matching highlights in the dimmed recents block during search for better usability
         let selected = self.cur_elem == Some (id)
-            || (self.in_search && self.group_mode
-                && row.elem_t == ElemT::GR
+            || (self.in_search && row.elem_t == ElemT::GR
                 && self.cur_elem.is_some_and (|c| c.hwnd == id.hwnd));
 
         let check = if self.in_search {
-            Some (check_search_exe_title (wde, &self.search_text, row.render_y))
+            Some (check_search_exe_title (view, &self.search_text))
         } else { None };
 
-        let title = wde.win_text.clone().unwrap_or_else (|| "-- no title --".to_string());
-        let exe   = wde.exe_path_name.as_ref().map (|p| p.name.clone()).unwrap_or_else (|| "exe..".to_string());
-        let y_str = format!("{:>2}", row.render_y);
+        let title = match &view.win_text {
+            Some (s) => SharedString::new (s.clone()),
+            None     => SharedString::new_static ("-- no title --"),
+        };
+        let exe = match &view.exe_name {
+            Some (s) => SharedString::new (s.clone()),
+            None     => SharedString::new_static ("exe.."),
+        };
+        let y_str = format!("{:>2}", row.view.y);
 
         let title_color = if selected { C_CUR_TEXT }
             else if row.elem_t == ElemT::GR { C_SECONDARY } else { C_PRIMARY };
         let exe_color = if selected { C_CUR_TEXT }
             else if row.grp == Grp::GT { C_DIM } else { C_EXE };
         let y_color = if selected {
-            if wde.is_elevated { C_Y_CUR_ELEV } else { C_Y_CUR }
-        } else if wde.is_elevated { C_Y_ELEV } else { C_Y };
+            if view.is_elevated { C_Y_CUR_ELEV } else { C_Y_CUR }
+        } else if view.is_elevated { C_Y_ELEV } else { C_Y };
 
         let title_el = match &check {
             Some (c) if c.passed => {
-                let ranges = highlight_ranges (&title, &c.frags);
-                highlighted_text (window, &title, &ranges, title_color, C_SEARCH, TEXT_SZ, true)
+                let ranges = highlight_ranges (title.as_str(), &c.frags);
+                highlighted_text (window, title.as_str(), &ranges, title_color, C_SEARCH, TEXT_SZ, true)
             }
             _ => div().text_size(px(TEXT_SZ)).text_color(rgb(title_color)).child(title).into_any_element(),
         };
         let exe_el = match &check {
             Some (c) if c.passed && !c.exe_matched_frags.is_empty() => {
-                let ranges = highlight_ranges (&exe, &c.exe_matched_frags);
-                highlighted_text (window, &exe, &ranges, exe_color, C_SEARCH, TEXT_SZ, false)
+                let ranges = highlight_ranges (exe.as_str(), &c.exe_matched_frags);
+                highlighted_text (window, exe.as_str(), &ranges, exe_color, C_SEARCH, TEXT_SZ, false)
             }
             _ => div().text_size(px(TEXT_SZ)).text_color(rgb(exe_color)).child(exe).into_any_element(),
         };
@@ -70,7 +73,7 @@ impl SwitcheApp {
             div().flex_none().text_size(px(SMALL_SZ)).font_weight(FontWeight::BOLD).text_color(rgb(y_color)).child(y_str).into_any_element()
         };
 
-        let ico_el = match wde.icon.as_ref() {
+        let ico_el = match view.icon.as_ref() {
             Some (img) => gpui::img (ImageSource::Render (img.clone())) .h(px(16.)) .into_any_element(),
             None => div().h(px(16.)).into_any_element(),
         };

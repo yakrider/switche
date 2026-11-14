@@ -102,7 +102,7 @@ pub fn get_last_active_popup (hwnd:Hwnd) -> Hwnd { unsafe {
 
 
 pub fn window_activate (hwnd:Hwnd) { unsafe {
-    info!("winapi activate {:?}",hwnd);
+    info!("winapi [activate] {:?}",hwnd);
     //ShowWindowAsync (hwnd.HWND(), SW_NORMAL);
     // ^^ this will cause minimized/maximized windows to be restored
     let mut win_state =  WINDOWPLACEMENT::default();
@@ -130,7 +130,7 @@ pub fn window_activate (hwnd:Hwnd) { unsafe {
 
 
 pub fn window_hide (hwnd:Hwnd) { unsafe {
-    info!("winapi hide {:?}",hwnd);
+    info!("winapi [hide] {:?}",hwnd);
     //ShowWindow (hwnd.HWND(), SW_HIDE);
     // ^^ since this calls from our thread, this can apparently be unable to remove kbd focus from the window being hidden!!
     let _ = ShowWindowAsync (hwnd.HWND(), SW_HIDE);
@@ -147,7 +147,7 @@ pub fn win_send_to_back (hwnd:Hwnd) { unsafe {
 
 
 pub fn window_close (hwnd:Hwnd) { unsafe {
-    info!("winapi close {:?}",hwnd);
+    info!("winapi [close] {:?}",hwnd);
     //CloseWindow(hwnd.HWND());
     // note ^^ that the u32 'CloseWindow' cmd actually minimizes it, to close, send it a WM_CLOSE msg
     let _ = PostMessageA (hwnd.HWND(), WM_CLOSE, WPARAM::default(), LPARAM::default());

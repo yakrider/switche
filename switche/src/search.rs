@@ -2,7 +2,7 @@
 
 use std::ops::Range;
 
-use crate::switche::WinDatEntry_Pl;
+use crate::switche::RowView;
 
 
 
@@ -20,7 +20,7 @@ pub struct SearchCheck {
 ///   - only one of the terms needs to match the exe name
 ///   - a term can match the shown z-index number (with or without a trailing 'i')
 ///   - all remaining terms must match the title
-pub fn check_search_exe_title (wde:&WinDatEntry_Pl, search_text:&str, render_y:u32) -> SearchCheck {
+pub fn check_search_exe_title (row:&RowView, search_text:&str) -> SearchCheck {
 
     let frags : Vec<String> = search_text
         .split (' ')
@@ -32,11 +32,11 @@ pub fn check_search_exe_title (wde:&WinDatEntry_Pl, search_text:&str, render_y:u
         return SearchCheck { passed: true, frags, exe_matched_frags: Vec::new(), y_matched: false }
     }
 
-    let exe_name = wde.exe_path_name.as_ref().map(|p| p.name.as_str()).unwrap_or("");
-    let title    = wde.win_text.as_deref().unwrap_or("");
+    let exe_name = row.exe_name.as_deref().unwrap_or("");
+    let title    = row.win_text.as_deref().unwrap_or("");
     let exe_l    = exe_name.to_lowercase();
     let title_l  = title.to_lowercase();
-    let y_str    = render_y.to_string();
+    let y_str    = row.y.to_string();
     let y_str_i  = format!("{}i", y_str);
 
     let mut exe_matched_frags : Vec<String> = Vec::new();

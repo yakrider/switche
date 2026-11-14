@@ -107,7 +107,7 @@ impl SwitcheApp {
             .text_size(px(14.)).text_color(rgb(C_RIBBON))
             .cursor(CursorStyle::OpenHand)
             .on_mouse_down (MouseButton::Left, cx.listener (|_this, _ev:&MouseDownEvent, _window, _cx| {
-                ss().handle_ui_request (UiRequest::WindowDragStart)
+                ss().handle_request (UiRequest::WindowDragStart)
             }))
             .id (SharedString::from ("drag-indicator"))
             .on_hover (cx.listener (|this, hovered:&bool, _window, cx| {
@@ -117,7 +117,7 @@ impl SwitcheApp {
             }))
             .on_click (cx.listener (|_this, ev:&ClickEvent, _window, cx| {
                 if ev.click_count() == 2 {
-                    ss().handle_ui_request (UiRequest::SelfAutoResize);
+                    ss().handle_request (UiRequest::SelfAutoResize);
                     // the window is moved by win32; make sure gpui repaints the newly exposed area
                     cx.notify();
                 }
@@ -340,7 +340,7 @@ impl SwitcheApp {
                         else if this.tooltip == Some (TooltipKind::Counts) { this.tooltip = None }
                         cx.notify()
                     }))
-                    .child(format!("({})", self.render_list.len()))
+                    .child(format!("({})", self.recents.len()))
             )
             .child (self.render_search (window))
             .child (self.indicator ("!", false, C_WARN, TooltipKind::Warn, cx))

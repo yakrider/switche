@@ -13,18 +13,11 @@ use crate::config::Config;
 
 
 
-#[derive (Debug, Eq, PartialEq, Hash, Default, Copy, Clone)]
+#[derive (Debug, Default, Copy, Clone)]
 pub struct RenderListEntry {
     pub(crate) hwnd : Hwnd,
     pub(crate) y    : u32,
 }
-
-#[derive (Debug, Eq, PartialEq, Hash, Default, Clone)]
-pub struct RenderList_Pl {
-    pub(crate) rl  : Vec <RenderListEntry>,
-    pub(crate) grl : Vec <Vec <RenderListEntry>>,
-}
-
 
 
 
@@ -184,7 +177,7 @@ impl RenderReadyListsManager {
         // ^^ no good reason to exclude legit windows w/o titles
         ss.check_self_hwnd(wde.hwnd) ||
             wde.exe_path_name.as_ref() .filter (|p| !p.full_path.is_empty()) .is_none() ||
-            wde.exe_path_name.as_ref() .filter (|p| !self.exes_excl_check (&p.name, wde)) .is_none()
+            wde.exe_path_name.as_ref() .filter (|p| !self.exes_excl_check (p.name.as_ref(), wde)) .is_none()
     }
     pub fn runtime_should_excl_check (&self, ss:&SwitcheState, wde:&WinDatEntry) -> bool {
         wde.should_exclude .unwrap_or_else ( move || self.calc_excl_flag(ss,wde) )
@@ -209,7 +202,7 @@ impl RenderReadyListsManager {
         );
     }
 
-    pub(crate) fn register_entry (&self, exe_path:&String, idx:usize, list_size:u32, do_update:bool) {
+    pub(crate) fn register_entry (&self, exe_path:&str, idx:usize, list_size:u32, do_update:bool) {
         let perc_idx : f32 = (idx as f32) / list_size as f32;
         if !self.grp_sorting_map.read().unwrap().contains_key(exe_path) {
             self.update_entry (exe_path, GroupSortingEntry::default(), perc_idx);
@@ -253,7 +246,7 @@ impl RenderReadyListsManager {
         let filt_rle_info = filt_wdes .iter() .enumerate() .map ( |(i,wde)| {
             // we'll also register these while we're creating the RLE-infos
             wde.exe_path_name .as_ref() .map (|p| &p.full_path) .iter() .for_each ( |fp| {
-                self.register_entry (fp, i, filt_wdes.len() as u32, is_dismissed)
+                self.register_entry (fp.as_ref(), i, filt_wdes.len() as u32, is_dismissed)
             } );
             RenderListEntryInfo {
                 exe_path_name : wde.exe_path_name.as_ref(),
@@ -288,11 +281,11 @@ impl RenderReadyListsManager {
         // .. so we'll set up the appropirate comparison extractor for those two cases
         fn ext_cmp_auto (rrlm:&RenderReadyListsManager, po:&Option<&ExePathName> ) -> Option<f32> {
             let grm = rrlm.grp_sorting_map.read().unwrap();
-            po .and_then (|p| grm .get(&p.full_path) .map (|gse| gse.mean_perc_idx) )
+            po .and_then (|p| grm .get (p.full_path.as_ref()) .map (|gse| gse.mean_perc_idx) )
         }
         fn ext_cmp_manual (rrlm:&RenderReadyListsManager, po:&Option<&ExePathName> ) -> Option<f32> {
             let orm = rrlm.ordering_ref_map.read().unwrap();
-            po .and_then (|p| orm .get(&p.name) .or (orm.get(Config::UNKNOWN_EXE_STR)) .map (|v| *v as f32) )
+            po .and_then (|p| orm .get (p.name.as_ref()) .or (orm.get(Config::UNKNOWN_EXE_STR)) .map (|v| *v as f32) )
         }
         let cmp_ext = if ss.conf.check_flag__auto_order_window_groups() { ext_cmp_auto } else { ext_cmp_manual };
 

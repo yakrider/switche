@@ -4,8 +4,7 @@ use std::{fs, io, time};
 use std::ops::Not;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
-use std::sync::{Arc, Mutex, RwLock, LazyLock, OnceLock};
-use std::time::SystemTime;
+use std::sync::{Arc, RwLock, LazyLock, OnceLock};
 
 use toml_edit::DocumentMut;
 
@@ -19,21 +18,9 @@ use tracing_subscriber::fmt::time::LocalTime;
 use tracing_subscriber::reload::Handle;
 use tracing_subscriber::prelude::*;
 
+use crate::deferred::{CoalescingExecutor, DeferredExecutor};
 use crate::switche::SwitcheState;
 use crate::win_apis;
-
-
-
-
-
-#[derive (Debug, Clone)]
-/// Deferred Executor sets up a deferred action until a (pushable/resettable) deadline has passed
-pub struct DeferredExecutor {
-    deadline : Arc <Mutex <SystemTime>>,
-}
-
-/// Action type to pass in to a DeferredExecutor
-pub type Action = Arc < dyn Fn() + Send + Sync + 'static >;
 
 
 
@@ -170,8 +157,9 @@ impl Config {
 
             let log_appender = RollingFileAppender::builder()
                 .rotation(Rotation::DAILY)
-                .filename_prefix("switche_log")
+                .filename_prefix("switche_log_")
                 .filename_suffix("log")
+                .latest_symlink ("switche_log_latest_.log")
                 .max_log_files(7)
                 .build(log_loc)
                 .map_err (|_e| ())?;
@@ -348,21 +336,36 @@ impl Config {
         } }
         None
     }
+    /// current self-window location and size (in physical px), or None if there isn't a usable window
+    fn read_live_window_rect (&'static self, ss: &'static SwitcheState) -> Option <(i32, i32, i32, i32)> {
+        let hwnd = ss.get_self_hwnd();
+        if hwnd.is_null() { return None }
+        let rect = win_apis::win_get_window_rect (hwnd);
+        let (x, y) = (rect.left, rect.top);
+        let (w, h) = (rect.right - rect.left, rect.bottom - rect.top);
+        // we'll filter out the minimized loc (-32000), as well as any degenerate sizes
+        if x == -32000 && y == -32000 { return None }
+        if w <= 0 || h <= 0 { return None }
+        Some ((x, y, w, h))
+    }
+
     pub fn update_conf__switche_window_now (&'static self, ss: &'static SwitcheState) {
-        info! ("update_conf__switche_window");
         let hwnd = ss.get_self_hwnd();
         if hwnd.is_null() { return }
-        // we'll filter out the minimized loc (-32000), as well as any actually minimized state
+        // we'll filter out the minimized state
         if win_apis::check_window_minimized (hwnd) {
             win_apis::window_activate (hwnd);
             ss.proc_menu_req__switche_reload();
             return
         }
-        let rect = win_apis::win_get_window_rect (hwnd);
-        let (x, y) = (rect.left, rect.top);
-        let (w, h) = (rect.right - rect.left, rect.bottom - rect.top);
-        if x == -32000 && y == -32000 { return }
-        if w <= 0 || h <= 0 { return }
+        let Some ((x, y, w, h)) = self.read_live_window_rect (ss) else { return };
+        // note that gpui's bounds observer also fires on activation/show (and the OS sends WM_MOVE on
+        // .. show too), so we'll only write back when the geometry actually has changed
+        if self.read_conf__window_dimensions() == Some ((x, y, w, h)) {
+            //tracing::debug! ("[update_conf__switche_window]: unchanged {:?}", (x, y, w, h));
+            return
+        }
+        info! ("[update_conf__switche_window] {:?}", (x, y, w, h));
         let mut toml_guard = self.toml.write().unwrap();
         if let Some(toml) = toml_guard.as_mut() {
             toml ["window_dimensions"] ["location"] ["x"]  = toml_edit::value (x as i64);
@@ -372,15 +375,20 @@ impl Config {
             drop(toml_guard);
             self.write_back_toml_if_changed();
         } else {
-            error!("update_conf__switche_window: failed to get window position, size, or toml doc");
+            error!("[update_conf__switche_window]: failed to get window position, size, or toml doc");
         }
     }
     pub fn update_conf__switche_window (&'static self, ss: &'static SwitcheState) {
         std::thread::spawn ( move || self.update_conf__switche_window_now (ss) );
     }
     pub fn deferred_update_conf__switche_window (&'static self, ss: &'static SwitcheState) {
-        static dfr_ex: LazyLock <DeferredExecutor> = LazyLock::new (DeferredExecutor::default);
+        // note: this one gets setup once per window-move event while dragging, so we use the
+        // .. coalescing (single-worker) variant rather than spawning a sleeping thread per setup
+        static dfr_ex: LazyLock <CoalescingExecutor> = LazyLock::new (CoalescingExecutor::default);
         if !self.check_flag__restore_window_dimensions() { return }
+        if let Some ((x, y, w, h)) = self.read_live_window_rect (ss) {
+            if self.read_conf__window_dimensions() == Some ((x, y, w, h)) { return }
+        }
         let action = Arc::new ( move || self.update_conf__switche_window(ss) );
         dfr_ex .setup_deferred_action (action, time::Duration::from_millis(1000));
     }
@@ -426,61 +434,3 @@ impl Config {
 
 
 
-impl Default for DeferredExecutor {
-    fn default () -> Self { Self::new() }
-}
-impl DeferredExecutor {
-
-    pub fn new () -> Self {
-        Self { deadline: Arc::new (Mutex::new (SystemTime::UNIX_EPOCH)) }
-    }
-    pub fn reset (&self) {
-        *self.deadline.lock().unwrap() = SystemTime::UNIX_EPOCH;
-    }
-    pub fn set_deferral_dur (&self, dur:time::Duration) {
-        if let Some(t) = SystemTime::now().checked_add(dur) {
-            *self.deadline.lock().unwrap() = t
-        }
-    }
-    pub fn add_deferral_dur (&self, dur:time::Duration) {
-        let mut deadline = self.deadline.lock().unwrap();
-        if let Some(t) = deadline.checked_add(dur) {
-            *deadline = t
-        }
-    }
-    pub fn is_reset (&self) -> bool {
-        *self.deadline.lock().unwrap() == SystemTime::UNIX_EPOCH
-    }
-    pub fn is_due (&self) -> bool {
-        let deadline = *self.deadline.lock().unwrap();
-        deadline != SystemTime::UNIX_EPOCH && deadline < SystemTime::now()
-    }
-
-    fn check_defered_action (&self, action:Action) {
-        // we'll check-and-reset atomically, (same logic as using reset/is_reset/is_due above, but under same lock)
-        {
-            let mut deadline = self.deadline.lock().unwrap();
-            if *deadline == SystemTime::UNIX_EPOCH || *deadline >= SystemTime::now() {
-                // ^^ deadline was reset, or pushed forward (so its not due yet)
-                return
-            }
-            *deadline = SystemTime::UNIX_EPOCH;
-        }
-        action();
-    }
-
-    /// Sets up a deferred action which will only trigger after a deferrable deadline has passed.<br>
-    /// Any subsequent calls to setup deferred action on this deadline will postpone this deadline (if pending).<br>
-    /// When the deadline triggers, (only) the last set action will be executed.<br>
-    /// Resetting a pending deadline effectively cancels any pending actions
-    pub fn setup_deferred_action (&self, action:Action, delay:time::Duration) {
-        // we simply set up a deadline and a thread to wake up and check
-        self.set_deferral_dur(delay);
-        let dfr_ex = self.clone();
-        std::thread::spawn ( move || {
-            std::thread::sleep (delay);
-            dfr_ex.check_defered_action(action);
-        } );
-    }
-
-}

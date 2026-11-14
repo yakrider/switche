@@ -26,18 +26,17 @@ pub use crate::win_dats::{Hwnd, ExePathName, WinDatEntry};
 
 
 
-#[allow (non_camel_case_types)]
-#[derive (Debug, Eq, PartialEq, Hash, Copy, Clone)]
-pub enum Backend_Notice {
-    backend_req__app_invoke,
-    backend_req__scroll_down,
-    backend_req__scroll_up,
-    backend_req__scroll_end,
-    backend_req__scroll_end_disarm,
-    backend_req__switche_escape,
-    backend_req__switche_reload,
-    switche_event__in_fgnd,
-    switche_event__fgnd_lost,
+#[derive (Debug, Copy, Clone)]
+pub enum EngineNotice {
+    Invoke,
+    ScrollDown,
+    ScrollUp,
+    ScrollEnd,
+    ScrollEndDisarm,
+    Escape,
+    Reload,
+    ForegroundGained,
+    ForegroundLost,
 }
 
 
@@ -50,40 +49,45 @@ pub enum Backend_Notice {
 
 
 
-/// The WinDatEntry_Pl is the subset of WinDatEntry that we send to the front-end
-#[derive (Debug, Clone)]
-pub struct WinDatEntry_Pl {
+/// One window row as rendered by the view; carries everything the UI needs, so the
+/// .. UI never has to reach back into engine state (or hold a mirror of it).
+#[derive (Debug, Clone, PartialEq)]
+pub struct RowView {
     pub hwnd           : Hwnd,
-    pub win_text       : Option<String>,
-    pub exe_path_name  : Option<ExePathName>,
+    pub y              : u32,
+    pub win_text       : Option <Arc <str>>,
+    pub exe_name       : Option <Arc <str>>,
     pub icon           : Option <Arc <RenderImage>>,
     pub is_elevated    : bool,
 }
 
+/// A complete, self-consistent snapshot of what the UI should render.
+#[derive (Debug, Clone, PartialEq)]
+pub struct ModelView {
+    pub recents : Vec <RowView>,
+    pub grouped : Vec <Vec <RowView>>,
+}
 
 
 
-/// Configs-payload contains the subset of configs that we send out to the front-end
-#[derive (Debug, Eq, PartialEq, Hash, Default, Clone)]
-pub struct Configs_Pl {
+
+/// A snapshot of the config values the view needs
+#[derive (Debug, Default, Clone)]
+pub struct ConfigsView {
     pub switche_version         : &'static str,
     pub is_elevated             : bool,
     pub alt_tab_enabled         : bool,
     pub rbtn_whl_enabled        : bool,
-    pub auto_hide_enabled       : bool,
-    pub group_mode_enabled      : bool,
     pub n_grp_mode_top_recents  : u32,
     pub n_grp_mode_last_recents : u32,
     pub grp_ordering_is_auto    : bool,
 }
-impl Configs_Pl {
-    pub fn assemble (ss:&SwitcheState) -> Configs_Pl { Configs_Pl {
+impl ConfigsView {
+    pub fn assemble (ss:&SwitcheState) -> ConfigsView { ConfigsView {
         switche_version          : Config::SWITCHE_VERSION,
         is_elevated              : win_apis::check_cur_proc_elevated().unwrap_or(false),
         alt_tab_enabled          : ss.conf.check_flag__alt_tab_enabled(),
         rbtn_whl_enabled         : ss.conf.check_flag__rbtn_scroll_enabled(),
-        auto_hide_enabled        : ss.conf.check_flag__auto_hide_enabled(),
-        group_mode_enabled       : ss.conf.check_flag__group_mode_enabled(),
         n_grp_mode_top_recents   : ss.conf.get_n_grp_mode_top_recents(),
         n_grp_mode_last_recents  : ss.conf.get_n_grp_mode_last_recents(),
         grp_ordering_is_auto     : ss.conf.check_flag__auto_order_window_groups(),
@@ -97,10 +101,9 @@ impl Configs_Pl {
 /// Typed events pushed from the engine to the GPUI layer.
 #[derive (Debug, Clone)]
 pub enum UiEvent {
-    Notice (Backend_Notice),
-    WinDatEntry (WinDatEntry_Pl),
-    RenderLists (RenderList_Pl),
-    Configs (Configs_Pl),
+    Notice (EngineNotice),
+    Model (ModelView),
+    Configs (ConfigsView),
     RefreshAutostartFlags,
     Redraw,
     Quit,
@@ -111,26 +114,20 @@ pub enum UiEvent {
 pub enum UiRequest {
     WindowActivate (Hwnd),
     WindowPeek     (Hwnd),
-    WindowMinimize (Hwnd),
-    WindowMaximize (Hwnd),
     WindowClose    (Hwnd),
 
-    DataLoad,
+    Reload,
     Refresh,
-    SwitcheEscape,
-    SwitcheQuit,
+    Escape,
+    Quit,
     SelfAutoResize,
     WindowDragStart,
 
-    GrpModeEnable,
-    GrpModeDisable,
-
-    AutoHideEnable,
-    AutoHideDisable,
+    SetGroupMode (bool),
+    SetAutoHide (bool),
 
     EditConfig,
     ResetConfig,
-    DebugPrint,
 }
 
 
@@ -142,7 +139,7 @@ pub fn register_ui_event_sender (tx: async_channel::Sender <UiEvent>) {
     let _ = UI_EVENT_TX.set(tx);
 }
 
-fn send_ui_event (ev: UiEvent) {
+fn push_ui_event (ev: UiEvent) {
     if let Some(tx) = UI_EVENT_TX.get() {
         // the channel is unbounded, so this never blocks
         let _ = tx.send_blocking (ev);
@@ -151,12 +148,12 @@ fn send_ui_event (ev: UiEvent) {
 
 /// asks the ui to re-read the autostart task states and update the tray menu
 pub fn request_autostart_flags_refresh () {
-    send_ui_event (UiEvent::RefreshAutostartFlags);
+    push_ui_event (UiEvent::RefreshAutostartFlags);
 }
 
 /// asks the ui to repaint (e.g. after a win32-side move/resize)
 pub fn request_ui_redraw () {
-    send_ui_event (UiEvent::Redraw);
+    push_ui_event (UiEvent::Redraw);
 }
 
 
@@ -241,7 +238,7 @@ impl SwitcheState {
             pipe_proc::start_pipe_processor();
             ss.win_dats_m.setup_win_event_hooks();
             //ss.i_proc.begin_input_processing(&ss);
-            // ^^ instead, we do this everytime on reload (which front-end requests on first load too)
+            // ^^ instead, we do this everytime on reload (which the view requests on first load too)
             ss
         } )
     }
@@ -271,7 +268,7 @@ impl SwitcheState {
         self .win_dats_m.trigger_enum_windows_query_immdt (EnumWindowsReqType::Light);
 
         self.is_dismissed.clear(); self.is_fgnd.set();
-        self.emit_backend_notice (Backend_Notice::switche_event__in_fgnd);
+        self.emit_notice (EngineNotice::ForegroundGained);
         // the idea below is that to keep icons mostly updated, we do icon-refresh for a window when it comes to fgnd ..
         // however, when switche is brought to fgnd, recent changes in the topmost window might not be updated yet .. so we'll trigger that here
         if let Some(rle) = self .render_lists_m.render_list.read().unwrap() .first() .copied() {
@@ -294,8 +291,8 @@ impl SwitcheState {
                 if self.conf.check_flag__auto_hide_enabled() {
                     self.handle_req__switche_escape();
                 }
-                self.emit_backend_notice (Backend_Notice::switche_event__fgnd_lost);
-                // ^^ will reset selection to 2nd from top in frontend
+                self.emit_notice (EngineNotice::ForegroundLost);
+                // ^^ will reset selection to 2nd from top in the view
             }
         } );
     }
@@ -310,10 +307,10 @@ impl SwitcheState {
             .iter() .filter_map ( |rle| hwnd_map .get (&rle.hwnd))
             .filter ( |wde| {
                 let exe_pass = exes.is_empty() || exes .iter() .any ( |p|
-                    wde.exe_path_name.as_ref() .is_some_and (|_p| _p.name.as_str() == p.as_str())
+                    wde.exe_path_name.as_ref() .is_some_and (|_p| _p.name.as_ref() == p.as_str())
                 );
                 let title_pass = title.is_none() || title .is_some_and ( |t|
-                    wde.win_text.as_ref() .is_some_and (|_t| match_fn(_t.as_str(),t))
+                    wde.win_text.as_ref() .is_some_and (|_t| match_fn(_t.as_ref(),t))
                 );
                 exe_pass && title_pass
             } ) .take(2) .map (|wde| wde.hwnd) .collect::<Vec<_>>();
@@ -343,7 +340,7 @@ impl SwitcheState {
 
 
 
-    /*****   Front-End Requests handling  ******/
+    /*****   Requests from the view  ******/
 
     // note that in prior incarnations, these were somewhat unreliable and we needed repeated spaced out attempts ..
     // .. however, in this impl, so far things seem to work pretty consistently and without need for delays ..
@@ -365,14 +362,6 @@ impl SwitcheState {
             sleep (Duration::from_millis(1000));
             win_apis::window_activate(self_hwnd);
         } );
-    }
-
-    fn handle_req__window_minimize (&'static self, hwnd:Hwnd) {
-        spawn ( move || { win_apis::window_minimize(hwnd) } );
-    }
-
-    fn handle_req__window_maximize (&'static self, hwnd:Hwnd) {
-        spawn ( move || { win_apis::window_maximize(hwnd) } );
     }
 
     fn handle_req__window_close (&'static self, hwnd:Hwnd) {
@@ -434,7 +423,7 @@ impl SwitcheState {
 
     fn handle_req__switche_quit (&'static self) {
         crate::app_window::persist_self_window_dimensions_now (self);
-        send_ui_event (UiEvent::Quit);
+        push_ui_event (UiEvent::Quit);
     }
 
     fn handle_req__self_auto_resize (&'static self) {
@@ -456,7 +445,6 @@ impl SwitcheState {
         self.conf.deferred_update_conf__auto_hide (enabled);
     }
 
-    fn handle_req__debug_print (&'static self) { }
 
 
     pub(crate) fn handle_req__enum_query_preload (&'static self) {
@@ -479,11 +467,7 @@ impl SwitcheState {
         self.i_proc.re_set_hooks();
         // first we'll send what data we have
         self.emit_configs();
-        self.render_lists_m.render_list.read().unwrap() .iter() .for_each ( |rle| {
-            self.win_dats_m.hwnd_map.read().unwrap() .get (&rle.hwnd) .iter() .for_each ( |wde| {
-                self.emit_win_dat_entry (wde)
-        }) });
-        self.emit_render_lists_queued(true);
+        self.emit_model_queued();
         // then we'll trigger a refresh too
         self.render_lists_m.clear_grouping();
         self.icons_m.mark_all_cached_icon_mappings_stale();
@@ -497,33 +481,26 @@ impl SwitcheState {
 
 
 
-    pub fn handle_ui_request (&'static self, r:UiRequest) {
-        info! ("received {:?}", r);
+    pub fn handle_request (&'static self, r:UiRequest) {
+        info! ("received [{:?}]", r);
 
         match r {
             UiRequest::WindowActivate (h) => self.handle_req__window_activate (h),
             UiRequest::WindowPeek     (h) => self.handle_req__window_peek     (h),
-            UiRequest::WindowMinimize (h) => self.handle_req__window_minimize (h),
-            UiRequest::WindowMaximize (h) => self.handle_req__window_maximize (h),
             UiRequest::WindowClose    (h) => self.handle_req__window_close    (h),
 
-            UiRequest::DataLoad        => self.handle_req__data_load(),
+            UiRequest::Reload          => self.handle_req__data_load(),
             UiRequest::Refresh         => self.handle_req__refresh(),
-            UiRequest::SwitcheEscape   => self.handle_req__switche_escape(),
-            UiRequest::SwitcheQuit     => self.handle_req__switche_quit(),
+            UiRequest::Escape          => self.handle_req__switche_escape(),
+            UiRequest::Quit            => self.handle_req__switche_quit(),
             UiRequest::SelfAutoResize  => self.handle_req__self_auto_resize(),
             UiRequest::WindowDragStart => crate::app_window::start_window_drag (self),
 
-            UiRequest::GrpModeEnable   => self.handle_req__update_group_mode (true),
-            UiRequest::GrpModeDisable  => self.handle_req__update_group_mode (false),
-
-            UiRequest::AutoHideEnable  => self.handle_req__update_auto_hide (true),
-            UiRequest::AutoHideDisable => self.handle_req__update_auto_hide (false),
+            UiRequest::SetGroupMode (enabled) => self.handle_req__update_group_mode (enabled),
+            UiRequest::SetAutoHide  (enabled) => self.handle_req__update_auto_hide (enabled),
 
             UiRequest::EditConfig      => self.conf.trigger_config_file_edit(),
             UiRequest::ResetConfig     => { self.conf.trigger_config_file_reset(); self.handle_req__data_load() },
-
-            UiRequest::DebugPrint      => self.handle_req__debug_print(),
         }
     }
 
@@ -557,36 +534,36 @@ impl SwitcheState {
     }
 
     pub fn proc_hot_key__invoke (&'static self) {
-        // we'll ensure the app window is up, then let the frontend deal w it
+        // we'll ensure the app window is up, then let the view deal w it
         self.checked_self_activate();
-        self.emit_backend_notice(Backend_Notice::backend_req__app_invoke)
+        self.emit_notice (EngineNotice::Invoke)
     }
 
     pub fn proc_hot_key__scroll_down (&'static self) {
         self.checked_self_activate();
-        self.emit_backend_notice (Backend_Notice::backend_req__scroll_down);
+        self.emit_notice (EngineNotice::ScrollDown);
     }
 
     pub fn proc_hot_key__scroll_up (&'static self) {
         self.checked_self_activate();
-        self.emit_backend_notice (Backend_Notice::backend_req__scroll_up);
+        self.emit_notice (EngineNotice::ScrollUp);
     }
 
     pub fn proc_hot_key__scroll_end (&'static self) {
         if self.is_dismissed.is_clear() && self.is_fgnd.is_set() {
-            self.emit_backend_notice (Backend_Notice::backend_req__scroll_end)
+            self.emit_notice (EngineNotice::ScrollEnd)
         }
     }
 
     pub fn proc_hot_key__scroll_end_disarm (&'static self) {
         if self.is_dismissed.is_clear() && self.is_fgnd.is_set() {
-            self.emit_backend_notice (Backend_Notice::backend_req__scroll_end_disarm)
+            self.emit_notice (EngineNotice::ScrollEndDisarm)
         }
     }
 
     pub fn proc_hot_key__switche_escape (&'static self) {
         self.handle_req__switche_escape();
-        self.emit_backend_notice (Backend_Notice::backend_req__switche_escape)
+        self.emit_notice (EngineNotice::Escape)
     }
 
     pub fn proc_hot_key__switch_next_non_minimized (&'static self) {
@@ -627,7 +604,7 @@ impl SwitcheState {
     }
 
     pub fn proc_menu_req__switche_reload (&'static self) {
-        self.emit_backend_notice (Backend_Notice::backend_req__switche_reload)
+        self.emit_notice (EngineNotice::Reload)
     }
 
 
@@ -637,74 +614,61 @@ impl SwitcheState {
 
 
 
-    /*****    emitting backend messages   ******/
+    /*****    pushing updates to the view   ******/
 
-    pub fn emit_win_dat_entry (&'static self, wde:&WinDatEntry) {
-        //debug! ("emitting **{notice}** win_dat_entry for: {:?}", wde.hwnd);
-        let pl = WinDatEntry_Pl {
-            hwnd: wde.hwnd,
-            win_text: wde.win_text.clone(),
-            exe_path_name: wde.exe_path_name.clone(),
-            icon: self.icons_m.get_cached_icon_image(wde),
-            is_elevated: wde.is_elevated,
+    /// builds a full UI-facing snapshot from the current engine state
+    fn build_model_view (&'static self) -> ModelView {
+        // clone the (small, Copy) ordering lists first, so we never hold the render-list locks
+        // .. while taking the hwnd-map lock (the reload path also reads render-list before hwnd-map)
+        let recents_rl = self.render_lists_m.render_list.read().unwrap().clone();
+        let grouped_rl = self.render_lists_m.grpd_render_list.read().unwrap().clone();
+        let hwnd_map = self.win_dats_m.hwnd_map.read().unwrap();
+        let mk = |rle:&RenderListEntry| -> Option <RowView> {
+            let wde = hwnd_map.get (&rle.hwnd)?;
+            Some (RowView {
+                hwnd          : rle.hwnd,
+                y             : rle.y,
+                win_text      : wde.win_text.clone(),
+                exe_name      : wde.exe_path_name.as_ref() .map (|p| p.name.clone()),
+                icon          : self.icons_m.get_cached_icon_image (wde),
+                is_elevated   : wde.is_elevated,
+            })
         };
-        send_ui_event (UiEvent::WinDatEntry (pl));
+        ModelView {
+            recents : recents_rl.iter() .filter_map (|rle| mk(rle)) .collect(),
+            grouped : grouped_rl.iter() .map (|grp| grp.iter() .filter_map (|rle| mk(rle)) .collect()) .collect(),
+        }
+    }
+
+    fn emit_model (&'static self) {
+        push_ui_event (UiEvent::Model (self.build_model_view()));
+    }
+
+    /// coalesces display-data pushes; recomputes the render lists first as they are the ordering source
+    pub fn emit_model_queued (&'static self) {
+        static model_pending : LazyLock <Flag> = LazyLock::new (|| {Flag::default()});
+        // we don't want to keep pushing while there are updates, but do want to keep
+        // .. pushing when/if there's a stream of them
+        if model_pending.is_clear() {
+            model_pending.set();
+            spawn ( move || {
+                sleep (Duration::from_millis(30));
+                model_pending.clear();
+                self.render_lists_m.update_render_ready_lists (self);
+                self.emit_model();
+            } );
+        }
     }
 
     pub fn emit_configs (&'static self) {
-        info! ("** emitting .. configs-update");
-        send_ui_event (UiEvent::Configs (Configs_Pl::assemble(self)));
+        info! ("** emitting .. [configs-update]");
+        push_ui_event (UiEvent::Configs (ConfigsView::assemble(self)));
     }
 
 
-    pub fn emit_backend_notice (&'static self, notice: Backend_Notice) {
-        info!("sending backend notice: {:?}", notice);
-        send_ui_event (UiEvent::Notice (notice));
-    }
-
-
-    fn emit_render_lists (&'static self) {
-        let rlp = RenderList_Pl {
-            rl  : self.render_lists_m.render_list.read().unwrap().clone(),
-            grl : self.render_lists_m.grpd_render_list.read().unwrap().clone()
-        };
-        send_ui_event (UiEvent::RenderLists (rlp));
-    }
-
-    pub fn emit_render_lists_immdt (&'static self, force:bool) {
-        // at reload etc on a data-load req we want to forcibly emit renderlist even if it hasnt changed
-        if force {
-            self.render_lists_m.update_render_ready_lists(self);
-            self.emit_render_lists();
-            return
-        }
-        // if not forced, then we'll do a diff and only emit on change
-        let rl_cf  = self.render_lists_m.render_list.read().unwrap().clone();
-        let grl_cf = self.render_lists_m.grpd_render_list.read().unwrap().clone();
-
-        self.render_lists_m.update_render_ready_lists(self);
-        //debug!("rl;{:?}",self.render_lists_m.render_list.read().unwrap());
-
-        if rl_cf != *self.render_lists_m.render_list.read().unwrap() ||
-            grl_cf != *self.render_lists_m.grpd_render_list.read().unwrap()
-        { self.emit_render_lists() }
-    }
-
-    pub fn emit_render_lists_queued (&'static self, force:bool) {
-        static do_forced      : LazyLock <Flag> = LazyLock::new (|| {Flag::default()});
-        static render_pending : LazyLock <Flag> = LazyLock::new (|| {Flag::default()});
-        if force { do_forced.set() }
-        // note that we dont want to keep pushing this out while there are updates ..
-        // (we just want to bunch up some but keep pushing when/if there's a stream of updates)
-        if render_pending.is_clear() {
-            render_pending.set();
-            spawn ( move || {
-                sleep (Duration::from_millis(100));
-                render_pending.clear();
-                self.emit_render_lists_immdt(do_forced.check());
-                do_forced.clear();
-            } );
-        }
+    pub fn emit_notice (&'static self, notice: EngineNotice) {
+        info!("pushing notice: [{:?}]", notice);
+        push_ui_event (UiEvent::Notice (notice));
     }
 
 

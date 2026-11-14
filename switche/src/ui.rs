@@ -20,10 +20,7 @@ use gpui::{
 
 
 use crate::app_window;
-use crate::render_lists::RenderListEntry;
-use crate::switche::{
-    Backend_Notice, Configs_Pl, Hwnd, SwitcheState, UiEvent, WinDatEntry_Pl,
-};
+use crate::switche::{ EngineNotice, ConfigsView, Hwnd, RowView, SwitcheState, UiEvent };
 
 use crate::search::check_search_exe_title;
 
@@ -92,7 +89,7 @@ pub(super) enum Block { R, G }
 pub(super) struct ElemId { hwnd: Hwnd, block: Block }
 
 #[derive (Debug, Clone, Copy)]
-struct OrderedElem { nav_idx: usize, render_y: u32, yg: i32 }
+struct OrderedElem { nav_idx: usize, yg: i32 }
 
 #[derive (Debug, Clone, Copy, PartialEq, Eq)]
 enum Grp { NG, LH, GH, GT }
@@ -103,11 +100,11 @@ enum ElemT { R, G, GR }
 #[derive (Debug, Clone)]
 struct Row {
     id        : ElemId,
-    render_y  : u32,
     grp       : Grp,
     elem_t    : ElemT,
     dimmed    : bool,
     matched   : bool,
+    view      : RowView,
 }
 
 #[derive (Debug, Clone)]
@@ -137,59 +134,60 @@ fn ss () -> &'static SwitcheState { SwitcheState::instance() }
 pub struct SwitcheApp {
     pub focus_handle : FocusHandle,
 
-    hwnd_map             : HashMap <Hwnd, WinDatEntry_Pl>,
-    render_list          : Vec <RenderListEntry>,
-    grouped_render_list  : Vec <Vec <RenderListEntry>>,
-    configs              : Configs_Pl,
+    recents : Vec <RowView>,
+    grouped : Vec <Vec <RowView>>,
+    configs : ConfigsView,
 
-    group_mode   : bool,
-    auto_hide    : bool,
-    is_dismissed : bool,
-    is_fgnd      : bool,
+    // armed whenever the window goes away; the next invocation consumes it and starts
+    // .. with a fresh selection instead of advancing (pure view state)
     fresh_show   : bool,
     scroll_armed : bool,
     menu_open    : bool,
 
-    in_search          : bool,
-    search_text        : String,
-    search_caret       : usize,
-    search_anchor      : Option <usize>,
-    search_scroll_x    : f32,
-    prior_search_text  : String,
-    match_count        : usize,
+    in_search         : bool,
+    search_text       : String,
+    search_caret      : usize,
+    search_anchor     : Option <usize>,
+    search_scroll_x   : f32,
+    prior_search_text : String,
+    match_count       : usize,
 
-    cur_elem     : Option <ElemId>,
-    tray         : Option <crate::tray::TrayState>,
+    cur_elem  : Option <ElemId>,
+    tray      : Option <crate::tray::TrayState>,
 
-    tooltip      : Option <TooltipKind>,
-    help_hover   : bool,
-    help_open    : bool,
-    help_hide_gen: u64,
+    tooltip       : Option <TooltipKind>,
+    help_hover    : bool,
+    help_open     : bool,
+    help_hide_gen : u64,
     help_hide_pending: bool,
     
-    recents_map  : HashMap <ElemId, OrderedElem>,
-    grouped_map  : HashMap <ElemId, OrderedElem>,
-    recents_ids  : Vec <ElemId>,
-    grouped_ids  : Vec <ElemId>,
-    group_heads  : Vec <ElemId>,
+    recents_map : HashMap <ElemId, OrderedElem>,
+    grouped_map : HashMap <ElemId, OrderedElem>,
+    recents_ids : Vec <ElemId>,
+    grouped_ids : Vec <ElemId>,
+    group_heads : Vec <ElemId>,
 
     display        : Vec <DispItem>,
     display_height : f32,
     layout_dirty   : bool,
     scroll_offset  : f32,
-    last_viewport_h: f32,
+
+    last_viewport_h   : f32,
     last_action_stamp : Instant,
     last_nav_stamp    : Instant,
-    hover_lock_stamp  : Instant,
-    hover_anchor      : Option <ElemId>,
-    hovered_row       : Option <ElemId>,
-    armed_blip        : bool,
-    armed_blip_gen    : u64,
-    nav_repeat_ms     : u64,
+
+    hover_lock_stamp : Instant,
+    hover_anchor     : Option <ElemId>,
+    hovered_row      : Option <ElemId>,
+
+    armed_blip     : bool,
+    armed_blip_gen : u64,
+    nav_repeat_ms  : u64,
 
     help_text_w : Option <f32>,
     help_scroll : ScrollHandle,
-    help_drag : Option <(f32, f32)>,   // (cursor y, scroll offset) while dragging the help thumb
+    help_drag   : Option <(f32, f32)>,   // (cursor y, scroll offset) while dragging the help thumb
+
     bounds_subscription : Option <gpui::Subscription>,
 }
 
@@ -208,16 +206,11 @@ impl SwitcheApp {
         let mut app = SwitcheApp {
             focus_handle,
 
-            hwnd_map             : HashMap::new(),
-            render_list          : Vec::new(),
-            grouped_render_list  : Vec::new(),
-            configs              : Configs_Pl::default(),
+            recents : Vec::new(),
+            grouped : Vec::new(),
+            configs : ConfigsView::default(),
 
-            group_mode   : true,
-            auto_hide    : true,
-            is_dismissed : false,
-            is_fgnd      : false,
-            fresh_show   : false,
+            fresh_show   : true,
             scroll_armed : false,
             menu_open    : false,
 
@@ -244,23 +237,27 @@ impl SwitcheApp {
             grouped_ids : Vec::new(),
             group_heads : Vec::new(),
 
-            display         : Vec::new(),
-            display_height  : 0.0,
-            layout_dirty    : false,
-            scroll_offset   : 0.0,
-            last_viewport_h : 0.0,
+            display        : Vec::new(),
+            display_height : 0.0,
+            layout_dirty   : false,
+            scroll_offset  : 0.0,
+
+            last_viewport_h   : 0.0,
             last_action_stamp : now,
             last_nav_stamp    : now - Duration::from_secs (1),
-            hover_lock_stamp  : now - Duration::from_secs (1),
-            hover_anchor      : None,
-            hovered_row       : None,
-            armed_blip        : false,
-            armed_blip_gen    : 0,
+
+            hover_lock_stamp : now - Duration::from_secs (1),
+            hover_anchor     : None,
+            hovered_row      : None,
+
+            armed_blip     : false,
+            armed_blip_gen : 0,
             nav_repeat_ms,
 
             help_text_w : None,
             help_scroll : ScrollHandle::new(),
-            help_drag : None,
+            help_drag   : None,
+
             bounds_subscription : None,
         };
 
@@ -331,30 +328,17 @@ impl SwitcheApp {
                 cx.quit();
             }
             UiEvent::Notice (n) => self.handle_notice (n, cx),
-            UiEvent::RenderLists (pl) => {
-                if pl.rl == self.render_list && pl.grl == self.grouped_render_list { return }
-                // ^^ if the render lists are the same, skip the heavy work
-                tracing::debug! ("ui: render list ({} rows / {} groups)", pl.rl.len(), pl.grl.len());
-                self.render_list = pl.rl;
-                self.grouped_render_list = pl.grl;
+            UiEvent::Model (mv) => {
+                if mv.recents == self.recents && mv.grouped == self.grouped { return }
+                // ^^ if the snapshot is unchanged, skip the rebuild
+                tracing::debug! ("ui: model ({} rows / {} groups)", mv.recents.len(), mv.grouped.len());
+                self.recents = mv.recents;
+                self.grouped = mv.grouped;
                 self.layout_dirty = true;
-                cx.notify();
-            }
-            UiEvent::WinDatEntry (pl) => {
-                tracing::trace! ("ui: win-dat-entry {:?}", pl.hwnd);
-                let is_new = !self.hwnd_map.contains_key (&pl.hwnd);
-                self.hwnd_map.insert (pl.hwnd, pl);
-                if is_new || self.in_search {
-                    // title/exe/icon/elevation are all read live from hwnd_map during render,
-                    // .. so we need a rebuild only if in search mode, or its a new entry
-                    self.layout_dirty = true;
-                }
                 cx.notify();
             }
             UiEvent::Configs (conf) => {
                 self.configs = conf;
-                self.group_mode = self.configs.group_mode_enabled;
-                self.auto_hide  = self.configs.auto_hide_enabled;
                 self.layout_dirty = true;
                 cx.notify();
             }
@@ -373,55 +357,48 @@ impl SwitcheApp {
     }
 
 
-    fn handle_notice (&mut self, n:Backend_Notice, cx:&mut Context<Self>) {
-        use Backend_Notice::*;
+    fn handle_notice (&mut self, n:EngineNotice, cx:&mut Context<Self>) {
+        use EngineNotice::*;
         self.flush_layout();
         self.lock_hover();
         match n {
-            backend_req__app_invoke => {
+            Invoke => {
                 self.handle_invoke();
             }
-            backend_req__scroll_down => {
+            ScrollDown => {
                 if !self.verify_spacing() { return }
                 self.scroll_armed = true;
                 self.handle_invoke();
             }
-            backend_req__scroll_up => {
+            ScrollUp => {
                 if !self.verify_spacing() { return }
                 self.scroll_armed = true;
-                if self.is_dismissed || !self.is_fgnd || self.fresh_show {
-                    self.fresh_show = false; self.is_dismissed = false; self.is_fgnd = true;
-                    self.reset_focus();
-                    self.focus_prev();
-                } else {
-                    self.focus_prev();
-                }
+                if self.take_fresh() { self.reset_focus(); }
+                self.focus_prev();
             }
-            backend_req__scroll_end => {
-                if !self.is_dismissed && self.is_fgnd && self.scroll_armed { self.activate_cur() }
+            ScrollEnd => {
+                // engine only sends this while shown (and it has already checked that)
+                if self.scroll_armed { self.activate_cur() }
             }
-            backend_req__scroll_end_disarm => {
-                if !self.is_dismissed && self.is_fgnd && self.scroll_armed { self.scroll_armed = false }
+            ScrollEndDisarm => {
+                if self.scroll_armed { self.scroll_armed = false }
             }
-            backend_req__switche_escape => {
-                self.is_dismissed = true; self.fresh_show = false;
+            Escape => {
+                self.fresh_show = true;
                 self.scroll_armed = false; self.menu_open = false;
                 self.hover_anchor = None;
                 self.hovered_row = None;
                 self.exit_search (false);
             }
-            backend_req__switche_reload => {
+            Reload => {
                 self.handle_reload (cx);
             }
-            switche_event__in_fgnd => {
-                // note if this is a fresh show (the app_invoke notice may arrive after
-                // .. this one, and it needs to know to reset rather than advance)
-                if self.is_dismissed || !self.is_fgnd { self.fresh_show = true }
-                self.is_fgnd = true; self.is_dismissed = false;
+            ForegroundGained => {
+                // engine owns is_fgnd/is_dismissed; the notice prelude re-syncs layout
+                // .. and holds off hover-driven selection while the window settles
             }
-            switche_event__fgnd_lost => {
-                self.is_fgnd = false; self.fresh_show = false;
-                if self.auto_hide { self.is_dismissed = true }
+            ForegroundLost => {
+                self.fresh_show = true;
                 self.scroll_armed = false;
                 self.hover_anchor = None;
                 self.hovered_row = None;
@@ -443,12 +420,6 @@ impl SwitcheApp {
 
 
 
-
-
-
-
-
-
     fn recompute_display_height (&mut self) {
         self.display_height = self.display.iter().map (|i| i.height()).sum();
         let max = (self.display_height - self.last_viewport_h.max (0.0)) .max (0.0);
@@ -459,16 +430,16 @@ impl SwitcheApp {
 
     // ---------------- building lists ----------------
 
-    fn get_capped_recents (&self) -> Vec <(RenderListEntry, Grp)> {
-        let capped : Vec <RenderListEntry> = if self.group_mode {
+    fn get_capped_recents (&self, group_mode:bool) -> Vec <(RowView, Grp)> {
+        let capped : Vec <RowView> = if group_mode {
             let nfirst = self.configs.n_grp_mode_top_recents as usize;
             let nlast  = self.configs.n_grp_mode_last_recents as usize;
-            let ngap = self.render_list.len() as isize - nfirst as isize - nlast as isize;
-            let mut v = self.render_list.iter().take (nfirst).cloned().collect::<Vec<_>>();
-            v.extend (self.render_list.iter().skip (nfirst).skip (ngap.max (0) as usize).cloned());
+            let ngap = self.recents.len() as isize - nfirst as isize - nlast as isize;
+            let mut v = self.recents.iter().take (nfirst).cloned().collect::<Vec<_>>();
+            v.extend (self.recents.iter().skip (nfirst).skip (ngap.max (0) as usize).cloned());
             v
         } else {
-            self.render_list.clone()
+            self.recents.clone()
         };
 
         let mut last_y = capped.first().map (|r| r.y).unwrap_or (0);
@@ -487,24 +458,26 @@ impl SwitcheApp {
         self.grouped_ids.clear();
         self.group_heads.clear();
 
+        let group_mode = ss().conf.check_flag__group_mode_enabled();
+
         let mut recents_rows : Vec <Row> = Vec::new();
         let mut grouped_rows : Vec <Row> = Vec::new();
 
         if self.in_search {
-            self.build_search_rows (&mut recents_rows, &mut grouped_rows);
+            self.build_search_rows (group_mode, &mut recents_rows, &mut grouped_rows);
         } else {
-            self.build_normal_rows (&mut recents_rows, &mut grouped_rows);
+            self.build_normal_rows (group_mode, &mut recents_rows, &mut grouped_rows);
         }
 
         self.display.clear();
         if self.in_search {
-            if self.group_mode {
+            if group_mode {
                 self.push_section (ElemT::GR, recents_rows);
                 self.push_section (ElemT::G,  grouped_rows);
             } else {
                 self.push_section (ElemT::R, recents_rows);
             }
-        } else if self.group_mode {
+        } else if group_mode {
             self.push_section (ElemT::GR, recents_rows);
             self.push_section (ElemT::G,  grouped_rows);
         } else {
@@ -528,76 +501,69 @@ impl SwitcheApp {
         self.display.push (DispItem::Gap);
     }
 
-    fn build_normal_rows (&mut self, recents_rows:&mut Vec <Row>, grouped_rows:&mut Vec <Row>) {
-        let capped = self.get_capped_recents();
-        for (rle, grp) in capped.iter() {
-            if !self.hwnd_map.contains_key (&rle.hwnd) { continue }
-            let id = ElemId { hwnd: rle.hwnd, block: Block::R };
-            let elem_t = if self.group_mode { ElemT::GR } else { ElemT::R };
-            // nav index must match the compacted ids vec (capped entries whose hwnd we
-            // .. dont have yet are skipped, so the unfiltered capped index would misalign)
+    fn build_normal_rows (&mut self, group_mode:bool, recents_rows:&mut Vec <Row>, grouped_rows:&mut Vec <Row>) {
+        let capped = self.get_capped_recents (group_mode);
+        for (view, grp) in capped {
+            let id = ElemId { hwnd: view.hwnd, block: Block::R };
+            let elem_t = if group_mode { ElemT::GR } else { ElemT::R };
             let nav_idx = self.recents_ids.len();
-            self.recents_map.insert (id, OrderedElem { nav_idx, render_y: rle.y, yg: -1 });
+            self.recents_map.insert (id, OrderedElem { nav_idx, yg: -1 });
             self.recents_ids.push (id);
-            recents_rows.push (Row { id, render_y: rle.y, grp: *grp, elem_t, dimmed: false, matched: false });
+            recents_rows.push (Row { id, grp, elem_t, dimmed: false, matched: false, view });
         }
 
-        if self.group_mode {
+        if group_mode {
             let mut nav_i = 0;
-            for (gi, ll) in self.grouped_render_list.iter().enumerate() {
+            for (gi, ll) in self.grouped.iter().enumerate() {
                 let mut first = true;
-                for rle in ll {
-                    if !self.hwnd_map.contains_key (&rle.hwnd) { continue }
-                    let id = ElemId { hwnd: rle.hwnd, block: Block::G };
+                for view in ll {
+                    let id = ElemId { hwnd: view.hwnd, block: Block::G };
                     let grp = if first { Grp::GH } else { Grp::GT };
                     if first { self.group_heads.push (id) }
                     first = false;
-                    self.grouped_map.insert (id, OrderedElem { nav_idx: nav_i, render_y: rle.y, yg: gi as i32 });
+                    self.grouped_map.insert (id, OrderedElem { nav_idx: nav_i, yg: gi as i32 });
                     self.grouped_ids.push (id);
-                    grouped_rows.push (Row { id, render_y: rle.y, grp, elem_t: ElemT::G, dimmed: false, matched: false });
+                    grouped_rows.push (Row { id, grp, elem_t: ElemT::G, dimmed: false, matched: false, view: view.clone() });
                     nav_i += 1;
                 }
             }
         }
     }
 
-    fn build_search_rows (&mut self, recents_rows:&mut Vec <Row>, grouped_rows:&mut Vec <Row>) {
-        let capped = self.get_capped_recents();
+    fn build_search_rows (&mut self, group_mode:bool, recents_rows:&mut Vec <Row>, grouped_rows:&mut Vec <Row>) {
+        let capped = self.get_capped_recents (group_mode);
         let mut match_count = 0;
 
-        if !self.group_mode {
+        if !group_mode {
             let mut nav_i = 0;
-            for (_i,(rle,grp)) in capped.iter().enumerate() {
-                let Some (wde) = self.hwnd_map.get (&rle.hwnd) else { continue };
-                let check = check_search_exe_title (wde, &self.search_text, rle.y);
-                let id = ElemId { hwnd: rle.hwnd, block: Block::R };
+            for (view, grp) in capped {
+                let check = check_search_exe_title (&view, &self.search_text);
+                let id = ElemId { hwnd: view.hwnd, block: Block::R };
                 let nav_idx = if check.passed { let n = nav_i; nav_i += 1; n } else { usize::MAX };
-                self.recents_map.insert (id, OrderedElem { nav_idx, render_y: rle.y, yg: -1 });
+                self.recents_map.insert (id, OrderedElem { nav_idx, yg: -1 });
                 if check.passed { self.recents_ids.push (id); match_count += 1 }
-                recents_rows.push (Row { id, render_y: rle.y, grp: *grp, elem_t: ElemT::R, dimmed: false, matched: check.passed });
+                recents_rows.push (Row { id, grp, elem_t: ElemT::R, dimmed: false, matched: check.passed, view });
             }
         } else {
-            for (gi, ll) in self.grouped_render_list.iter().enumerate() {
+            for (gi, ll) in self.grouped.iter().enumerate() {
                 let mut first = true;
-                for rle in ll {
-                    let Some (wde) = self.hwnd_map.get (&rle.hwnd) else { continue };
-                    let check = check_search_exe_title (wde, &self.search_text, rle.y);
-                    let id = ElemId { hwnd: rle.hwnd, block: Block::G };
+                for view in ll {
+                    let check = check_search_exe_title (view, &self.search_text);
+                    let id = ElemId { hwnd: view.hwnd, block: Block::G };
                     let grp = if first { Grp::GH } else { Grp::GT };
                     let nav_idx = if check.passed { let n = self.grouped_ids.len(); n } else { usize::MAX };
                     if check.passed { self.grouped_ids.push (id); match_count += 1 }
                     first = false;
-                    self.grouped_map.insert (id, OrderedElem { nav_idx, render_y: rle.y, yg: gi as i32 });
-                    grouped_rows.push (Row { id, render_y: rle.y, grp, elem_t: ElemT::G, dimmed: false, matched: check.passed });
+                    self.grouped_map.insert (id, OrderedElem { nav_idx, yg: gi as i32 });
+                    grouped_rows.push (Row { id, grp, elem_t: ElemT::G, dimmed: false, matched: check.passed, view: view.clone() });
                 }
             }
-            for (i,(rle,grp)) in capped.iter().enumerate() {
-                let Some (wde) = self.hwnd_map.get (&rle.hwnd) else { continue };
-                let check = check_search_exe_title (wde, &self.search_text, rle.y);
-                let id = ElemId { hwnd: rle.hwnd, block: Block::R };
-                self.recents_map.insert (id, OrderedElem { nav_idx: i, render_y: rle.y, yg: -1 });
+            for (i,(view,grp)) in capped.into_iter().enumerate() {
+                let check = check_search_exe_title (&view, &self.search_text);
+                let id = ElemId { hwnd: view.hwnd, block: Block::R };
+                self.recents_map.insert (id, OrderedElem { nav_idx: i, yg: -1 });
                 self.recents_ids.push (id);
-                recents_rows.push (Row { id, render_y: rle.y, grp: *grp, elem_t: ElemT::GR, dimmed: true, matched: check.passed });
+                recents_rows.push (Row { id, grp, elem_t: ElemT::GR, dimmed: true, matched: check.passed, view });
             }
         }
 

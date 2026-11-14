@@ -118,7 +118,7 @@ pub fn setup_global_shortcuts (ss: &'static SwitcheState) {
                 .and_then (|m| m.lock().ok())
                 .and_then (|m| m.get (&ev.id).cloned());
             if let Some (action) = action {
-                info! ("global hotkey fired: {:?}", action);
+                info! ("global hotkey fired: [{:?}]", action);
                 dispatch_hotkey_action (ss, action)
             }
         }

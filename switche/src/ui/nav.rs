@@ -64,7 +64,7 @@ impl SwitcheApp {
         self.focus_next();
     }
     pub(super) fn reset_search_match_focus (&mut self) {
-        let block = if self.group_mode { ElemT::G } else { ElemT::R };
+        let block = if ss().conf.check_flag__group_mode_enabled() { ElemT::G } else { ElemT::R };
         let id = self.block_ids (block) .first().copied();
         self.set_cur (id);
     }
@@ -101,7 +101,7 @@ impl SwitcheApp {
             else if let Some (oe) = self.grouped_map.get (&cur) { (true, *oe) }
             else { return None };
 
-        if !self.group_mode {
+        if !ss().conf.check_flag__group_mode_enabled() {
             return self.pick_in (oe, ElemT::R, ElemT::R, reverse)
         }
         if self.in_search {
@@ -155,7 +155,7 @@ impl SwitcheApp {
 
     fn focus_topbtm (&mut self, to_top:bool, within_block:bool) {
         let cur_in_grouped = self.cur_elem.map (|id| self.grouped_map.contains_key (&id)) .unwrap_or (false);
-        let use_grouped = self.group_mode && (
+        let use_grouped = ss().conf.check_flag__group_mode_enabled() && (
             self.in_search || (within_block && cur_in_grouped) || (!within_block && !to_top)
         );
         let id = if use_grouped {
@@ -186,12 +186,12 @@ impl SwitcheApp {
     }
 
     pub(super) fn resync_focus_after_rebuild (&mut self) {
-        if !(self.is_fgnd && !self.is_dismissed) {
+        if !(ss().is_fgnd.is_set() && ss().is_dismissed.is_clear()) {
             self.reset_focus();
             return
         }
         let cur = self.cur_elem;
-        let synced = if !self.group_mode {
+        let synced = if !ss().conf.check_flag__group_mode_enabled() {
             self.sync_elem (cur, ElemT::R, ElemT::R)
         } else if self.in_search {
             self.sync_elem (cur, ElemT::G, ElemT::G)

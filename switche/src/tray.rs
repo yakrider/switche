@@ -176,15 +176,15 @@ fn dispatch_menu_action (id:&str, ss: &'static SwitcheState) {
         MENU_AUTO_START       => autostart::proc_req__toggle_switche_autostart (false),
         MENU_AUTO_START_ADMIN => autostart::proc_req__toggle_switche_autostart (true),
 
-        MENU_EDIT_CONF        => ss.conf.trigger_config_file_edit(),
-        MENU_RESET_CONF       => {
+        MENU_EDIT_CONF  => ss.conf.trigger_config_file_edit(),
+        MENU_RESET_CONF => {
             ss.conf.trigger_config_file_reset();
-            ss.handle_ui_request (UiRequest::DataLoad);
+            ss.handle_request (UiRequest::Reload);
         }
 
-        MENU_RELOAD           => ss.proc_menu_req__switche_reload(),
-        MENU_RESTART          => restart_app (ss),
-        MENU_QUIT             => ss.handle_ui_request (UiRequest::SwitcheQuit),
+        MENU_RELOAD   => ss.proc_menu_req__switche_reload(),
+        MENU_RESTART  => restart_app (ss),
+        MENU_QUIT     => ss.handle_request (UiRequest::Quit),
 
         _ => { }
     }
